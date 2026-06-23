@@ -29,6 +29,12 @@
 
 LOG_MODULE_REGISTER(zepl_lock_order, LOG_LEVEL_WRN);
 
+#if defined(CONFIG_ZEPL_LOCK_ORDER) && (CONFIG_ZEPL_LOCK_ORDER == 1)
+
+/* =============================================================================
+ * 完整实现（CONFIG_ZEPL_LOCK_ORDER=y）
+ * ============================================================================= */
+
 #if defined(CONFIG_ZEPL_LOCK_ORDER_STRICT) && (CONFIG_ZEPL_LOCK_ORDER_STRICT == 1)
 #define LOCK_ORDER_STRICT_ENABLED 1
 #else
@@ -330,3 +336,56 @@ uint8_t zepl_lock_current_depth(void) {
 
     return depth;
 }
+
+#else /* CONFIG_ZEPL_LOCK_ORDER not enabled */
+
+/* =============================================================================
+ * 空实现（CONFIG_ZEPL_LOCK_ORDER=n）：节省 ~4.4 KB RAM 及自旋锁开销
+ * 所有对外符号保持与完整实现一致，链接器可正常解析。
+ * ============================================================================= */
+
+bool zepl_lock_order_is_valid(zepl_lock_level_t level, uintptr_t key) {
+    ARG_UNUSED(level);
+    ARG_UNUSED(key);
+    return true;
+}
+
+void zepl_lock_enter(zepl_lock_level_t level, uintptr_t key) {
+    ARG_UNUSED(level);
+    ARG_UNUSED(key);
+}
+
+void zepl_lock_exit(zepl_lock_level_t level, uintptr_t key) {
+    ARG_UNUSED(level);
+    ARG_UNUSED(key);
+}
+
+void zepl_lock_enter_token(zepl_lock_token_t token) {
+    ARG_UNUSED(token);
+}
+
+void zepl_lock_exit_token(zepl_lock_token_t token) {
+    ARG_UNUSED(token);
+}
+
+void zepl_lock_reset_current_thread(void) {}
+
+zepl_lock_token_t zepl_lock_current_token(void) {
+    zepl_lock_token_t token = {.level = 0U, .key = 0U};
+
+    return token;
+}
+
+zepl_lock_level_t zepl_lock_current_level(void) {
+    return 0U;
+}
+
+uintptr_t zepl_lock_current_key(void) {
+    return 0U;
+}
+
+uint8_t zepl_lock_current_depth(void) {
+    return 0U;
+}
+
+#endif /* CONFIG_ZEPL_LOCK_ORDER */
