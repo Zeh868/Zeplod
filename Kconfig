@@ -125,9 +125,19 @@ config EVENT_DISPATCHER_AUTOINIT
 	  Register event_dispatcher_auto_init at APP_INIT_PRIO_DISPATCHER. Disable
 	  if the application initializes the dispatcher manually (e.g. unit tests).
 
+config ZEPL_LOCK_ORDER
+	bool "Lock order tracking (debug AB-BA deadlock checker)"
+	default y
+	help
+	  Enable per-thread lock nesting stack and AB-BA deadlock detection.
+	  When disabled, all lock_order APIs become no-ops and the ~4.4 KB
+	  g_thread_states[] array is removed from BSS. Disable in tiny/production
+	  builds to recover RAM and eliminate spinlock overhead.
+
 config ZEPL_LOCK_ORDER_STRICT
 	bool "Lock order strict mode (assert on violation)"
 	default n
+	depends on ZEPL_LOCK_ORDER
 	help
 	  When enabled, lock order violations in lock_order.c trigger __ASSERT()
 	  to fail fast in debug/CI builds. When disabled, violations are logged
@@ -478,6 +488,17 @@ config SYS_WATCHDOG_FORCE_RESET
 
 	  For development/testing, leave this disabled to prevent
 	  unwanted resets. Enable for production builds.
+
+config APP_WATCHDOG_RESET_ON_EXPIRE
+	bool "Watchdog resets system on expiry (auto-init default)"
+	default n
+	depends on SYS_WATCHDOG_ENABLE
+	help
+	  Controls the reset_on_expire field passed by sys_wdt_auto_init().
+	  When n (default): watchdog expiry only logs an error — safe for
+	  development to avoid unexpected reboots during debugging.
+	  When y: watchdog expiry triggers sys_reboot(SYS_REBOOT_COLD) in
+	  production firmware. Enable in conf/targets/production.conf.
 
 config WATCHDOG
 	bool "Enable Zephyr Watchdog Driver"

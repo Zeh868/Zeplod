@@ -103,6 +103,15 @@ static void event_queue_reorder_end(event_queue_cb_t* cb) {
 
 /**
  * @brief 为 DROP_LOWEST 分配 scratch（Kconfig 启用时 init 预分配；否则首次使用时惰性分配）
+ *
+ * @note L-2（审查记录，良性已知项）：首次惰性分配使 scratch 从 NULL 变为非 NULL，
+ *       而无锁 dequeue 路径以 event_queue_use_op_lock()（即 scratch != NULL）决定是否
+ *       取 reorder_lock。因此仅在"全局第一次 DROP_LOWEST 入队"且队列恰好已满需 drain
+ *       时，存在一个并发 dequeuer 可能观察到 scratch 旧值 NULL、跳过 reorder_lock 的窗口。
+ *       由于所有队列变更均经 k_msgq 内部自旋锁串行化，最坏后果仅为该 dequeuer 在本次
+ *       reorder 期间得到一次 spurious-empty（无内存破坏、无数据损坏）；此后 scratch 恒为
+ *       非 NULL，所有 dequeue 均取 reorder_lock，窗口不再出现。综合权衡保留惰性分配以
+ *       维持运行期 DROP_LOWEST 能力与既有单测覆盖。
  */
 static event_status_t event_queue_ensure_drop_lowest_scratch(event_queue_cb_t* cb) {
     if (cb->drop_lowest_scratch != NULL && cb->drop_lowest_restore_failed != NULL) {
@@ -890,8 +899,13 @@ void event_queue_deinit(struct k_msgq* queue) {
         return;
     }
 
-    /* SIL-2: 先清空队列中剩余的事件，防止动态负载泄漏 */
+    /* SIL-2: 先在锁外清空队列残留事件，避免持 g_queue_cb_lock 时调用 purge 造成自死锁
+     * （purge 内部经 event_queue_cb_borrow 也会申请 g_queue_cb_lock）。 */
     event_queue_purge(queue);
+
+    /* SIL-2 L-1 修复：持 g_queue_cb_lock 后再释放 scratch / 清零 cb 字段，
+     * 消除与 event_queue_init / event_queue_cb_borrow_locked 并发扫描的数据竞争。 */
+    k_mutex_lock(&g_queue_cb_lock, K_FOREVER);
 
     /* SIL-2: 释放 DROP_LOWEST scratch 缓冲区（CRIT-1 修复） */
     if (cb->drop_lowest_scratch != NULL) {
@@ -914,6 +928,8 @@ void event_queue_deinit(struct k_msgq* queue) {
     atomic_set(&cb->high_watermark, 0);
     atomic_set(&cb->reordering, 0);
     atomic_set(&cb->isr_ops_in_flight, 0);
+
+    k_mutex_unlock(&g_queue_cb_lock);
 
     LOG_DBG("Event queue deinitialized");
     event_queue_cb_release(cb);

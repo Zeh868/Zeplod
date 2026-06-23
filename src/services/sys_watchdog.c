@@ -627,7 +627,7 @@ static int sys_wdt_auto_init(void) {
     wdt_config_t wdt_config = {.mode = WDT_MODE_SOFTWARE,
                                .timeout_ms = APP_WATCHDOG_TIMEOUT_MS,
                                .feed_margin_ms = 1000,
-                               .reset_on_expire = false};
+                               .reset_on_expire = IS_ENABLED(CONFIG_APP_WATCHDOG_RESET_ON_EXPIRE)};
     sys_wdt_init(&wdt_config);
     LOG_INF("Watchdog initialized");
 #endif
