@@ -95,3 +95,28 @@ west build -b <board> . -- -DEXTRA_CONF_FILE=conf/examples/gpio_uart.conf
 - **`profiles/standard.conf`**：原 `prj.conf` 中的标准内存、日志、事件容量、应用功能等。
 - **`features/`**：可独立启停的子系统；默认启用项由 CMake 写入合并链。
 - **档位片段**：`balanced` / `minimal` 仅写与 standard 的**差异项**；`tiny` 为独立完整链。
+
+## 参考实现模块（不在默认 CI 单测矩阵）
+
+`connectivity`、`provisioning`、`remote_ops`、`feature_gate` 四个模块为**参考实现**，默认不在 CI 专门单测矩阵中运行。
+
+**源码与配置文件均完整保留**，可随时使用：
+- 源码：`src/modules/<模块名>/`
+- 配置片段：`conf/features/<模块名>.conf`
+- 测试配置：`tests/prj_<模块名>.conf`
+
+**手动测试示例**（按模块替换最后一段文件名）：
+
+```bash
+west build -b native_sim tests/ --build-dir build_x \
+  -- -DCONF_FILE="prj.conf;prj_connectivity.conf"
+west build -t run --build-dir build_x
+```
+
+> 注：`west build tests/` 时 `CONF_FILE` 相对 `tests/` 目录解析，故不带 `tests/` 前缀。
+
+其余模块替换示例：`prj_provisioning.conf`、`prj_remote_ops.conf`、`prj_feature_gate.conf`、`prj_feature_gate_boot.conf`。
+
+**编译覆盖**：这四个模块仍由以下编译检查步骤覆盖，不会完全脱离 CI：
+- `conf/features/scale.conf` 覆盖 `remote_ops`、`feature_gate`
+- `conf/profiles/sku_gateway.conf`（与 `scale.conf` 联用）覆盖 `provisioning`、`connectivity`
