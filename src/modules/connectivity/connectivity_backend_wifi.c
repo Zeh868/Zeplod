@@ -9,13 +9,20 @@
  * 依旧成立（真正的连接过程仍是异步完成，只是由本后端把等待收敛在 connect() 内）。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-07-09
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-07-09       1.0            zeh            ESP32-C6 Wi-Fi 集成：新增 Wi-Fi 后端
+ * 2026-07-09       1.1            zeh            打通首连触发链路：实现 is_available()，
+ *                                                 未配网（无已保存凭据）时不再被 connect_auto()/
+ *                                                 failover 空转尝试连接
+ * 2026-07-10       1.2            zeh            iface 惰性获取：init 时 Wi-Fi net_if 尚未就绪
+ *                                                 （驱动 init 晚于 connectivity 模块）不再返回失败，
+ *                                                 避免整模块注册失败而永不 RUNNING；改在
+ *                                                 connect/is_available 首次需要时获取并缓存
  *
  */
 
@@ -101,6 +108,25 @@ static void wifi_mgmt_event_handler(struct net_mgmt_event_callback* cb, uint64_t
  * 后端回调
  * ============================================================================= */
 
+/**
+ * @brief 惰性获取并缓存 Wi-Fi 网络接口
+ *
+ * ESP32 等平台的 Wi-Fi net_if 由驱动在网络子系统初始化阶段创建，其 init 优先级可能晚于
+ * 本后端所属 connectivity 模块的注册/初始化时机（APP_INIT_PRIO_MODULE_CONNECTIVITY=55）。
+ * 故 init 时 net_if_get_first_wifi() 可能返回 NULL；本函数在首次真正需要 iface（连接 /
+ * 可用性查询）时再获取并缓存，规避「因启动时序导致后端 init 失败 → connectivity 模块整体
+ * 注册失败 → 永不进入 RUNNING」这一连锁问题。
+ *
+ * @param ctx Wi-Fi 后端上下文
+ * @return 已持有可用 iface 返回 true，否则 false
+ */
+static bool wifi_ensure_iface(connectivity_wifi_ctx_t* ctx) {
+    if (ctx->iface == NULL) {
+        ctx->iface = net_if_get_first_wifi();
+    }
+    return ctx->iface != NULL;
+}
+
 static int wifi_init(connectivity_backend_ops_t* ops) {
     connectivity_wifi_ctx_t* ctx = (connectivity_wifi_ctx_t*) ops->ctx;
 
@@ -108,18 +134,18 @@ static int wifi_init(connectivity_backend_ops_t* ops) {
         return -EINVAL;
     }
 
-    ctx->iface = net_if_get_first_wifi();
-    if (ctx->iface == NULL) {
-        LOG_ERR("no Wi-Fi network interface found");
-        return -ENODEV;
-    }
-
     k_sem_init(&ctx->connect_sem, 0, 1);
+    /* net_mgmt 回调按事件掩码全局登记，与具体 iface 无关，可在 iface 尚未就绪时先登记 */
     net_mgmt_init_event_callback(&ctx->mgmt_cb, wifi_mgmt_event_handler,
                                  NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT);
     net_mgmt_add_event_callback(&ctx->mgmt_cb);
 
     ctx->link_up = false;
+    ctx->iface = NULL;
+    /* iface 允许暂缺：不因缺 net_if 让 init 失败，改为惰性获取（见 wifi_ensure_iface） */
+    if (!wifi_ensure_iface(ctx)) {
+        LOG_WRN("Wi-Fi iface not ready at init; will acquire lazily on first use");
+    }
     ctx->inited = true;
     return 0;
 }
@@ -139,6 +165,11 @@ static int wifi_connect(connectivity_backend_ops_t* ops) {
 
     if (ctx == NULL || !ctx->inited) {
         return -EINVAL;
+    }
+
+    if (!wifi_ensure_iface(ctx)) {
+        LOG_ERR("Wi-Fi iface still unavailable; cannot connect");
+        return -ENODEV;
     }
 
     ret = provisioning_module_get_credentials(ssid, sizeof(ssid), psk, sizeof(psk));
@@ -199,6 +230,32 @@ static bool wifi_is_link_up(const connectivity_backend_ops_t* ops) {
     return ctx->link_up;
 }
 
+/**
+ * @brief 查询 Wi-Fi 后端当前是否可用（已配网、持有可用 SSID/PSK）
+ *
+ * 未配网（provisioning 尚无已保存凭据）时返回 false，使 connect_auto()/failover 跳过本
+ * 后端，避免每次尝试都注定因缺凭据而失败并刷错误日志。provisioning_module_get_credentials()
+ * 仅读取 app_kv 的 RAM 缓存（互斥锁保护，不做阻塞 flash I/O），满足 is_available 约定的
+ * 非阻塞要求。
+ */
+static bool wifi_is_available(const connectivity_backend_ops_t* ops) {
+    /* 需惰性获取 iface（会写 ctx->iface），故按可变指针访问全局上下文；ops->ctx 指向可变的
+       g_wifi_ctx，去掉 const 限定安全 */
+    connectivity_wifi_ctx_t* ctx = (connectivity_wifi_ctx_t*) ops->ctx;
+    char                     ssid[PROVISIONING_WIFI_SSID_MAX_LEN];
+    char                     psk[PROVISIONING_WIFI_PSK_MAX_LEN];
+
+    if (ctx == NULL || !ctx->inited) {
+        return false;
+    }
+    /* iface 未就绪时视为不可用：让 connect_auto()/failover 跳过并于后续轮询重试，
+       直至 Wi-Fi 驱动建好 net_if */
+    if (!wifi_ensure_iface(ctx)) {
+        return false;
+    }
+    return provisioning_module_get_credentials(ssid, sizeof(ssid), psk, sizeof(psk)) == 0;
+}
+
 /* =============================================================================
  * 公开 API
  * ============================================================================= */
@@ -210,5 +267,6 @@ const connectivity_backend_ops_t* connectivity_backend_wifi_get(void) {
     g_wifi_ops.connect = wifi_connect;
     g_wifi_ops.disconnect = wifi_disconnect;
     g_wifi_ops.is_link_up = wifi_is_link_up;
+    g_wifi_ops.is_available = wifi_is_available;
     return &g_wifi_ops;
 }

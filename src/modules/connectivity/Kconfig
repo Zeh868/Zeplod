@@ -196,4 +196,17 @@ config CONNECTIVITY_FAILOVER_THREAD_PRIORITY
 	  per-backend connect timeout), a preemptible priority avoids starving
 	  higher-priority work.
 
+comment "Shell"
+
+config CONNECTIVITY_SHELL
+	bool "Enable connectivity shell commands (conn up / conn status)"
+	default n
+	depends on CONNECTIVITY_MODULE && SHELL
+	help
+	  Registers `conn up` to manually trigger a priority-ordered connect
+	  attempt (connectivity_module_connect_auto()) and `conn status` to print
+	  the current connectivity state, link type and error code. Useful as a
+	  manual fallback alongside the automatic boot-time / provisioning-triggered
+	  connect attempts.
+
 endif # CONNECTIVITY_MODULE

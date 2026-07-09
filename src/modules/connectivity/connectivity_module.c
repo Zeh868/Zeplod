@@ -12,6 +12,10 @@
  * 2026-07-09       2.0            zeh            重构为优先级注册表 + 运行时 failover：
  *                                                 多后端按优先级排序，connect_auto() 择优连接，
  *                                                 活动链路掉线自动重选，高优先级恢复可抢占升级
+ * 2026-07-09       2.1            zeh            打通首连触发链路：订阅 EVENT_PROVISIONING_STATE_CHANGED
+ *                                                 实现配网即连；start() 时立即触发一次连接尝试实现开机
+ *                                                 自连；failover_work（或 FAILOVER 关闭时的独立 connect_work）
+ *                                                 在活动后端为空且存在可用后端时也会自动尝试 connect_auto()
  *
  */
 
@@ -29,6 +33,7 @@
 #include <zeplod/connectivity_backend.h>
 #include <zeplod/lock_order.h>
 #include <zeplod/module_manager.h>
+#include <zeplod/provisioning_module.h>
 
 LOG_MODULE_REGISTER(connectivity_module, CONFIG_SYS_LOG_LEVEL);
 
@@ -62,11 +67,15 @@ typedef struct {
     struct k_mutex                     lock;                       /**< 保护 status/backends/active/module_status */
     bool                               lock_ready;
     bool                               events_registered; /**< EVENT_CONNECTIVITY_STATE_CHANGED 已注册 */
+    bool                               prov_event_subscribed;    /**< EVENT_PROVISIONING_STATE_CHANGED 是否已订阅（配网即连） */
+    uint32_t                           prov_event_subscriber_id; /**< 上述订阅的订阅者 ID，stop() 时用于反订阅 */
 #if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)
-    struct k_work_delayable            failover_work;     /**< 周期健康轮询 / 抢占升级；仅由本 work 回调自身独占访问 */
+    struct k_work_delayable            failover_work;     /**< 周期健康轮询 / 抢占升级 / 空闲首连；仅由本 work 回调自身独占访问 */
     const connectivity_backend_desc_t* preempt_candidate; /**< 抢占去抖：上次发现的高优先级候选 */
     uint8_t                            preempt_streak;    /**< 该候选连续可用的轮询次数 */
     bool                               failover_workq_started; /**< 专用工作队列是否已启动（保证只 start 一次） */
+#else
+    struct k_work_delayable            connect_work; /**< FAILOVER 关闭时的独立一次性连接触发 work（系统工作队列） */
 #endif
 } connectivity_module_cb_t;
 
@@ -99,8 +108,12 @@ static int  conn_register_event_types(void);
 static int  conn_publish_state(const connectivity_status_t* st);
 static bool conn_desc_link_up(const connectivity_backend_desc_t* d);
 static bool conn_desc_available(const connectivity_backend_desc_t* d);
+static void conn_trigger_connect(void);
+static void conn_provisioning_event_handler(const event_t* event, void* user_data);
 #if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)
 static void conn_failover_work_handler(struct k_work* work);
+#else
+static void conn_connect_work_handler(struct k_work* work);
 #endif
 
 /* =============================================================================
@@ -178,6 +191,63 @@ static bool conn_desc_available(const connectivity_backend_desc_t* d) {
         return true;
     }
     return d->ops->is_available(d->ops);
+}
+
+/**
+ * @brief 立即触发一次连接尝试（异步，非阻塞返回）
+ *
+ * 向 connectivity 模块自身的工作队列投递一个 K_NO_WAIT work 后立即返回；真正的后端
+ * connect()（可能阻塞数秒等待 net_mgmt/DHCP/modem 回调）在该 work 的执行上下文中完成，
+ * 不会阻塞调用方（事件分发线程、connectivity_module_start() 调用者等）。
+ *
+ * CONFIG_CONNECTIVITY_FAILOVER 使能时复用 failover_work 及其专用工作队列：重新调度到
+ * K_NO_WAIT 即完成"立即触发一次"，其回调本就会在活动后端为空（cur==NULL）且存在可用
+ * 后端时调用 connectivity_module_connect_auto()，随后仍按 CONFIG_CONNECTIVITY_FAILOVER_POLL_MS
+ * 自我重新调度，天然承担起周期性重试；FAILOVER 关闭时没有专用工作队列可复用，退化为独立
+ * 的一次性 connect_work，投递到系统工作队列。
+ */
+static void conn_trigger_connect(void) {
+#if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)
+    (void) k_work_reschedule_for_queue(&g_conn_failover_workq, &g_conn.failover_work, K_NO_WAIT);
+#else
+    (void) k_work_schedule(&g_conn.connect_work, K_NO_WAIT);
+#endif
+}
+
+/**
+ * @brief EVENT_PROVISIONING_STATE_CHANGED 回调：配网完成时立即触发一次连接尝试（配网即连）
+ *
+ * 仅当 payload.state == PROVISIONING_STATE_PROVISIONED 时投递 conn_trigger_connect()；
+ * 事件回调运行在事件分发线程上下文，这里只做投递不做阻塞调用，真正的 connect() 在
+ * connectivity 私有/系统工作队列中执行。
+ *
+ * @note 数据读取方式参考 event_system.h 的约定：优先判断 EVENT_FLAG_DATA_INLINE 再决定
+ * 从 event->data.inline_data 还是 event->data.ptr 取指针，而非直接把联合体当指针使用。
+ */
+static void conn_provisioning_event_handler(const event_t* event, void* user_data) {
+    const provisioning_status_t* st;
+    provisioning_status_t        st_copy;
+
+    ARG_UNUSED(user_data);
+
+    if (event == NULL || event->type != EVENT_PROVISIONING_STATE_CHANGED ||
+        event->data_len < sizeof(provisioning_status_t)) {
+        return;
+    }
+
+    st = (event->flags & EVENT_FLAG_DATA_INLINE) ? (const provisioning_status_t*) event->data.inline_data
+                                                  : (const provisioning_status_t*) event->data.ptr;
+    if (st == NULL) {
+        return;
+    }
+    st_copy = *st; /* event 仅在回调期间有效，先拷贝一份再判断/使用 */
+
+    if (st_copy.state != PROVISIONING_STATE_PROVISIONED) {
+        return;
+    }
+
+    LOG_INF("provisioning PROVISIONED event received, triggering connect attempt");
+    conn_trigger_connect();
 }
 
 /** 在注册表中查找 link_type 精确匹配的后端；未命中返回 NULL */
@@ -288,7 +358,9 @@ static int conn_init_backends(void) {
 
 #if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)
 /**
- * @brief failover 管理器周期回调：检测活动链路健康状态，必要时重选或抢占升级到更高优先级后端
+ * @brief failover 管理器周期回调：检测活动链路健康状态，必要时重选或抢占升级到更高优先级后端；
+ * 空闲（无活动后端）时若存在可用后端则尝试首连——由此同时承担开机自连/配网即连的落地执行，
+ * 以及此前从未连接成功场景下的周期性重试
  *
  * 锁序约定：仅在持锁区间读写 g_conn 状态；对后端 connect()/disconnect() 的调用可能阻塞
  * （如等待 net_mgmt 回调），一律在锁外进行，避免与 net_mgmt 回调线程互相等待造成死锁。
@@ -298,6 +370,8 @@ static int conn_init_backends(void) {
 static void conn_failover_work_handler(struct k_work* work) {
     const connectivity_backend_desc_t* cur;
     bool                               cur_down = false;
+    bool                               idle_retry = false;
+    int                                bi;
 #if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER_PREEMPT)
     const connectivity_backend_desc_t* candidate = NULL;
     int                                i;
@@ -333,6 +407,15 @@ static void conn_failover_work_handler(struct k_work* work) {
             }
         }
 #endif
+    } else {
+        /* 空闲：尚无活动后端（开机自连 / 配网刚完成 / 此前 connect_auto 全部失败）。
+           只要注册表中存在至少一个当前可用的后端就尝试一次 connect_auto()，交由锁外执行。 */
+        for (bi = 0; bi < g_conn.backend_count; bi++) {
+            if (conn_desc_available(&g_conn.backends[bi])) {
+                idle_retry = true;
+                break;
+            }
+        }
     }
     conn_unlock();
 
@@ -353,6 +436,11 @@ static void conn_failover_work_handler(struct k_work* work) {
         g_conn.preempt_candidate = NULL;
         g_conn.preempt_streak = 0;
 #endif
+        (void) connectivity_module_connect_auto();
+        goto reschedule;
+    }
+
+    if (idle_retry) {
         (void) connectivity_module_connect_auto();
         goto reschedule;
     }
@@ -415,6 +503,29 @@ reschedule:
                                            K_MSEC(CONFIG_CONNECTIVITY_FAILOVER_POLL_MS));
     } else {
         conn_unlock();
+    }
+}
+#else  /* !CONFIG_CONNECTIVITY_FAILOVER */
+/**
+ * @brief FAILOVER 关闭时的独立一次性连接触发 work：仅当当前空闲（无活动后端）时尝试 connect_auto()
+ *
+ * 由 conn_trigger_connect() 以 K_NO_WAIT 投递到系统工作队列；FAILOVER 关闭场景下没有专用
+ * 工作队列/周期轮询线程可复用，也没有周期性重试需求（本函数不会自我重新调度），仅承接
+ * 开机自连与配网即连这两个一次性触发点。
+ */
+static void conn_connect_work_handler(struct k_work* work) {
+    bool do_connect = false;
+
+    ARG_UNUSED(work);
+
+    conn_lock();
+    if (g_conn.module_status == MODULE_STATUS_RUNNING && g_conn.active == NULL) {
+        do_connect = true;
+    }
+    conn_unlock();
+
+    if (do_connect) {
+        (void) connectivity_module_connect_auto();
     }
 }
 #endif /* CONFIG_CONNECTIVITY_FAILOVER */
@@ -600,6 +711,8 @@ int connectivity_module_init(void* config) {
     memset(&g_conn.status, 0, sizeof(g_conn.status));
     g_conn.status.state = CONNECTIVITY_STATE_DOWN;
     g_conn.active = NULL;
+    g_conn.prov_event_subscribed = false;
+    g_conn.prov_event_subscriber_id = 0U;
 
     conn_build_registry();
     ret = conn_init_backends();
@@ -634,6 +747,8 @@ int connectivity_module_init(void* config) {
                            CONFIG_CONNECTIVITY_FAILOVER_THREAD_PRIORITY, &wq_cfg);
         g_conn.failover_workq_started = true;
     }
+#else
+    k_work_init_delayable(&g_conn.connect_work, conn_connect_work_handler);
 #endif
 
     LOG_INF("Connectivity module initialized (%d backend(s) registered, highest priority='%s')", g_conn.backend_count,
@@ -654,28 +769,58 @@ int connectivity_module_start(void) {
     g_conn.module_status = MODULE_STATUS_RUNNING;
     conn_unlock();
 
-#if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)
-    (void) k_work_reschedule_for_queue(&g_conn_failover_workq, &g_conn.failover_work,
-                                       K_MSEC(CONFIG_CONNECTIVITY_FAILOVER_POLL_MS));
-#endif
+    /* 订阅配网状态变化事件，实现"配网即连"：prov set-wifi 落盘成功推进到 PROVISIONED 后，
+       事件回调会投递一次 conn_trigger_connect()。订阅失败（如未编译 PROVISIONING_MODULE，
+       事件类型未注册）仅记警告，不影响 connectivity 模块继续运行——开机自连/手动 `conn up`
+       仍可用 */
+    if (!g_conn.prov_event_subscribed) {
+        uint32_t       sub_id;
+        event_status_t est;
+
+        est = event_subscribe(EVENT_PROVISIONING_STATE_CHANGED, conn_provisioning_event_handler, NULL, &sub_id);
+        if (est == EVENT_OK) {
+            g_conn.prov_event_subscriber_id = sub_id;
+            g_conn.prov_event_subscribed = true;
+        } else {
+            LOG_WRN("subscribe EVENT_PROVISIONING_STATE_CHANGED failed: %d (provisioning-triggered connect disabled)",
+                    est);
+        }
+    }
+
+    /* 开机自连：立即触发一次连接尝试。若持久化凭据已使 provisioning 初始化时便进入
+       PROVISIONED（见 provisioning_module_init()），无需等待第一次周期轮询。
+       FAILOVER 使能时该 work 结束后会按 CONFIG_CONNECTIVITY_FAILOVER_POLL_MS 自我
+       重新调度，因此本调用同时接管了原先在此处单独发起的周期健康轮询首次调度。 */
+    conn_trigger_connect();
 
     LOG_INF("Connectivity module started");
     return 0;
 }
 
 int connectivity_module_stop(void) {
-    /* 先置位 STOPPED，再取消 failover 轮询：确保并发中的 failover 回调在其重新调度前的
+    /* 先置位 STOPPED，再取消 failover/connect work：确保并发中的回调在其重新调度前的
        状态复核（见 conn_failover_work_handler 的 reschedule 标签）一定能看到 STOPPED，
        避免其在本函数取消之后又自行重新调度出一个新的悬挂定时器 */
     conn_lock();
     g_conn.module_status = MODULE_STATUS_STOPPED;
     conn_unlock();
 
+    if (g_conn.prov_event_subscribed) {
+        (void) event_unsubscribe(EVENT_PROVISIONING_STATE_CHANGED, g_conn.prov_event_subscriber_id);
+        g_conn.prov_event_subscribed = false;
+    }
+
 #if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)
     {
         struct k_work_sync sync;
 
         (void) k_work_cancel_delayable_sync(&g_conn.failover_work, &sync);
+    }
+#else
+    {
+        struct k_work_sync sync;
+
+        (void) k_work_cancel_delayable_sync(&g_conn.connect_work, &sync);
     }
 #endif
 
