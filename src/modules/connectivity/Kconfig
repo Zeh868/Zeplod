@@ -94,16 +94,27 @@ config CONNECTIVITY_BACKEND_ETHERNET_CONNECT_TIMEOUT_MS
 endif # CONNECTIVITY_BACKEND_ETHERNET
 
 config CONNECTIVITY_BACKEND_CELLULAR
-	bool "Cellular backend (generic Zephyr modem skeleton)"
-	depends on MODEM
+	bool "Cellular backend (Zephyr generic modem_cellular / PPP)"
+	depends on MODEM_CELLULAR
+	select NET_L2_PPP
+	select NET_CONNECTION_MANAGER
 	help
-	  Generic skeleton targeting Zephyr's modem subsystem: listens for
-	  NET_EVENT_L4_CONNECTED/DISCONNECTED and waits (bounded) for L4
-	  connectivity after connect(). CONFIG_MODEM only enables the modem
-	  subsystem menu; a real deployment must additionally bind a concrete
-	  modem driver (e.g. SIMCom/Quectel) to the devicetree and configure the
-	  APN. No cellular hardware is available in this repository, so this
-	  backend is only guaranteed to build, not to establish a real link.
+	  Drives the PPP network interface exposed by Zephyr's generic
+	  CONFIG_MODEM_CELLULAR driver, which already supports common modules
+	  (Quectel BG9x/EG25-G, SIMCom SIM7080/A76xx, u-blox SARA-R4/R5 &
+	  LARA-R6, Telit, Sierra HL78xx, ...). This backend is model-agnostic:
+	  connect() brings the PPP iface up (optionally resuming the modem via
+	  PM_DEVICE) and waits (bounded, see
+	  CONNECTIVITY_BACKEND_CELLULAR_CONNECT_TIMEOUT_MS) for the conn_mgr
+	  NET_EVENT_L4_CONNECTED event; disconnect() brings it down.
+
+	  Selecting a specific model = binding the matching modem_cellular
+	  compatible node in the devicetree (typically over a UART, with an
+	  aliases { modem = &... }; entry) and configuring the APN via the
+	  driver's CONFIG_MODEM_CELLULAR_APN. NET_L2_PPP and NET_CONNECTION_MANAGER
+	  are selected so the PPP iface and L4 events this backend relies on are
+	  always present. No cellular hardware is available in this repository, so
+	  end-to-end operation is untested here (build-only).
 
 config CONNECTIVITY_BACKEND_CELLULAR_PRIORITY
 	int "Cellular backend priority"
