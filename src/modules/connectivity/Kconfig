@@ -3,8 +3,8 @@ menuconfig CONNECTIVITY_MODULE
 	default n
 	depends on EVENT_MAX_TYPES > 60
 	help
-	  Link up/down abstraction with pluggable backend.
-	  Requires CONFIG_EVENT_MAX_TYPES > 60 (event ID 60).
+	  Link up/down abstraction with a priority-ordered backend registry and
+	  runtime failover. Requires CONFIG_EVENT_MAX_TYPES > 60 (event ID 60).
 
 if CONNECTIVITY_MODULE
 
@@ -12,15 +12,26 @@ config CONNECTIVITY_MODULE_AUTOINIT
 	bool "Auto-register connectivity module at boot"
 	default y
 
-choice CONNECTIVITY_BACKEND
-	prompt "Connectivity backend"
-	default CONNECTIVITY_BACKEND_NULL
-	help
-	  Null backend synchronously simulates link up/down for ztest.
-	  Wi-Fi backend targets boards with native Wi-Fi (e.g. ESP32-C6).
+comment "Backends (independently selectable; priority decides connect_auto()/failover order)"
 
 config CONNECTIVITY_BACKEND_NULL
 	bool "Null (sync stub) backend"
+	default y
+	help
+	  Synchronously simulates link up/down; used by ztest / native_sim and
+	  as a safe default when no real transport is configured. Also acts as
+	  a wildcard for connectivity_module_connect(): if no registered backend
+	  matches the requested link_type, the null backend (when present) is
+	  used instead so existing single-backend callers keep working.
+
+config CONNECTIVITY_BACKEND_NULL_PRIORITY
+	int "Null backend priority"
+	default 10
+	range 0 100
+	depends on CONNECTIVITY_BACKEND_NULL
+	help
+	  Higher value = tried first by connect_auto()/failover. Null is kept
+	  lowest by default so it never preempts a real transport.
 
 config CONNECTIVITY_BACKEND_WIFI
 	bool "Wi-Fi backend (net_mgmt/wifi_mgmt)"
@@ -34,7 +45,11 @@ config CONNECTIVITY_BACKEND_WIFI
 	  connectivity_module synchronous is_link_up() check after connect() still
 	  reflects the real outcome.
 
-endchoice
+config CONNECTIVITY_BACKEND_WIFI_PRIORITY
+	int "Wi-Fi backend priority"
+	default 30
+	range 0 100
+	depends on CONNECTIVITY_BACKEND_WIFI
 
 if CONNECTIVITY_BACKEND_WIFI
 
@@ -46,6 +61,128 @@ config CONNECTIVITY_BACKEND_WIFI_CONNECT_TIMEOUT_MS
 	  Upper bound for connect() to wait for the net_mgmt connect-result
 	  callback before giving up and returning -ETIMEDOUT.
 
-endif
+endif # CONNECTIVITY_BACKEND_WIFI
 
-endif
+config CONNECTIVITY_BACKEND_ETHERNET
+	bool "Ethernet backend (net_mgmt/net_if)"
+	depends on NET_L2_ETHERNET
+	help
+	  Real Ethernet link via Zephyr's net_mgmt: listens for
+	  NET_EVENT_IF_UP/DOWN and NET_EVENT_IPV4_ADDR_ADD to track link state;
+	  connect() brings the interface up and waits (bounded) for a DHCP-bound
+	  IPv4 address before returning.
+
+config CONNECTIVITY_BACKEND_ETHERNET_PRIORITY
+	int "Ethernet backend priority"
+	default 40
+	range 0 100
+	depends on CONNECTIVITY_BACKEND_ETHERNET
+	help
+	  Ethernet defaults to the highest priority: wired links are generally
+	  the most stable/preferred transport when available.
+
+if CONNECTIVITY_BACKEND_ETHERNET
+
+config CONNECTIVITY_BACKEND_ETHERNET_CONNECT_TIMEOUT_MS
+	int "Ethernet connect bounded wait timeout (ms)"
+	default 15000
+	range 1000 60000
+	help
+	  Upper bound for connect() to wait for a DHCP-bound IPv4 address
+	  (NET_EVENT_IPV4_ADDR_ADD) before giving up and returning -ETIMEDOUT.
+
+endif # CONNECTIVITY_BACKEND_ETHERNET
+
+config CONNECTIVITY_BACKEND_CELLULAR
+	bool "Cellular backend (generic Zephyr modem skeleton)"
+	depends on MODEM
+	help
+	  Generic skeleton targeting Zephyr's modem subsystem: listens for
+	  NET_EVENT_L4_CONNECTED/DISCONNECTED and waits (bounded) for L4
+	  connectivity after connect(). CONFIG_MODEM only enables the modem
+	  subsystem menu; a real deployment must additionally bind a concrete
+	  modem driver (e.g. SIMCom/Quectel) to the devicetree and configure the
+	  APN. No cellular hardware is available in this repository, so this
+	  backend is only guaranteed to build, not to establish a real link.
+
+config CONNECTIVITY_BACKEND_CELLULAR_PRIORITY
+	int "Cellular backend priority"
+	default 20
+	range 0 100
+	depends on CONNECTIVITY_BACKEND_CELLULAR
+	help
+	  Cellular defaults below Wi-Fi (typically metered/higher-latency) but
+	  above null.
+
+if CONNECTIVITY_BACKEND_CELLULAR
+
+config CONNECTIVITY_BACKEND_CELLULAR_CONNECT_TIMEOUT_MS
+	int "Cellular connect bounded wait timeout (ms)"
+	default 30000
+	range 1000 120000
+	help
+	  Upper bound for connect() to wait for the NET_EVENT_L4_CONNECTED
+	  callback before giving up and returning -ETIMEDOUT. Higher than the
+	  Wi-Fi/Ethernet defaults since modem registration/PPP negotiation is
+	  typically slower.
+
+endif # CONNECTIVITY_BACKEND_CELLULAR
+
+comment "Failover manager (only meaningful with 2+ backends enabled above)"
+
+config CONNECTIVITY_FAILOVER
+	bool "Enable runtime failover manager"
+	default y
+	help
+	  When 2 or more backends are registered, periodically polls the active
+	  backend's link state and re-runs connect_auto() if it drops. With a
+	  single backend registered this is a harmless no-op poller (e.g. the
+	  default null-only build).
+
+config CONNECTIVITY_FAILOVER_PREEMPT
+	bool "Preempt to a higher-priority backend when it becomes available"
+	default y
+	depends on CONNECTIVITY_FAILOVER
+	help
+	  If a backend with higher priority than the currently active one
+	  becomes available again, connect it and confirm it is up before
+	  tearing down the lower-priority link (make-before-break), instead of
+	  staying on the lower-priority backend indefinitely.
+
+config CONNECTIVITY_FAILOVER_POLL_MS
+	int "Failover health poll period (ms)"
+	default 5000
+	range 500 60000
+	depends on CONNECTIVITY_FAILOVER
+	help
+	  Period of the k_work_delayable health/preempt poll.
+
+config CONNECTIVITY_FAILOVER_WORKQ_STACK_SIZE
+	int "Failover dedicated workqueue thread stack size (bytes)"
+	default 2048
+	range 1024 8192
+	depends on CONNECTIVITY_FAILOVER
+	help
+	  Stack size of the dedicated workqueue thread that runs the failover
+	  poll/preempt work. The failover handler calls backend connect()/
+	  disconnect(), which may walk the net_mgmt / DHCP / modem code paths and
+	  therefore need a non-trivial stack. Increase this if the failover thread
+	  overflows its stack (e.g. observed via CONFIG_THREAD_STACK_INFO /
+	  a stack sentinel fault). Kept on a private queue (not the system
+	  workqueue) so a slow/blocking connect() cannot stall system work such as
+	  network timers.
+
+config CONNECTIVITY_FAILOVER_THREAD_PRIORITY
+	int "Failover dedicated workqueue thread priority"
+	default 5
+	range 0 15
+	depends on CONNECTIVITY_FAILOVER
+	help
+	  Scheduling priority of the dedicated failover workqueue thread
+	  (lower value = higher priority; positive values are preemptible).
+	  Defaults to 5 to match the event dispatcher / data bus background
+	  threads. Since a backend connect() may block for seconds (bounded by the
+	  per-backend connect timeout), a preemptible priority avoids starving
+	  higher-priority work.
+
+endif # CONNECTIVITY_MODULE
