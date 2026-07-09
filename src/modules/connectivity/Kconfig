@@ -17,11 +17,35 @@ choice CONNECTIVITY_BACKEND
 	default CONNECTIVITY_BACKEND_NULL
 	help
 	  Null backend synchronously simulates link up/down for ztest.
-	  Wi-Fi backend can be added in Phase 4.
+	  Wi-Fi backend targets boards with native Wi-Fi (e.g. ESP32-C6).
 
 config CONNECTIVITY_BACKEND_NULL
 	bool "Null (sync stub) backend"
 
+config CONNECTIVITY_BACKEND_WIFI
+	bool "Wi-Fi backend (net_mgmt/wifi_mgmt)"
+	depends on WIFI && NET_L2_WIFI_MGMT && PROVISIONING_MODULE
+	select NET_MGMT_EVENT_INFO
+	help
+	  Real Wi-Fi link via Zephyr's net_mgmt/wifi_mgmt subsystem. SSID/PSK are
+	  read from the provisioning module (persisted via app_kv/NVS); connect()
+	  waits (bounded, see CONNECTIVITY_BACKEND_WIFI_CONNECT_TIMEOUT_MS) for the
+	  NET_EVENT_WIFI_CONNECT_RESULT callback before returning, so the existing
+	  connectivity_module synchronous is_link_up() check after connect() still
+	  reflects the real outcome.
+
 endchoice
+
+if CONNECTIVITY_BACKEND_WIFI
+
+config CONNECTIVITY_BACKEND_WIFI_CONNECT_TIMEOUT_MS
+	int "Wi-Fi connect bounded wait timeout (ms)"
+	default 15000
+	range 1000 60000
+	help
+	  Upper bound for connect() to wait for the net_mgmt connect-result
+	  callback before giving up and returning -ETIMEDOUT.
+
+endif
 
 endif

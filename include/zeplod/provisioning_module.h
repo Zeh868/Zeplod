@@ -58,6 +58,16 @@ typedef struct {
 } provisioning_credentials_t;
 
 /* =============================================================================
+ * Wi-Fi 凭据长度上限
+ * ============================================================================= */
+
+/** SSID 缓冲区长度上限（Zephyr WIFI_SSID_MAX_LEN=32 + 结尾 NUL） */
+#define PROVISIONING_WIFI_SSID_MAX_LEN 33U
+
+/** PSK 缓冲区长度上限（Zephyr WIFI_PSK_MAX_LEN=64 + 结尾 NUL） */
+#define PROVISIONING_WIFI_PSK_MAX_LEN 65U
+
+/* =============================================================================
  * 模块接口
  * ============================================================================= */
 
@@ -74,9 +84,13 @@ int             provisioning_module_control(int cmd, void* arg);
  * ============================================================================= */
 
 /**
- * @brief 开始配网（须已 start；Phase 3 stub 立即成功）
- * @param creds 凭据（可为 NULL，stub 忽略）
- * @return 0 成功；APP_ERR_PROVISIONING / APP_ERR_INVALID_PARAM
+ * @brief 开始配网（须已 start）
+ *
+ * creds 非空时会先调用 provisioning_module_set_credentials() 落盘凭据，
+ * 成功后状态机才推进 IN_PROGRESS → PROVISIONED；落盘失败则置 ERROR 并返回错误码。
+ *
+ * @param creds 凭据（可为 NULL，仅推进状态机，不写入凭据）
+ * @return 0 成功；APP_ERR_PROVISIONING / APP_ERR_INVALID_PARAM / APP_ERR_INIT
  */
 int provisioning_module_begin(const provisioning_credentials_t* creds);
 
@@ -96,6 +110,29 @@ int provisioning_module_get_state(provisioning_state_t* out_state);
  * @return 0 成功；-EINVAL / -ENOMEM
  */
 int provisioning_module_get_device_id(char* out, size_t out_len);
+
+/**
+ * @brief 写入 Wi-Fi 凭据（SSID/PSK），经 app_kv 持久化到 NVS
+ *
+ * key 固定为 "wifi.ssid" / "wifi.psk"；写入 RAM 表后若编译了 CONFIG_APP_KV_PERSIST，
+ * 会调用 app_kv_save() 落盘。落盘失败仅记日志（RAM 缓存已生效），不视为本函数失败。
+ *
+ * @param creds 凭据，ssid/psk 均须非空且不超过 PROVISIONING_WIFI_SSID_MAX_LEN /
+ * PROVISIONING_WIFI_PSK_MAX_LEN（含结尾 0）
+ * @return 0 成功；APP_ERR_INVALID_PARAM 参数非法；APP_ERR_INIT 模块未运行；
+ * 其余为 app_kv_set 失败时的错误码（如 APP_ERR_KV_FULL）
+ */
+int provisioning_module_set_credentials(const provisioning_credentials_t* creds);
+
+/**
+ * @brief 读取已持久化的 Wi-Fi 凭据（SSID/PSK）
+ * @param ssid 输出 SSID 缓冲区
+ * @param ssid_len 缓冲区长度
+ * @param psk 输出 PSK 缓冲区
+ * @param psk_len 缓冲区长度
+ * @return 0 成功；APP_ERR_INVALID_PARAM 参数非法；APP_ERR_NOT_FOUND 尚未配置凭据
+ */
+int provisioning_module_get_credentials(char* ssid, size_t ssid_len, char* psk, size_t psk_len);
 
 #ifdef __cplusplus
 }

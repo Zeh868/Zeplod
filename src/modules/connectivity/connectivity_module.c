@@ -109,10 +109,12 @@ static void conn_set_state_locked(connectivity_state_t state, int err) {
     g_conn.status.error_code = err;
 }
 
-/** 按 Kconfig 选择后端实现（当前仅 null 桩） */
+/** 按 Kconfig 选择后端实现（null 桩 或 Wi-Fi） */
 static const connectivity_backend_ops_t* conn_select_backend(void) {
 #if IS_ENABLED(CONFIG_CONNECTIVITY_BACKEND_NULL)
     return connectivity_backend_null_get();
+#elif IS_ENABLED(CONFIG_CONNECTIVITY_BACKEND_WIFI)
+    return connectivity_backend_wifi_get();
 #else
     return NULL;
 #endif
@@ -258,7 +260,8 @@ int connectivity_module_init(void* config) {
         return ret;
     }
 
-    LOG_INF("Connectivity module initialized (null backend)");
+    LOG_INF("Connectivity module initialized (backend=%s)",
+           IS_ENABLED(CONFIG_CONNECTIVITY_BACKEND_WIFI) ? "wifi" : "null");
     return 0;
 }
 
