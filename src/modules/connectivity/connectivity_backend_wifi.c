@@ -23,6 +23,9 @@
  *                                                 （驱动 init 晚于 connectivity 模块）不再返回失败，
  *                                                 避免整模块注册失败而永不 RUNNING；改在
  *                                                 connect/is_available 首次需要时获取并缓存
+ * 2026-07-10       1.3            zeh            链路状态改读 net_if 真实 oper 状态（对齐 eth/cellular），
+ *                                                 不再依赖易脱节的事件缓存；connect 检测到已关联则直接
+ *                                                 返回成功，避免对活链路重复 CONNECT 造成抖动与误判 ERROR
  *
  */
 
@@ -127,6 +130,21 @@ static bool wifi_ensure_iface(connectivity_wifi_ctx_t* ctx) {
     return ctx->iface != NULL;
 }
 
+/**
+ * @brief 查询 Wi-Fi 链路是否真正处于已关联/可用状态
+ *
+ * 直接读网络接口的 admin/oper 状态（与 ethernet/cellular 后端一致），而非依赖由 net_mgmt
+ * 事件更新的缓存标志 ctx->link_up。缓存易与真实链路脱节（如驱动侧自行重连、瞬时事件把缓存
+ * 清零），会导致 connectivity 误判链路已断而反复对活链路重发 CONNECT，进而 deauth/抖动并
+ * 误标 ERROR。oper==UP 表示已关联且载波就绪，与 `net iface` 显示的 oper 状态一致。
+ *
+ * @param iface Wi-Fi 网络接口（可为 NULL）
+ * @return 链路真实可用返回 true，否则 false
+ */
+static bool wifi_link_really_up(struct net_if* iface) {
+    return iface != NULL && net_if_is_up(iface) && net_if_oper_state(iface) == NET_IF_OPER_UP;
+}
+
 static int wifi_init(connectivity_backend_ops_t* ops) {
     connectivity_wifi_ctx_t* ctx = (connectivity_wifi_ctx_t*) ops->ctx;
 
@@ -170,6 +188,14 @@ static int wifi_connect(connectivity_backend_ops_t* ops) {
     if (!wifi_ensure_iface(ctx)) {
         LOG_ERR("Wi-Fi iface still unavailable; cannot connect");
         return -ENODEV;
+    }
+
+    /* 已经关联则直接成功：避免对活链路重复发起 CONNECT 造成 deauth/重关联抖动，也让
+       connect_auto()/failover 在链路已 up 时收敛到 UP，而非反复重连并误标 ERROR */
+    if (wifi_link_really_up(ctx->iface)) {
+        ctx->link_up = true;
+        LOG_DBG("Wi-Fi already connected; skip re-connect");
+        return 0;
     }
 
     ret = provisioning_module_get_credentials(ssid, sizeof(ssid), psk, sizeof(psk));
@@ -227,7 +253,8 @@ static bool wifi_is_link_up(const connectivity_backend_ops_t* ops) {
     if (ctx == NULL) {
         return false;
     }
-    return ctx->link_up;
+    /* 以 net_if 真实状态为准，而非事件缓存 ctx->link_up，避免二者脱节导致的误判 */
+    return wifi_link_really_up(ctx->iface);
 }
 
 /**
