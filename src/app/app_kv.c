@@ -9,6 +9,9 @@
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-07-10       1.1            zeh            修复持久化：flash 加载从 app_kv_init(优先级 11，
+ *                                                 早于 flash 驱动)推迟到独立 SYS_INIT(flash 之后)，
+ *                                                 避免开机 load 必然失败导致重启后已保存 KV 丢失
  *
  */
 
@@ -29,6 +32,7 @@
 LOG_MODULE_REGISTER(app_kv, CONFIG_SYS_LOG_LEVEL);
 
 #if APP_CONFIG_ENABLE_APP_KV && IS_ENABLED(CONFIG_APP_KV_PERSIST)
+#include <zephyr/init.h>
 #include <zephyr/settings/settings.h>
 #endif
 
@@ -225,28 +229,38 @@ void app_kv_init(void) {
 
 #if IS_ENABLED(CONFIG_APP_KV_PERSIST)
     k_mutex_init(&g_kv_persist_lock);
-    if (settings_subsys_init() != 0) {
-        LOG_WRN("settings_subsys_init failed; app_kv not loaded from flash");
-    } else {
-        k_mutex_lock(&g_kv_persist_lock, K_FOREVER);
-        ssize_t n = settings_load_one(KV_SETTINGS_KEY, g_kv_persist_blob, sizeof(g_kv_persist_blob));
-        if (n < 0 && n != -ENOENT) {
-            LOG_WRN("settings_load_one(%s) failed: %zd", KV_SETTINGS_KEY, n);
-        } else if (n > 0) {
-            k_mutex_lock(&g_kv_lock, K_FOREVER);
-            int d = kv_decode_into_slots(g_kv_persist_blob, (size_t) n);
-            if (d != APP_OK) {
-                LOG_WRN("app_kv flash blob invalid or corrupt (err=%d), cleared RAM table", d);
-                memset(g_kv, 0, sizeof(g_kv));
-            }
-            k_mutex_unlock(&g_kv_lock);
-        }
-        k_mutex_unlock(&g_kv_persist_lock);
-    }
+    /* 本函数在 APP_INIT_PRIO_APP_KV(=11) 即完成 RAM 表就绪；但此刻 flash 驱动
+       (CONFIG_FLASH_INIT_PRIORITY，通常 50) 尚未初始化，settings/NVS 不可访问。若在此加载
+       持久值必然失败（settings_subsys_init 返回错误），导致重启后已保存的 KV 丢失。故将 flash
+       加载推迟到 app_kv_restore_from_flash()（SYS_INIT，优先级晚于 flash 驱动、早于读取持久值
+       的业务模块）执行。 */
 #endif
 
     g_kv_ready = true;
 }
+
+#if IS_ENABLED(CONFIG_APP_KV_PERSIST)
+/**
+ * @brief flash 驱动就绪后从持久化存储恢复 KV（二次初始化）
+ *
+ * app_kv_init() 只完成 RAM 表就绪；受 SYS_INIT 优先级所限，其运行时 flash 驱动尚未初始化，
+ * settings_subsys_init()/NVS 必失败，持久值无法读回（表现为重启后已保存的键丢失）。本 SYS_INIT
+ * 的优先级 APP_INIT_PRIO_APP_KV_RESTORE 晚于 flash 驱动、早于首个读取持久值的业务模块（如
+ * provisioning），在此调用 app_kv_load() 将持久化的键合并进 RAM 表。恢复失败不阻断内核初始化。
+ *
+ * @return 恒返回 0（SYS_INIT 语义：不因数据恢复失败而中止启动）
+ */
+static int app_kv_restore_from_flash(void) {
+    int ret = app_kv_load();
+
+    if (ret != APP_OK) {
+        LOG_WRN("app_kv restore from flash failed: %d", ret);
+    }
+    return 0;
+}
+
+SYS_INIT(app_kv_restore_from_flash, POST_KERNEL, APP_INIT_PRIO_APP_KV_RESTORE);
+#endif /* CONFIG_APP_KV_PERSIST */
 
 int app_kv_register_migrate(uint32_t from_ver, uint32_t to_ver, app_kv_migrate_fn fn, void* user_data) {
     if (!g_kv_ready || fn == NULL || from_ver >= to_ver) {
