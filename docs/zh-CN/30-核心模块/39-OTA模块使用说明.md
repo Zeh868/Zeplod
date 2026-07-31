@@ -93,7 +93,7 @@ MCUmgr 被动路径：`ota_module_start()` 注册 img_mgmt 钩子；上传完成
 
 ```
 ota status   # 打印当前状态
-ota begin    # 开始下载（演示；须 OTA_TRANSPORT_ACTIVE）
+ota begin    # 开始下载（须 OTA_TRANSPORT_NULL 或 OTA_TRANSPORT_ACTIVE 之一）
 ota abort    # 中止会话
 ```
 

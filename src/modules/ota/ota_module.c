@@ -376,9 +376,17 @@ int ota_module_begin_update(void) {
         return APP_ERR_INIT;
     }
 
-#if !IS_ENABLED(CONFIG_OTA_TRANSPORT_ACTIVE)
+    /*
+     * 主动 ingest（begin/write_chunk/finish）依赖编译期选定的 active_transport：
+     * OTA_TRANSPORT_NULL（ztest 模拟）或 OTA_TRANSPORT_ACTIVE（mcuboot flash_img）
+     * 二者互斥（Kconfig 中 OTA_TRANSPORT_ACTIVE 嵌于 `if !OTA_TRANSPORT_NULL`），
+     * 但均会在 ota_module_init() 中把 g_ota.active_transport 设为非空。仅当二者
+     * 均未启用（例如只开了 MCUMGR_SMP 被动路径）时，才在此提前拦截，
+     * 避免误入下方对 active_transport 的空指针判断才报错。
+     */
+#if !IS_ENABLED(CONFIG_OTA_TRANSPORT_ACTIVE) && !IS_ENABLED(CONFIG_OTA_TRANSPORT_NULL)
     ota_unlock();
-    LOG_WRN("Active ingest disabled; use MCUmgr SMP or enable CONFIG_OTA_TRANSPORT_ACTIVE");
+    LOG_WRN("Active ingest disabled; use MCUmgr SMP or enable CONFIG_OTA_TRANSPORT_ACTIVE/_NULL");
     return APP_ERR_OTA_TRANSPORT;
 #endif
 

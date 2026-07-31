@@ -304,7 +304,8 @@ static void gpio_thread_func(void* p1, void* p2, void* p3) {
 }
 
 static void button_isr(const struct device* dev, struct gpio_callback* cb, uint32_t pins) {
-    /* 中断处理 - 仅设置标志，实际处理在线程中 */
+    /* 占位空实现：当前未做任何处理，按键检测完全由 gpio_thread_func 以 50ms
+     * 周期轮询 example_module_gpio_get_button() 完成（见上方线程循环）。 */
     ARG_UNUSED(dev);
     ARG_UNUSED(cb);
     ARG_UNUSED(pins);
