@@ -187,12 +187,11 @@ zeplod/
 │   ├── overlay.dts                   # 通用设备树覆盖
 │   ├── nucleo_l4r5zi.overlay         # STM32 Nucleo L4R5ZI 板覆盖
 │   └── mimxrt1050_fire_mimxrt1052_qspi.overlay
-├── scripts/                          # 环境脚本、打包、版本管理、商业模块管理
+├── scripts/                          # 环境脚本、打包、版本管理
 │   ├── setup_env.{sh,bat,ps1}        # 环境变量设置
 │   ├── build_all.{sh,bat}            # 批量构建脚本
 │   ├── analyze_map.{sh,bat,ps1}      # MAP 文件分析
 │   ├── package_release.{sh,ps1}      # 发布打包
-│   ├── proprietary_manage.{sh,bat,ps1} # 商业模块启用/禁用
 │   ├── bump_version.py               # 版本号同步
 │   └── module_config.py              # 模块配置工具
 ├── tests/                            # ztest 单元测试（native_sim）
@@ -276,7 +275,6 @@ zeplod/
     │   ├── app_main.c
     │   ├── app_version.c             # 版本 API（版本宏由根目录 APP_VERSION 经 -D 注入）
     │   └── app_kv.c                  # 应用键值存储（可选掉电保存）
-    └── proprietary/                  # 商业闭源模块（可选，由 proprietary_manage 启用）
 ```
 
 ## 复制为新项目（检查清单）

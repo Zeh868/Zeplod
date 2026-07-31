@@ -85,7 +85,6 @@ zeplod/
 │   ├── core/           # Core Event System
 │   ├── modules/        # Business modules
 │   ├── modules_examples/ # Example modules
-│   ├── proprietary/    # Commercial closed-source modules
 │   └── services/       # System services
 ├── tests/              # Unit tests
 ├── docs/               # Documentation

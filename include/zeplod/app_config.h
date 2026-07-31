@@ -145,6 +145,7 @@ extern "C" {
 #define APP_INIT_PRIO_DATA_BUS            46
 #define APP_INIT_PRIO_DATA_BUS_BRIDGE     47
 #define APP_INIT_PRIO_SYS_TIMER           50
+#define APP_INIT_PRIO_APP_KV_RESTORE      51 /* flash 驱动(≈50)之后、业务模块(≥54)之前恢复持久化 KV */
 #define APP_INIT_PRIO_SYS_WDT             52
 #define APP_INIT_PRIO_MODULE_MGR          54
 #define APP_INIT_PRIO_MODULE_CONNECTIVITY 55

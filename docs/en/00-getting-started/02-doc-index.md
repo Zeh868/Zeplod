@@ -15,8 +15,7 @@ docs/
 │   │   ├── 03-术语速查卡片.md
 │   │   ├── 04-开发者入门指南.md
 │   │   ├── 05-任务导航.md
-│   │   ├── 06-代码与文档映射.md
-│   │   └── 07-快速参考卡片.md
+│   │   └── 06-代码与文档映射.md
 │   ├── 10-环境与构建/
 │   │   ├── 11-环境搭建与配置指南.md
 │   │   ├── 12-Freestanding应用与构建基础.md
@@ -235,22 +234,9 @@ For a **separate Git repo** with zeplod under `framework/` (e.g. zephyr_gateway)
 | **[81-contributing-code-style.md](../80-contributing/81-contributing-code-style.md)** | Issue/PR, style, CI self-check | Contributors, reviewers |
 | **[82-doc-improvements.md](../80-contributing/82-doc-improvements.md)** | Documentation gap analysis and improvement suggestions | Documentation maintainers |
 
-### Proprietary Module Documentation
-
-> **Closed-source commercial modules** — Requires authorization. Contact china_qzh@163.com
-
-| Document | Main Content | Typical Reader |
-|----------|--------------|----------------|
-| **[src/proprietary/mesh_communication/README.md](../../../src/proprietary/mesh_communication/README.md)** | Multi-device communication module overview, quick start | **Must-read** |
-| **[API Reference.md](../../../src/proprietary/mesh_communication/docs/API参考.md)** | Transport layer, device management, physical layer API complete reference | App developers |
-| **[Physical Layer Adaptation Guide.md](../../../src/proprietary/mesh_communication/docs/物理层适配指南.md)** | Complete guide for adding new physical layer adaptation | Driver engineers |
-| **[Protocol Frame Format Details.md](../../../src/proprietary/mesh_communication/docs/协议帧格式详解.md)** | Frame format, CRC, transmission flow, SIL-2 explanation | Protocol developers |
-| **[Device Events & Callback说明.md](../../../src/proprietary/mesh_communication/docs/设备事件与回调说明.md)** | Event types, callback mechanism, queues, diagnostic statistics | App developers |
-
 ### Other
 
 - **`docs/api/html/index.html`** — Doxygen-generated **C API** documentation (run `scripts/generate_docs.ps1` or `generate_docs.sh` to generate).
-- **`docs/zh-CN/07-快速参考卡片.md`** — Commercial module management quick reference card.
 - **`tests/README.md`** — **Detailed** explanation of unit tests (`native_posix`) (complements `51-unit-testing-ci.md`).
 - Root directory **`README.md`** — Project overview and features.
 

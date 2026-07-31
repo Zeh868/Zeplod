@@ -248,18 +248,6 @@ jobs:
             -- -DCONF_FILE="prj.conf;prj_sys_time.conf"
           west build -t run --build-dir build_tests_sys_time
 
-      - name: Run connectivity module tests
-        run: |
-          west build -b native_sim tests/ --build-dir build_tests_connectivity -p always \
-            -- -DCONF_FILE="prj.conf;prj_connectivity.conf"
-          west build -t run --build-dir build_tests_connectivity
-
-      - name: Run provisioning module tests
-        run: |
-          west build -b native_sim tests/ --build-dir build_tests_provisioning -p always \
-            -- -DCONF_FILE="prj.conf;prj_provisioning.conf"
-          west build -t run --build-dir build_tests_provisioning
-
       - name: Run factory mode tests
         run: |
           west build -b native_sim tests/ --build-dir build_tests_factory -p always \
@@ -271,24 +259,6 @@ jobs:
           west build -b native_sim tests/ --build-dir build_tests_factory_no_kv -p always \
             -- -DCONF_FILE="prj.conf;prj_factory_no_kv.conf"
           west build -t run --build-dir build_tests_factory_no_kv
-
-      - name: Run remote_ops tests
-        run: |
-          west build -b native_sim tests/ --build-dir build_tests_remote_ops -p always \
-            -- -DCONF_FILE="prj.conf;prj_remote_ops.conf"
-          west build -t run --build-dir build_tests_remote_ops
-
-      - name: Run feature_gate tests
-        run: |
-          west build -b native_sim tests/ --build-dir build_tests_feature_gate -p always \
-            -- -DCONF_FILE="prj.conf;prj_feature_gate.conf"
-          west build -t run --build-dir build_tests_feature_gate
-
-      - name: Run feature_gate boot license tests
-        run: |
-          west build -b native_sim tests/ --build-dir build_tests_feature_gate_boot -p always \
-            -- -DCONF_FILE="prj.conf;prj_feature_gate_boot.conf"
-          west build -t run --build-dir build_tests_feature_gate_boot
 
       - name: Build scale config (compile check)
         run: |

@@ -250,17 +250,14 @@ The project provides a Python script for convenient management of module enable/
 # View all available modules
 python scripts/module_config.py list
 
-# View proprietary modules
-python scripts/module_config.py list-proprietary
-
 # View current module status
 python scripts/module_config.py status
 
-# Enable a module
-python scripts/module_config.py enable MODULE_MANAGER_PRO
+# Enable an example module
+python scripts/module_config.py enable EXAMPLE_MODULE_GPIO
 
-# Disable a module
-python scripts/module_config.py disable MODULE_MANAGER_PRO
+# Disable an example module
+python scripts/module_config.py disable EXAMPLE_MODULE_GPIO
 
 # Generate custom configuration file
 python scripts/module_config.py generate --output prj_custom.conf
@@ -268,14 +265,14 @@ python scripts/module_config.py generate --output prj_custom.conf
 
 ### Workflow Examples
 
-**Scenario 1: Enable a Proprietary Module**
+**Scenario 1: Enable an Optional Module**
 
 ```bash
 # 1. View current status
 python scripts/module_config.py status
 
-# 2. Enable the required proprietary module
-python scripts/module_config.py enable MODULE_MANAGER_PRO
+# 2. Enable the required module
+python scripts/module_config.py enable EXAMPLE_MODULE_GPIO
 
 # 3. Confirm configuration has been updated
 python scripts/module_config.py status
@@ -288,7 +285,7 @@ west build -b nucleo_l4r5zi
 
 ```bash
 # 1. Enable/disable modules
-python scripts/module_config.py enable MODULE_MANAGER_PRO
+python scripts/module_config.py enable EXAMPLE_MODULE_UART
 python scripts/module_config.py disable EXAMPLE_MODULE_GPIO
 
 # 2. Generate custom configuration file
@@ -302,15 +299,11 @@ west build -b nucleo_l4r5zi . -- -DCONF_FILE="prj.conf;prj_my_project.conf"
 
 - The script directly modifies `CONFIG_xxx=y/n` configurations in `prj.conf`
 - All modules **are independent of each other**; enabling one module does not affect others
-- Proprietary modules are disabled by default and require authorization to enable
-- Use of proprietary modules must comply with the licensing agreement
 - Generated `prj_custom.conf` can be used for different project configuration combinations
 
 ### Notes
 
 1. After modifying configuration, need to **re-run CMake configuration** (clean build directory or `west build --pristine`)
-2. After enabling a proprietary module, ensure the corresponding source file exists in `src/proprietary/` directory
-3. Use of proprietary modules must comply with the licensing agreement
 
 ---
 
@@ -534,89 +527,25 @@ void module_manager_set_callback(module_mgr_callback_t callback,
 
 ### Compatibility Layer API
 
-Standard and commercial (PRO) versions share a unified entry point, provided through `module_manager_compat.h` abstraction layer.
+`module_manager_compat.h` provides a thin `module_compat_*` wrapper that maps to the standard `module_manager_*` API (historical PRO backends are outside this repository; this header no longer switches to closed-source implementations).
 
 ```c
-#include <modules/module_manager_compat.h>
+#include <zeplod/module_manager_compat.h>
 
-// Header files
-// - Standard version: directly maps to module_manager_* functions
-// - PRO version: maps to module_manager_pro_* functions
+module_compat_config_t cfg = {
+    .max_modules = 16,
+    .max_dependencies = 4,
+    .enable_auto_deps = false,
+    .enable_hotplug = false,
+    .enable_lifecycle_hooks = false,
+    .enable_health_monitor = false,
+};
 
-// Macro check
-#if MODULE_COMPAT_USE_PRO
-// Use PRO version API
-#else
-// Use standard version API
-#endif
-
-// Unified configuration structure
-typedef struct {
-    uint16_t max_modules;
-    uint16_t max_dependencies;
-    bool     enable_auto_deps;
-    bool     enable_hotplug;
-    bool     enable_lifecycle_hooks;
-    bool     enable_health_monitor;
-} module_compat_config_t;
-
-// Unified statistics structure
-typedef struct {
-    uint32_t total_modules;
-    uint32_t active_modules;
-    uint32_t error_modules;
-    uint32_t events_processed;
-    uint32_t events_dropped;
-    uint32_t hotplug_events;
-    uint32_t dependency_resolutions;
-    uint32_t health_check_cycles;
-} module_compat_stats_t;
-
-// Initialization/statistics API
-int  module_compat_init(const module_compat_config_t *config);
-int  module_compat_start(void);
-int  module_compat_stop(void);
-int  module_compat_shutdown(void);
-void module_compat_get_stats(module_compat_stats_t *stats);
-void module_compat_reset_stats(void);
-
-// Module API (unified function names, standard version is macro mapping, PRO version is function)
-int module_compat_register(const module_interface_t *interface, void *config, uint32_t *module_id);
-int module_compat_unregister(uint32_t module_id);
-int module_compat_get_module_info(uint32_t module_id, module_info_t *out);
-uint32_t module_compat_get_id_by_name(const char *name);
-void module_compat_foreach(void (*callback)(module_info_t *, void *), void *user_data);
-int module_compat_start_module(uint32_t module_id);
-int module_compat_stop_module(uint32_t module_id);
-int module_compat_start_all(void);
-int module_compat_stop_all(void);
-int module_compat_suspend_module(uint32_t module_id);
-int module_compat_resume_module(uint32_t module_id);
-int module_compat_subscribe(uint32_t module_id, event_type_t event_type);
-int module_compat_unsubscribe(uint32_t module_id, event_type_t event_type);
-int module_compat_send_to_module(uint32_t module_id, const event_t *event);
-int module_compat_broadcast(const event_t *event);
-void module_compat_dump_info(void);
-
-// Usage example
-void init_with_compat(void)
-{
-    module_compat_config_t cfg = {
-        .max_modules = 16,
-        .max_dependencies = 4,
-        .enable_auto_deps = false,
-        .enable_hotplug = false,
-        .enable_lifecycle_hooks = false,
-        .enable_health_monitor = false,
-    };
-
-    module_compat_init(&cfg);
-
-    if (MODULE_COMPAT_USE_PRO) {
-        // PRO-specific initialization
-    }
-}
+module_compat_init(&cfg);
+module_compat_start();
 ```
+
+See `include/zeplod/module_manager_compat.h` for the full API list.
 
 ### Helper Macros
 

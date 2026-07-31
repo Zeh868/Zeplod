@@ -22,10 +22,21 @@
 #include <string.h>
 
 #include <zeplod/app_config.h>
+#include <zeplod/app_kv.h>
 #include <zeplod/lock_order.h>
 #include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(provisioning_module, CONFIG_SYS_LOG_LEVEL);
+
+/* =============================================================================
+ * 常量
+ * ============================================================================= */
+
+/** app_kv 中存储 SSID 的键名 */
+#define PROV_KV_KEY_SSID "wifi.ssid"
+
+/** app_kv 中存储 PSK 的键名 */
+#define PROV_KV_KEY_PSK "wifi.psk"
 
 /* =============================================================================
  * 内部数据结构
@@ -35,7 +46,7 @@ LOG_MODULE_REGISTER(provisioning_module, CONFIG_SYS_LOG_LEVEL);
 typedef struct {
     provisioning_state_t state;             /**< 配网状态机当前阶段 */
     module_status_t      module_status;     /**< init/start/stop 生命周期 */
-    struct k_mutex       lock;              /**< 保护 state 与 module_status */
+    struct k_mutex        lock;              /**< 保护 state 与 module_status */
     bool                 lock_ready;        /**< 互斥量是否已完成 k_mutex_init */
     bool                 events_registered; /**< EVENT_PROVISIONING_STATE_CHANGED 是否已注册 */
 } provisioning_module_cb_t;
@@ -118,7 +129,7 @@ static int prov_publish_state(provisioning_state_t state, int err) {
  * ============================================================================= */
 
 int provisioning_module_begin(const provisioning_credentials_t* creds) {
-    ARG_UNUSED(creds);
+    int ret;
 
     prov_lock();
     if (g_prov.module_status == MODULE_STATUS_UNINITIALIZED) {
@@ -135,10 +146,21 @@ int provisioning_module_begin(const provisioning_credentials_t* creds) {
         return APP_ERR_PROVISIONING;
     }
 
-    /* Phase 3 stub：无真实后端，同步走完 IN_PROGRESS → PROVISIONED */
     g_prov.state = PROVISIONING_STATE_IN_PROGRESS;
     prov_unlock();
     (void) prov_publish_state(PROVISIONING_STATE_IN_PROGRESS, 0);
+
+    /* creds 非空时落盘凭据；失败则回退到 ERROR 态，不推进为 PROVISIONED */
+    if (creds != NULL) {
+        ret = provisioning_module_set_credentials(creds);
+        if (ret != 0) {
+            prov_lock();
+            g_prov.state = PROVISIONING_STATE_ERROR;
+            prov_unlock();
+            (void) prov_publish_state(PROVISIONING_STATE_ERROR, ret);
+            return ret;
+        }
+    }
 
     prov_lock();
     g_prov.state = PROVISIONING_STATE_PROVISIONED;
@@ -181,6 +203,69 @@ int provisioning_module_get_device_id(char* out, size_t out_len) {
     return 0;
 }
 
+int provisioning_module_set_credentials(const provisioning_credentials_t* creds) {
+    int ret;
+
+    if (creds == NULL || creds->ssid == NULL || creds->psk == NULL) {
+        return APP_ERR_INVALID_PARAM;
+    }
+    if (strlen(creds->ssid) >= PROVISIONING_WIFI_SSID_MAX_LEN || strlen(creds->psk) >= PROVISIONING_WIFI_PSK_MAX_LEN) {
+        return APP_ERR_INVALID_PARAM;
+    }
+
+    prov_lock();
+    if (g_prov.module_status == MODULE_STATUS_UNINITIALIZED) {
+        prov_unlock();
+        return APP_ERR_INIT;
+    }
+    if (g_prov.module_status != MODULE_STATUS_RUNNING) {
+        prov_unlock();
+        return APP_ERR_INIT;
+    }
+    prov_unlock();
+
+    /* app_kv 内部自带互斥锁，且不会回调本模块，锁外调用避免不必要的嵌套持锁 */
+    ret = app_kv_set(PROV_KV_KEY_SSID, creds->ssid);
+    if (ret != APP_OK && ret != APP_ERR_DISABLED) {
+        LOG_ERR("persist wifi.ssid failed: %d", ret);
+        return ret;
+    }
+    ret = app_kv_set(PROV_KV_KEY_PSK, creds->psk);
+    if (ret != APP_OK && ret != APP_ERR_DISABLED) {
+        LOG_ERR("persist wifi.psk failed: %d", ret);
+        return ret;
+    }
+
+#if IS_ENABLED(CONFIG_APP_KV_PERSIST)
+    ret = app_kv_save();
+    if (ret != APP_OK) {
+        /* 落盘失败仅记日志：RAM 表已更新，凭据在本次运行期间仍可用 */
+        LOG_WRN("app_kv_save after wifi credentials update failed: %d", ret);
+    }
+#endif
+
+    LOG_INF("Wi-Fi credentials updated (ssid=%s)", creds->ssid);
+    return 0;
+}
+
+int provisioning_module_get_credentials(char* ssid, size_t ssid_len, char* psk, size_t psk_len) {
+    int ret;
+
+    if (ssid == NULL || ssid_len == 0U || psk == NULL || psk_len == 0U) {
+        return APP_ERR_INVALID_PARAM;
+    }
+
+    ret = app_kv_get(PROV_KV_KEY_SSID, ssid, ssid_len);
+    if (ret != APP_OK) {
+        return APP_ERR_NOT_FOUND;
+    }
+    ret = app_kv_get(PROV_KV_KEY_PSK, psk, psk_len);
+    if (ret != APP_OK) {
+        return APP_ERR_NOT_FOUND;
+    }
+    return 0;
+}
+
 /* =============================================================================
  * 模块接口实现
  * ============================================================================= */
@@ -207,6 +292,18 @@ int provisioning_module_init(void* config) {
     if (ret != 0) {
         g_prov.module_status = MODULE_STATUS_UNINITIALIZED;
         return ret;
+    }
+
+    /* app_kv 早于本模块完成 SYS_INIT（含 CONFIG_APP_KV_PERSIST 时的 flash 加载），
+     * 若已存在持久化的 Wi-Fi 凭据，视为设备已配网，跳过 begin() 直接进入 PROVISIONED */
+    {
+        char ssid_probe[PROVISIONING_WIFI_SSID_MAX_LEN];
+        char psk_probe[PROVISIONING_WIFI_PSK_MAX_LEN];
+
+        if (provisioning_module_get_credentials(ssid_probe, sizeof(ssid_probe), psk_probe, sizeof(psk_probe)) == 0) {
+            g_prov.state = PROVISIONING_STATE_PROVISIONED;
+            LOG_INF("Existing persisted Wi-Fi credentials found (ssid=%s); marking PROVISIONED", ssid_probe);
+        }
     }
 
     LOG_INF("Provisioning module initialized");

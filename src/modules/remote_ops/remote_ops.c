@@ -6,26 +6,18 @@
  * @date 2026-06-13
  */
 
-#include <zeplod/remote_ops.h>
-
 #include <zephyr/init.h>
-
 #include <zephyr/kernel.h>
-
 #include <zephyr/logging/log.h>
 
 #include <errno.h>
-
 #include <string.h>
 
 #include <zeplod/app_config.h>
-
 #include <zeplod/lock_order.h>
-
 #include <zeplod/module_manager.h>
-
+#include <zeplod/remote_ops.h>
 #include <zeplod/remote_ops_backend.h>
-
 #include <zeplod/sys_diag.h>
 
 LOG_MODULE_REGISTER(remote_ops, CONFIG_SYS_LOG_LEVEL);
