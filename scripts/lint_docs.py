@@ -31,7 +31,6 @@ BILINGUAL_MAPPING: dict[str, str] = {
     "00-入门/04-开发者入门指南.md": "00-getting-started/04-developer-guide.md",
     "00-入门/05-任务导航.md": "00-getting-started/05-task-navigation.md",
     "00-入门/06-代码与文档映射.md": "00-getting-started/06-code-doc-map.md",
-    "00-入门/07-快速参考卡片.md": "00-getting-started/07-quick-reference.md",
     "10-环境与构建/11-环境搭建与配置指南.md": "10-environment-build/11-environment-setup.md",
     "10-环境与构建/12-Freestanding应用与构建基础.md": "10-environment-build/12-freestanding-app-build.md",
     "10-环境与构建/13-板型迁移指南.md": "10-environment-build/13-board-porting-guide.md",

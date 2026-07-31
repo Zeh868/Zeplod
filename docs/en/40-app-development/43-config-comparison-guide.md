@@ -16,19 +16,6 @@ This document compares memory usage and applicable scenarios of four configurati
 | **Target Scenario** | Resource-rich MCU | Medium-resource MCU | Extremely constrained MCU | **Extremely resource-constrained MCU** |
 | **Example Boards** | STM32H7/NRF52840 | STM32L4/NRF52832 | STM32F103C8T6 | **32KB SRAM systems** |
 
-### Commercial Module Resource Usage (Overlay Config)
-
-| Module | FLASH | RAM | Config File |
-|--------|-------|-----|-------------|
-| USB Host CDC ECM (5G/LTE) | +8KB | +6KB | `prj.conf` |
-| USB Host CDC ECM (SRAM optimized) | +6KB | +4KB | `prj.conf;conf/profiles/balanced.conf` |
-| USB Host CDC ECM (minimal) | +4KB | +2KB | `prj.conf;conf/profiles/minimal.conf` |
-| Mesh communication module | +15KB | +8KB | `prj.conf` |
-| Module manager enhanced | +5KB | +3KB | `prj.conf` |
-| Event system enhanced | +8KB | +6KB | `prj.conf` |
-
-> Note: Commercial modules disabled by default (`=n`), require purchase authorization to enable
-
 ---
 
 ## 🔧 Core Configuration Comparison
@@ -233,7 +220,6 @@ When using `conf/profiles/tiny.conf`, the following features are **unavailable**
 | Memory Pool | ❌ Disabled | No sys_memory |
 | KV Storage | ❌ Disabled | No key-value storage |
 | Example Modules | ❌ Disabled | No example code |
-| Commercial Module Framework | ❌ Skipped | Conditional compilation skipped |
 
 **Event System Limitations**:
 
@@ -365,7 +351,6 @@ In tiny config, the following modules automatically skip compilation:
 - `sys_watchdog.c` - When `CONFIG_SYS_WATCHDOG_ENABLE=n`
 - `sys_timer.c` - When `CONFIG_SYS_TIMER_ENABLE=n`
 - `example_module_*.c` - When `CONFIG_EXAMPLE_MODULE_*_ENABLE=n`
-- Commercial module framework - When `CONFIG_SIZE_OPTIMIZATIONS=y` and no commercial modules enabled
 
 ### 2. Stack Size Optimization
 
