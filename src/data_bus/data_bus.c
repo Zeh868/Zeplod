@@ -24,6 +24,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <string.h>
+#include <zeplod/app_config.h>
 #include <zeplod/data_bus.h>
 #include "data_bus_channel.h"
 #include "data_bus_consumer.h"
