@@ -48,7 +48,7 @@ LOG_MODULE_REGISTER(sys_timer, CONFIG_SYS_LOG_LEVEL);
  * ============================================================================= */
 
 #ifndef CONFIG_SYS_TIMER_STACK_SIZE
-#define CONFIG_SYS_TIMER_STACK_SIZE 1024
+#define CONFIG_SYS_TIMER_STACK_SIZE 2048
 #endif
 
 #ifndef CONFIG_SYS_TIMER_PRIORITY
