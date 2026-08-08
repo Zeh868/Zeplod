@@ -28,7 +28,7 @@ Scripts use **`project_layout.ps1` / `project_layout.sh` / `project_layout.py`**
 | Docs and checks | `generate_docs.ps1` / `generate_docs.sh` / `lint_docs.py` / `check_encoding.py` / `check_script_docs.py` |
 | Version and release | `bump_version.py` / `package_release.ps1` / `package_release.sh` |
 | Build analysis | `build_all.ps1` / `build_all.bat` / `build_all.sh` / `analyze_map.ps1` / `analyze_map.sh` / `analyze_map.bat` |
-| Module/config management | `module_config.py` / `proprietary_manage.ps1` / `proprietary_manage.sh` / `proprietary_manage.bat` |
+| Module/config management | `module_config.py` |
 
 ## 2. Prerequisites
 

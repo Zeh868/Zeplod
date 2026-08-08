@@ -190,7 +190,7 @@ ZTEST_SUITE(test_module_name, NULL, NULL, NULL, NULL, NULL);
 |------|----------|--------------------------------------|
 | `src/core/` | 目标 **≥95%**（QEMU 全量 ztest；当前约 **77%**，见下方说明） | **≥80%**（`native_sim` + `--coverage`） |
 
-全仓库 100% 不现实（`src/app/`、未纳入测试的 `proprietary/`、`SYS_INIT` 自动初始化路径等不在统计范围内）。
+全仓库 100% 不现实（`src/app/`、未纳入测试的路径、`SYS_INIT` 自动初始化路径等不在统计范围内）。
 
 ### Windows / QEMU（推荐）
 

@@ -186,12 +186,11 @@ zeplod/
 │   ├── overlay.dts                   # Common device tree overlay
 │   ├── nucleo_l4r5zi.overlay         # STM32 Nucleo L4R5ZI board overlay
 │   └── mimxrt1050_fire_mimxrt1052_qspi.overlay
-├── scripts/                          # Environment scripts, packaging, versioning, proprietary module management
+├── scripts/                          # Environment scripts, packaging, versioning
 │   ├── setup_env.{sh,bat,ps1}        # Environment variable setup
 │   ├── build_all.{sh,bat}            # Batch build scripts
 │   ├── analyze_map.{sh,bat,ps1}      # MAP file analysis
 │   ├── package_release.{sh,ps1}      # Release packaging
-│   ├── proprietary_manage.{sh,bat,ps1} # Enable/disable proprietary modules
 │   ├── bump_version.py               # Version sync
 │   └── module_config.py              # Module config tool
 ├── tests/                            # ztest unit tests (native_sim)
@@ -275,7 +274,6 @@ zeplod/
     │   ├── app_main.c
     │   ├── app_version.c              # Version API (macros injected via -D from root APP_VERSION)
     │   └── app_kv.c                   # Application key-value store (optional persist on power loss)
-    └── proprietary/                   # Proprietary closed-source modules (optional, enabled by proprietary_manage)
 ```
 
 ## Checklist After Forking or Copying This Repo
