@@ -671,6 +671,11 @@ static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, boo
             return EVENT_ERR_TIMEOUT;
         }
         lifecycle_locked = true;
+        if (K_TIMEOUT_EQ(timeout, K_FOREVER)) {
+            /* 外部线程在整个阻塞期间持有 lifecycle gate：期间 dispatcher 的
+             * start/stop 与 event_system_stop 都会被拒绝（TIMEOUT）。请改用有限超时。 */
+            LOG_WRN("process_one(K_FOREVER) from external thread blocks dispatcher lifecycle ops until it returns");
+        }
     }
 
     if (!dispatcher_is_initialized()) {

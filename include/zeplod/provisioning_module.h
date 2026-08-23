@@ -121,6 +121,9 @@ int provisioning_module_get_device_id(char* out, size_t out_len);
  * PROVISIONING_WIFI_PSK_MAX_LEN（含结尾 0）
  * @return 0 成功；APP_ERR_INVALID_PARAM 参数非法；APP_ERR_INIT 模块未运行；
  * 其余为 app_kv_set 失败时的错误码（如 APP_ERR_KV_FULL）
+ * @warning PSK 以明文经 app_kv 写入并在 CONFIG_APP_KV_PERSIST 下明文落 NVS/flash。
+ *          sys_secure_kv 当前为非密码学混淆（见其头文件警告），接入真正的加密后端
+ *          前请评估设备物理读取 flash 的威胁模型。
  */
 int provisioning_module_set_credentials(const provisioning_credentials_t* creds);
 

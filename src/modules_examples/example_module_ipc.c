@@ -124,9 +124,9 @@ int example_module_ipc_start(void) {
     /* stop 后需重新 init（队列/线程元数据由 init 重置） */
     if (g_mod_ipc.status == MODULE_STATUS_STOPPED) {
         int ret =
-            ipc_service_init(&g_mod_ipc.ipc, “mod_ipc_svc”, mod_ipc_service_func, CONFIG_THREAD_IPC_SERVICE_PRIORITY);
+            ipc_service_init(&g_mod_ipc.ipc, "mod_ipc_svc", mod_ipc_service_func, CONFIG_THREAD_IPC_SERVICE_PRIORITY);
         if (ret != 0) {
-            LOG_ERR(“ipc_service_init(restart) failed : % d”, ret);
+            LOG_ERR("ipc_service_init(restart) failed: %d", ret);
             return ret;
         }
 #if IS_ENABLED(CONFIG_THREAD_IPC_SERVICE_EVENT_BRIDGE)

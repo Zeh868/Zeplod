@@ -120,6 +120,14 @@ static void wdt_expire_handler(void);
 int sys_wdt_init(const wdt_config_t* config) {
     LOG_INF("Initializing watchdog...");
 
+    /* 运行中或监控线程仍存活时拒绝重新初始化：memset 会摧毁 g_wdt.lock 与线程状态，
+     * 且 monitor_thread_started 被清零后再次 start 会对同一线程控制块二次 k_thread_create。 */
+    if (g_wdt.status == WDT_STATUS_RUNNING || g_wdt.status == WDT_STATUS_PAUSED ||
+        g_wdt.monitor_thread_started) {
+        LOG_ERR("sys_wdt_init rejected: watchdog still active (status=%d)", g_wdt.status);
+        return -EBUSY;
+    }
+
     memset(&g_wdt, 0, sizeof(g_wdt));
 
     /* 设置默认或提供的配置 */
@@ -214,10 +222,17 @@ int sys_wdt_start(void) {
 #endif
 
     if (!g_wdt.monitor_thread_started) {
-        k_thread_create(&g_wdt.monitor_thread, g_wdt.monitor_stack, K_THREAD_STACK_SIZEOF(g_wdt.monitor_stack),
-                        wdt_monitor_thread, NULL, NULL, NULL, 5, 0, K_FOREVER);
-        k_thread_name_set(&g_wdt.monitor_thread, "wdt_mon");
-        k_thread_start(&g_wdt.monitor_thread);
+        k_tid_t tid = k_thread_create(&g_wdt.monitor_thread, g_wdt.monitor_stack,
+                                      K_THREAD_STACK_SIZEOF(g_wdt.monitor_stack), wdt_monitor_thread, NULL, NULL, NULL,
+                                      5, 0, K_FOREVER);
+        if (tid == NULL) {
+            LOG_ERR("Failed to create watchdog monitor thread");
+            g_wdt.status = WDT_STATUS_STOPPED;
+            k_mutex_unlock(&g_wdt.lock);
+            return -ENOMEM;
+        }
+        k_thread_name_set(tid, "wdt_mon");
+        k_thread_start(tid);
         g_wdt.monitor_thread_started = true;
     }
 
@@ -230,7 +245,7 @@ int sys_wdt_start(void) {
 int sys_wdt_stop(void) {
     k_mutex_lock(&g_wdt.lock, K_FOREVER);
 
-    if (g_wdt.status == WDT_STATUS_STOPPED) {
+    if (g_wdt.status == WDT_STATUS_STOPPED && !g_wdt.monitor_thread_started) {
         k_mutex_unlock(&g_wdt.lock);
         return 0;
     }
@@ -242,15 +257,20 @@ int sys_wdt_stop(void) {
         return -ENOTSUP;
     }
 
-    /* SIL-2: 设置停止标志，让线程自行退出 */
+    /* SIL-2: 设置停止标志，让线程在下一个轮询周期（SYS_WDT_MONITOR_INTERVAL_MS）自行退出 */
+    const bool need_join = g_wdt.monitor_thread_started;
     g_wdt.status = WDT_STATUS_STOPPED;
     k_mutex_unlock(&g_wdt.lock);
 
-    /* SIL-2: 给线程时间退出 */
-    int ret = k_thread_join(&g_wdt.monitor_thread, K_MSEC(SYS_WDT_THREAD_JOIN_TIMEOUT_MS));
-    if (ret != 0) {
-        LOG_ERR("Watchdog monitor thread join timeout (%d), aborting", ret);
-        k_thread_abort(&g_wdt.monitor_thread);
+    if (need_join) {
+        /* join 超时不得 k_thread_abort：监控线程频繁持有 g_wdt.lock，若 abort 时恰持锁，
+         * 该互斥锁将永久保持锁定，后续所有 sys_wdt_* 调用死锁。保留 monitor_thread_started
+         * 并返回 -EIO，调用方可稍后重试 stop 完成收尾（线程见 STOPPED 后会自行退出）。 */
+        int ret = k_thread_join(&g_wdt.monitor_thread, K_MSEC(SYS_WDT_THREAD_JOIN_TIMEOUT_MS));
+        if (ret != 0) {
+            LOG_ERR("Watchdog monitor thread join timeout (%d); retry sys_wdt_stop to complete", ret);
+            return -EIO;
+        }
     }
 
     k_mutex_lock(&g_wdt.lock, K_FOREVER);

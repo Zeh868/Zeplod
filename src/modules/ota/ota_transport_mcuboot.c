@@ -138,7 +138,9 @@ static int mcuboot_close(ota_transport_ops_t* ops) {
         return -EINVAL;
     }
 
-    /* TEST 模式：下次启动试跑新镜像，失败可回滚 */
+    /* TEST 模式：下次启动试跑新镜像，失败可回滚。
+     * 注意：TEST 镜像重启后若未在确认窗口内 boot_write_img_confirmed()
+     * （见 ota_module_confirm_image()），再次重启将回滚到旧镜像。 */
     rc = boot_request_upgrade(BOOT_UPGRADE_TEST);
     if (rc != 0) {
         LOG_ERR("boot_request_upgrade failed: %d", rc);

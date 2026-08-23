@@ -273,7 +273,6 @@ static event_status_t enqueue_drop_lowest_locked(struct k_msgq* queue, const eve
     /* 排空/回灌期间屏蔽 ISR 入队，避免与 scratch 算法并发修改 k_msgq */
     event_queue_reorder_begin(cb);
     uint32_t restore_free_count = 0U;
-    bool     free_worst = false;
     event_t  worst_ev = {0};
 
     for (uint32_t i = 0; i < n; i++) {
@@ -314,7 +313,6 @@ static event_status_t enqueue_drop_lowest_locked(struct k_msgq* queue, const eve
         return EVENT_ERR_QUEUE_FULL;
     }
 
-    free_worst = true;
     worst_ev = cb->drop_lowest_scratch[worst];
 
     atomic_inc(&cb->drop_count);
@@ -329,9 +327,8 @@ static event_status_t enqueue_drop_lowest_locked(struct k_msgq* queue, const eve
     int ret = k_msgq_put(queue, event, K_NO_WAIT);
 
     event_queue_reorder_end(cb);
-    if (free_worst) {
-        event_free_queued_payload(&worst_ev);
-    }
+    /* 被顶替块已脱离队列且 ref_count==1，无人可再访问，解锁后释放 */
+    event_free_queued_payload(&worst_ev);
 
     if (ret != 0) {
         if (ret == -ENOMSG) {

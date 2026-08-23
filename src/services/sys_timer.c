@@ -106,6 +106,19 @@ static void timer_thread_func(void* p1, void* p2, void* p3);
 int sys_timer_init(void) {
     LOG_DBG("Initializing timer system...");
 
+    /* 有存活定时器（其工作线程可能仍在运行）时拒绝重新初始化：
+     * memset 会摧毁 g_sys_timer.lock 与各定时器的线程控制块/信号量。 */
+    if (g_sys_timer.initialized) {
+        k_mutex_lock(&g_sys_timer.lock, K_FOREVER);
+        uint32_t active = g_sys_timer.timer_count;
+        k_mutex_unlock(&g_sys_timer.lock);
+
+        if (active > 0U) {
+            LOG_ERR("sys_timer_init rejected: %u timer(s) still allocated", (unsigned int) active);
+            return -EBUSY;
+        }
+    }
+
     memset(&g_sys_timer, 0, sizeof(g_sys_timer));
     k_mutex_init(&g_sys_timer.lock);
 
@@ -197,8 +210,14 @@ sys_timer_handle_t sys_timer_create(const sys_timer_config_t* config) {
     /* 创建定时器线程 */
     int priority = config->priority != 0 ? config->priority : CONFIG_SYS_TIMER_PRIORITY;
 
-    k_thread_create(&timer->thread, timer->stack, K_THREAD_STACK_SIZEOF(timer->stack), timer_thread_func, timer, NULL,
-                    NULL, priority, 0, K_FOREVER);
+    k_tid_t tid = k_thread_create(&timer->thread, timer->stack, K_THREAD_STACK_SIZEOF(timer->stack), timer_thread_func,
+                                  timer, NULL, NULL, priority, 0, K_FOREVER);
+    if (tid == NULL) {
+        LOG_ERR("Failed to create timer thread");
+        timer->is_allocated = false;
+        k_mutex_unlock(&g_sys_timer.lock);
+        return NULL;
+    }
 
     char name[16];
     snprintf(name, sizeof(name), "timer_%s", config->name != NULL ? config->name : "unk");
@@ -222,6 +241,14 @@ int sys_timer_delete(sys_timer_handle_t timer) {
     if (!timer->is_allocated || timer->magic != TIMER_MAGIC) {
         k_mutex_unlock(&g_sys_timer.lock);
         return -EINVAL;
+    }
+
+    /* 从定时器自身回调内删除自己会导致 join 自己的线程（必然超时后 abort 自己），
+     * 槽位永不回收。请在回调外的线程调用 delete。 */
+    if (k_current_get() == &timer->thread) {
+        k_mutex_unlock(&g_sys_timer.lock);
+        LOG_ERR("sys_timer_delete called from the timer's own callback thread");
+        return -EDEADLK;
     }
 
     /* 请求工作线程退出并在 join 后回收槽位 */

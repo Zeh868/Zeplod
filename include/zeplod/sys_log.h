@@ -90,6 +90,9 @@ int sys_log_init(const sys_log_config_t* config);
  * @brief 设置模块日志级别
  * @param module 模块名称
  * @param level 日志级别
+ *
+ * @note module 为 NULL 或空串时设置默认级别，并会同时清空全部按模块覆盖表
+ *       （即所有模块恢复跟随默认级别），这是一次性重置语义而非仅改默认值。
  */
 void sys_log_set_level(const char* module, sys_log_level_t level);
 
@@ -113,17 +116,10 @@ void sys_log_set_destination(sys_log_dest_mask_t dest, bool enable);
  * @param module 模块名称
  * @param format printf 风格格式字符串
  * @param ... 格式参数
+ *
+ * @note 时间戳由内部自动附加（k_uptime），无需调用方提供。
  */
 void sys_log_print(sys_log_level_t level, const char* module, const char* format, ...);
-
-/**
- * @brief 记录带时间戳的日志消息
- * @param level 日志级别
- * @param module 模块名称
- * @param format printf 风格格式字符串
- * @param ... 格式参数
- */
-void sys_log_print_ts(sys_log_level_t level, const char* module, const char* format, ...);
 
 /**
  * @brief 记录二进制数据

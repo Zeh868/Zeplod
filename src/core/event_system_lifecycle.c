@@ -15,8 +15,10 @@
 LOG_MODULE_DECLARE(event_system, CONFIG_SYS_LOG_LEVEL);
 
 void event_system_lifecycle_lock_wait(void) {
+    /* k_yield 只让给同优先级就绪线程：若高优先级调用者自旋等待低优先级持有者，
+     * 单核下持有者永远得不到 CPU（活锁直至看门狗复位）。改用 1ms 睡眠让出 CPU。 */
     while (atomic_test_and_set_bit(&g_event_system_init_lock, 0)) {
-        k_yield();
+        k_sleep(K_MSEC(1));
     }
 }
 
@@ -107,6 +109,11 @@ void event_system_init_rollback(void) {
 event_status_t event_system_init(void) {
     LOG_DBG("Initializing event system...");
 
+    /* 生命周期锁在 ISR 中不可获取（k_sleep 语义非法），拒绝 ISR 上下文调用 */
+    if (k_is_in_isr()) {
+        return EVENT_ERR_INVALID_ARG;
+    }
+
     if (event_dispatcher_is_current_thread()) {
         if (!event_system_lifecycle_try_lock()) {
             LOG_ERR("Cannot init event system from dispatcher thread during lifecycle transition");
@@ -180,6 +187,10 @@ event_status_t event_system_init(void) {
 }
 
 event_status_t event_system_start(void) {
+    if (k_is_in_isr()) {
+        return EVENT_ERR_INVALID_ARG;
+    }
+
     if (!event_system_lifecycle_try_lock()) {
         LOG_WRN("Event system lifecycle transition in progress; start rejected");
         return EVENT_ERR_TIMEOUT;
@@ -251,6 +262,10 @@ event_status_t event_system_start(void) {
 }
 
 event_status_t event_system_stop(void) {
+    if (k_is_in_isr()) {
+        return EVENT_ERR_INVALID_ARG;
+    }
+
     if (event_dispatcher_is_current_thread()) {
         LOG_ERR("Cannot stop event system from dispatcher thread");
         return EVENT_ERR_INVALID_ARG;
@@ -319,6 +334,10 @@ event_status_t event_system_stop(void) {
 }
 
 event_status_t event_system_shutdown(void) {
+    if (k_is_in_isr()) {
+        return EVENT_ERR_INVALID_ARG;
+    }
+
     if (event_dispatcher_is_current_thread()) {
         LOG_ERR("Cannot shutdown event system from dispatcher thread");
         return EVENT_ERR_INVALID_ARG;

@@ -152,17 +152,49 @@ int ipc_service_start(ipc_service_t* service) {
 
     atomic_set(&service->shutdown, 0);
 
-    k_thread_create(&service->thread, service->worker_stack, K_KERNEL_STACK_SIZEOF(service->worker_stack),
-                    ipc_service_worker_thread, service, NULL, NULL, service->priority, 0, K_NO_WAIT);
+    k_tid_t worker_tid = k_thread_create(&service->thread, service->worker_stack,
+                                         K_KERNEL_STACK_SIZEOF(service->worker_stack), ipc_service_worker_thread,
+                                         service, NULL, NULL, service->priority, 0, K_NO_WAIT);
+    if (worker_tid == NULL) {
+        LOG_ERR("Failed to create IPC worker thread for '%s'", service->name);
+        atomic_set(&service->shutdown, 0);
+        (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPING);
+        (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPED);
+        ipc_service_state_unlock(service);
+        return -ENOMEM;
+    }
 #if IS_ENABLED(CONFIG_THREAD_NAME)
-    k_thread_name_set(&service->thread, service->name);
+    k_thread_name_set(worker_tid, service->name);
 #endif
 
-    k_thread_create(&service->response_thread, service->dispatcher_stack,
-                    K_KERNEL_STACK_SIZEOF(service->dispatcher_stack), ipc_service_dispatcher_thread, service, NULL,
-                    NULL, service->priority, 0, K_NO_WAIT);
+    k_tid_t disp_tid = k_thread_create(&service->response_thread, service->dispatcher_stack,
+                                       K_KERNEL_STACK_SIZEOF(service->dispatcher_stack), ipc_service_dispatcher_thread,
+                                       service, NULL, NULL, service->priority, 0, K_NO_WAIT);
+    if (disp_tid == NULL) {
+        LOG_ERR("Failed to create IPC dispatcher thread for '%s'", service->name);
+        /* 回滚：置 shutdown 并唤醒已创建的 worker（其 msgq 轮询会看到标志后退出），
+         * 再回退生命周期状态，保持 start 失败后服务仍可重试。 */
+        atomic_set(&service->shutdown, 1);
+        ipc_request_msg_t dummy;
+        memset(&dummy, 0, sizeof(dummy));
+        (void) k_msgq_put(&service->request_queue, &dummy, K_NO_WAIT);
+        if (k_thread_join(&service->thread, K_MSEC(IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS)) != 0) {
+            /* worker 未能在超时内退出（异常）：保持 shutdown=1 让其稍后自行退出并置
+             * ERROR 故障态；线程控制块仍被占用，不得再重试 start/init。 */
+            LOG_ERR("IPC worker thread for '%s' failed to exit during rollback; service faulted", service->name);
+            (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPING);
+            (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_ERROR);
+            ipc_service_state_unlock(service);
+            return -ENOMEM;
+        }
+        atomic_set(&service->shutdown, 0);
+        (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPING);
+        (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPED);
+        ipc_service_state_unlock(service);
+        return -ENOMEM;
+    }
 #if IS_ENABLED(CONFIG_THREAD_NAME)
-    k_thread_name_set(&service->response_thread, "ipc_disp");
+    k_thread_name_set(disp_tid, "ipc_disp");
 #endif
 
     service->running = true;

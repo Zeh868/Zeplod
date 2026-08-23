@@ -260,6 +260,14 @@ static void emit_log_line(sys_log_level_t level, const char* module, const char*
 int sys_log_init(const sys_log_config_t* config) {
     LOG_DBG("Initializing system log...");
 
+    /* 并发日志进行中时拒绝重新初始化：memset 会摧毁 g_sys_log.lock 与环形缓冲游标。
+     * BSS 零初始化的 k_mutex 在 Zephyr 中可直接加锁；首次调用时同样适用。
+     * 已持锁：memset 后在下方统一 k_mutex_init 重建，无需释放旧锁。 */
+    if (k_mutex_lock(&g_sys_log.lock, K_MSEC(1)) != 0) {
+        LOG_ERR("sys_log_init rejected: concurrent logging in progress");
+        return -EBUSY;
+    }
+
     /* SIL-2: 清零全局控制块 */
     memset(&g_sys_log, 0, sizeof(g_sys_log));
 
@@ -414,26 +422,6 @@ void sys_log_print(sys_log_level_t level, const char* module, const char* format
     emit_log_line(level, module, msg, ts);
 }
 
-void sys_log_print_ts(sys_log_level_t level, const char* module, const char* format, ...) {
-    k_mutex_lock(&g_sys_log.lock, K_FOREVER);
-    sys_log_level_t thresh = effective_level_for_module_locked(module);
-    k_mutex_unlock(&g_sys_log.lock);
-
-    if (level > thresh) {
-        return;
-    }
-
-    char    msg[SYS_LOG_MSG_MAX_LEN];
-    va_list args;
-
-    va_start(args, format);
-    vsnprintf(msg, sizeof(msg), format, args);
-    va_end(args);
-
-    uint32_t ts = k_uptime_get_32();
-    emit_log_line(level, module, msg, ts);
-}
-
 void sys_log_hexdump(sys_log_level_t level, const char* module, const void* data, size_t len, bool ascii) {
     k_mutex_lock(&g_sys_log.lock, K_FOREVER);
     sys_log_level_t thresh = effective_level_for_module_locked(module);
@@ -541,22 +529,29 @@ void sys_log_dump(sys_log_level_t level_filter) {
 
     const uint32_t cap = g_sys_log.log_cap ? g_sys_log.log_cap : 1U;
     const uint32_t total = g_sys_log.count;
+    const uint32_t read_idx = g_sys_log.read_idx;
+
+    k_mutex_unlock(&g_sys_log.lock);
 
     printk("\n=== Log Dump (max level: %d) ===\n", level_filter);
 
+    /* 逐条持锁快照后锁外输出：dump 期间不再阻塞所有日志写入。
+     * 代价是并发写入导致的环回覆盖可能使个别条目内容变化，诊断场景可接受。 */
     for (uint32_t i = 0; i < total; i++) {
-        const uint32_t         idx = (g_sys_log.read_idx + i) % cap;
-        const sys_log_entry_t* entry = &g_sys_log.buffer[idx];
+        sys_log_entry_t entry;
+        uint32_t        idx = (read_idx + i) % cap;
 
-        if (level_filter != SYS_LOG_LEVEL_OFF && entry->level > level_filter) {
+        k_mutex_lock(&g_sys_log.lock, K_FOREVER);
+        entry = g_sys_log.buffer[idx];
+        k_mutex_unlock(&g_sys_log.lock);
+
+        if (level_filter != SYS_LOG_LEVEL_OFF && entry.level > level_filter) {
             continue;
         }
 
-        printk("[%08d][%s][%s] %s\n", entry->timestamp, level_to_string(entry->level),
-               (entry->module_name[0] != '\0') ? entry->module_name : "N/A", entry->message);
+        printk("[%08d][%s][%s] %s\n", entry.timestamp, level_to_string(entry.level),
+               (entry.module_name[0] != '\0') ? entry.module_name : "N/A", entry.message);
     }
-
-    k_mutex_unlock(&g_sys_log.lock);
 
     printk("=== End Log Dump ===\n\n");
 }

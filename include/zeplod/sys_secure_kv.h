@@ -5,6 +5,14 @@
  * 可选服务（CONFIG_SYS_SECURE_KV_ENABLE）。在 RAM 中存储敏感二进制值，
  * Phase 2 使用软件 keystream 加解密；量产请换 PSA / AES-GCM 后端。
  *
+ * @warning 当前实现的机密性限制（量产前必须知悉）：
+ *          1. keystream 为 FNV-1a 哈希派生的异或流，无认证标签（密文被篡改无检测），
+ *             已知明文即可逐位置恢复 keystream，不构成密码学安全；
+ *          2. 密钥来自 CONFIG_SYS_SECURE_KV_KEY_HEX，编译进固件镜像，可被固件提取；
+ *          3. 仅存 RAM，重启即失，无持久化。
+ *          因此本服务现阶段只适合作为「防随手读取的混淆存储」；任何真正的机密
+ *          （令牌、证书、密钥）请在接入 PSA Crypto / AES-GCM 后端后再使用本 API。
+ *
  * @author zeh (china_qzh@163.com)
  * @version 1.0
  * @date 2026-06-13

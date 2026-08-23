@@ -134,8 +134,22 @@ int ota_module_abort_update(void);
  * @brief 在 READY_REBOOT 状态下请求暖重启以切换镜像
  * @return 0 成功（通常不返回）；APP_ERR_OTA_INVALID_STATE
  * @note MCUboot 传输在 finish 时已调用 boot_request_upgrade(TEST)
+ * @note TEST 升级的镜像若重启后未在确认窗口内 confirm，MCUboot 将在再次重启时
+ *       回滚旧镜像（安全回滚语义）。应用自检通过后应调用 ota_module_confirm_image()。
  */
 int ota_module_request_reboot(void);
+
+/**
+ * @brief 确认当前运行镜像，关闭 MCUboot 回滚窗口
+ *
+ * 两条 ingest 路径（主动 mcuboot 传输与 MCUmgr SMP）均以 boot_request_upgrade(TEST)
+ * 提交镜像：重启进入新镜像后，若不调用本函数（或经外部 mcumgr 确认），下一次重启
+ * MCUboot 会自动回滚到旧镜像。请在应用完成升级后自检（关键功能正常）时调用。
+ *
+ * @return 0 成功；APP_ERR_OTA_TRANSPORT 确认失败；-ENOTSUP 未启用 MCUboot 镜像管理
+ * @note 依赖 CONFIG_MCUBOOT_IMG_MANAGER=y；仅对 MCUboot 引导的镜像有效
+ */
+int ota_module_confirm_image(void);
 
 #ifdef __cplusplus
 }

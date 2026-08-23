@@ -547,6 +547,48 @@ static size_t get_allocation_size_locked(const alloc_header_t* header) {
 int sys_mem_init(const sys_mem_config_t* config) {
     LOG_DBG("Initializing memory system...");
 
+    /* 静默化检查：有活跃分配或并发操作进行中时拒绝重新初始化。
+     * memset 会摧毁池锁/跟踪器锁与分配状态；若其他线程正持锁分配/释放，
+     * 将导致锁内存损坏与不可恢复的堆破坏。逐池短暂取锁确认无人持锁后再重置
+     * （BSS 零初始化的 k_mutex 在 Zephyr 中可直接加锁）。
+     * 持有的锁在下方 memset 后由统一的 k_mutex_init 重建，无需释放。 */
+    {
+        mem_pool_t* held[SYS_MEM_POOL_COUNT];
+        int         held_count = 0;
+
+        for (int i = 0; i < SYS_MEM_POOL_COUNT; i++) {
+            mem_pool_t* pool = &g_sys_mem.pools[i];
+
+            if (!pool->initialized) {
+                continue;
+            }
+            if (pool->active_count != 0U) {
+                for (int j = 0; j < held_count; j++) {
+                    k_mutex_unlock(&held[j]->lock);
+                }
+                LOG_ERR("sys_mem_init rejected: pool %d has %u active allocation(s)", i,
+                        (unsigned int) pool->active_count);
+                return -EBUSY;
+            }
+            if (k_mutex_lock(&pool->lock, K_MSEC(1)) != 0) {
+                for (int j = 0; j < held_count; j++) {
+                    k_mutex_unlock(&held[j]->lock);
+                }
+                LOG_ERR("sys_mem_init rejected: concurrent memory operation in progress");
+                return -EBUSY;
+            }
+            held[held_count++] = pool;
+        }
+
+        if (g_sys_mem.tracker.tracking_enabled && k_mutex_lock(&g_sys_mem.tracker.lock, K_MSEC(1)) != 0) {
+            for (int j = 0; j < held_count; j++) {
+                k_mutex_unlock(&held[j]->lock);
+            }
+            LOG_ERR("sys_mem_init rejected: tracker busy");
+            return -EBUSY;
+        }
+    }
+
     /* 清零除互斥锁外的全局控制块 */
     memset(&g_sys_mem, 0, sizeof(g_sys_mem));
 
@@ -641,11 +683,13 @@ void* sys_mem_alloc(sys_mem_pool_type_t type, size_t size) {
 
     k_mutex_lock(&pool->lock, K_FOREVER);
     void* ptr = pool_alloc_locked(pool, size, false, NULL, 0);
-    k_mutex_unlock(&pool->lock);
-
     if (ptr != NULL) {
+        /* 锁内登记跟踪记录（锁序 pool->lock → tracker.lock，与 pool_free_locked 一致）：
+         * 若解锁后再登记，另一线程可能已释放同一指针，tracker_remove 先于 add 执行，
+         * 留下指向已释放内存的陈旧泄漏记录。 */
         tracker_add(ptr, size, NULL, 0);
     }
+    k_mutex_unlock(&pool->lock);
     return ptr;
 }
 
@@ -664,11 +708,10 @@ void* sys_mem_calloc(sys_mem_pool_type_t type, size_t size) {
 
     k_mutex_lock(&pool->lock, K_FOREVER);
     void* ptr = pool_alloc_locked(pool, size, true, NULL, 0);
-    k_mutex_unlock(&pool->lock);
-
     if (ptr != NULL) {
         tracker_add(ptr, size, NULL, 0);
     }
+    k_mutex_unlock(&pool->lock);
     return ptr;
 }
 
@@ -1019,10 +1062,10 @@ void* sys_mem_alloc_with_info(sys_mem_pool_type_t type, size_t size, const char*
 
     k_mutex_lock(&pool->lock, K_FOREVER);
     void* ptr = pool_alloc_locked(pool, size, false, module, line);
-    k_mutex_unlock(&pool->lock);
     if (ptr != NULL) {
         tracker_add(ptr, size, module, line);
     }
+    k_mutex_unlock(&pool->lock);
     return ptr;
 }
 

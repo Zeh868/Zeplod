@@ -27,6 +27,8 @@
 #if IS_ENABLED(CONFIG_OTA_TRANSPORT_MCUMGR_SMP)
 #include <zephyr/dfu/mcuboot.h>
 #include "ota_module_mcumgr.h"
+#elif IS_ENABLED(CONFIG_MCUBOOT_IMG_MANAGER)
+#include <zephyr/dfu/mcuboot.h>
 #endif
 
 #include <errno.h>
@@ -54,7 +56,10 @@ typedef struct {
     ota_ingest_owner_t         ingest_owner;
     module_status_t            status;
     size_t                     image_size; /**< 当前镜像已收字节（进度估算用） */
-    struct k_mutex             lock;
+    struct k_mutex             lock;       /**< 保护状态字段（声明顺序须在 xfer_lock 之前，
+                                                保证锁序 key 单调递增） */
+    struct k_mutex             xfer_lock;  /**< 序列化传输层慢速操作（write/abort），见
+                                                ota_module_write_chunk */
     bool                       lock_ready;
     bool                       events_registered;
     bool                       session_open; /**< 传输层 open 且未完成 close/abort */
@@ -72,6 +77,7 @@ static ota_module_cb_t g_ota;
 
 static void ota_lock(void);
 static void ota_unlock(void);
+static void ota_xfer_abort_locked(const ota_transport_ops_t* transport);
 static void ota_build_progress(ota_progress_t* prog, ota_state_t state, int error_code);
 static int  ota_publish_progress(const ota_progress_t* prog);
 static void ota_reset_session_locked(void);
@@ -90,6 +96,25 @@ static void ota_lock(void) {
 static void ota_unlock(void) {
     k_mutex_unlock(&g_ota.lock);
     zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.lock);
+}
+
+/**
+ * @brief 在持有 g_ota.lock 时序列化执行传输层 abort
+ *
+ * xfer_lock 与 ota_module_write_chunk 的锁外传输写互斥：write 期间并发 abort 不
+ * 会在传输层（如 flash_img）产生并发操作。锁序 g_ota.lock → g_ota.xfer_lock：
+ * 同层（RESOURCE）key 须单调不减，两成员按声明顺序排布保证地址递增。
+ */
+static void ota_xfer_abort_locked(const ota_transport_ops_t* transport) {
+    if (transport == NULL || transport->abort == NULL) {
+        return;
+    }
+
+    zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
+    k_mutex_lock(&g_ota.xfer_lock, K_FOREVER);
+    transport->abort((ota_transport_ops_t*) transport);
+    k_mutex_unlock(&g_ota.xfer_lock);
+    zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
 }
 
 /** 按状态与已写字节估算进度百分比 */
@@ -153,9 +178,8 @@ static void ota_reset_session_locked(void) {
         ota_transport_mcumgr_smp_cancel_upload();
     }
 #endif
-    if (g_ota.session_open && g_ota.ingest_owner == OTA_INGEST_ACTIVE && g_ota.active_transport != NULL &&
-        g_ota.active_transport->abort != NULL) {
-        g_ota.active_transport->abort((ota_transport_ops_t*) g_ota.active_transport);
+    if (g_ota.session_open && g_ota.ingest_owner == OTA_INGEST_ACTIVE) {
+        ota_xfer_abort_locked(g_ota.active_transport);
     }
     g_ota.session_open = false;
     g_ota.ingest_owner = OTA_INGEST_NONE;
@@ -167,9 +191,8 @@ static void ota_reset_session_locked(void) {
 static int ota_transport_fail_locked(int err, ota_progress_t* out_prog) {
     (void) ota_sm_on_error(&g_ota.sm, err);
     ota_build_progress(out_prog, OTA_STATE_ERROR, err);
-    if (g_ota.ingest_owner == OTA_INGEST_ACTIVE && g_ota.active_transport != NULL &&
-        g_ota.active_transport->abort != NULL) {
-        g_ota.active_transport->abort((ota_transport_ops_t*) g_ota.active_transport);
+    if (g_ota.ingest_owner == OTA_INGEST_ACTIVE) {
+        ota_xfer_abort_locked(g_ota.active_transport);
     }
     g_ota.session_open = false;
     g_ota.ingest_owner = OTA_INGEST_NONE;
@@ -214,6 +237,7 @@ int ota_module_init(void* config) {
 
     if (!g_ota.lock_ready) {
         k_mutex_init(&g_ota.lock);
+        k_mutex_init(&g_ota.xfer_lock);
         g_ota.lock_ready = true;
     }
 
@@ -429,8 +453,9 @@ int ota_module_begin_update(void) {
 }
 
 int ota_module_write_chunk(size_t offset, const uint8_t* data, size_t len) {
-    int            ret;
-    ota_progress_t prog;
+    int                         ret;
+    ota_progress_t              prog;
+    const ota_transport_ops_t*  transport;
 
     if (data == NULL || len == 0U) {
         return APP_ERR_INVALID_PARAM;
@@ -443,8 +468,26 @@ int ota_module_write_chunk(size_t offset, const uint8_t* data, size_t len) {
         ota_unlock();
         return APP_ERR_OTA_INVALID_STATE;
     }
+    transport = g_ota.active_transport;
+    ota_unlock();
 
-    ret = g_ota.active_transport->write_chunk((ota_transport_ops_t*) g_ota.active_transport, offset, data, len);
+    /* 传输写（flash_img，慢速 IO）在模块锁外执行，避免阻塞 get_state/control 等查询。
+     * xfer_lock 保证与 abort/stop 路径的传输层操作互斥（见 ota_xfer_abort_locked）。
+     * 会话有效性在写前、写后各校验一次；写期间被并发 abort 的结果会被作废丢弃。 */
+    zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
+    k_mutex_lock(&g_ota.xfer_lock, K_FOREVER);
+    ret = transport->write_chunk((ota_transport_ops_t*) transport, offset, data, len);
+    k_mutex_unlock(&g_ota.xfer_lock);
+    zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
+
+    ota_lock();
+
+    if (ota_sm_get_state(&g_ota.sm) != OTA_STATE_DOWNLOADING || !g_ota.session_open ||
+        g_ota.ingest_owner != OTA_INGEST_ACTIVE || g_ota.active_transport != transport) {
+        ota_unlock();
+        return APP_ERR_OTA_INVALID_STATE;
+    }
+
     if (ret != 0) {
         ret = ota_transport_fail_locked(ret, &prog);
         ota_unlock();
@@ -550,6 +593,22 @@ int ota_module_request_reboot(void) {
     LOG_INF("OTA reboot requested");
     sys_reboot(SYS_REBOOT_WARM);
     return 0;
+}
+
+int ota_module_confirm_image(void) {
+#if IS_ENABLED(CONFIG_MCUBOOT_IMG_MANAGER)
+    int ret = boot_write_img_confirmed();
+
+    if (ret != 0) {
+        LOG_ERR("boot_write_img_confirmed failed: %d", ret);
+        return APP_ERR_OTA_TRANSPORT;
+    }
+    LOG_INF("Running image confirmed; MCUboot rollback window closed");
+    return 0;
+#else
+    LOG_WRN("ota_module_confirm_image requires CONFIG_MCUBOOT_IMG_MANAGER=y");
+    return -ENOTSUP;
+#endif
 }
 
 /* =============================================================================
@@ -669,6 +728,8 @@ void ota_module_mcumgr_on_dfu_pending(void) {
         return;
     }
 
+    /* TEST 升级保留 MCUboot 安全回滚窗口：新镜像重启后若未 confirm
+     * （ota_module_confirm_image() 或外部 mcumgr），再次重启将回滚旧镜像。 */
     ret = boot_request_upgrade(BOOT_UPGRADE_TEST);
     if (ret != 0) {
         ret = ota_transport_fail_locked(ret, &prog);

@@ -528,12 +528,13 @@ int module_manager_start_all(void) {
 
     module_manager_lock();
 
-    /* 门控（#6）：STOPPING / ERROR 状态不允许批量启动。 */
+    /* 门控（#6）：STOPPING / ERROR 状态不允许批量启动。
+     * 拒绝时返回负错误码而非 0，调用方可区分「被拒绝」与「无事可做」。 */
     const zepl_state_t mgr_state = module_manager_lifecycle_state_locked();
     if (mgr_state != ZEP_STATE_RUNNING || atomic_get(&g_module_mgr_shutting_down) != 0) {
         module_manager_unlock();
         LOG_WRN("start_all rejected: manager state=%s", zepl_state_name(mgr_state));
-        return 0;
+        return MODULE_ERR_INVALID_STATE;
     }
 
     for (int i = 0; i < CONFIG_MAX_MODULES; i++) {
