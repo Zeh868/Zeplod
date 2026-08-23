@@ -242,12 +242,13 @@ typedef void (*event_callback_t)(const event_t* event, void* user_data);
  * @brief 订阅者条目结构
  *
  * 每个订阅者在注册时都会创建一个此结构。
+ * callback == NULL 即表示槽位空闲（event_subscribe 拒绝 NULL 回调），
+ * 不设单独的 is_active 标志以压缩事件类型表内存占用。
  */
 typedef struct {
-    event_callback_t callback;      /**< 回调函数指针 */
+    event_callback_t callback;      /**< 回调函数指针；NULL 表示槽位空闲 */
     void*            user_data;     /**< 回调用户数据 */
     uint32_t         subscriber_id; /**< 唯一订阅者 ID（由系统分配） */
-    bool             is_active;     /**< 订阅者是否处于激活状态 */
 } subscriber_entry_t;
 
 /**

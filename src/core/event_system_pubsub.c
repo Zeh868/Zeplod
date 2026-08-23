@@ -49,7 +49,7 @@ void event_system_entry_unlock(event_type_entry_t* entry) {
 
 static subscriber_entry_t* find_subscriber(event_type_entry_t* entry, uint32_t subscriber_id) {
     for (uint32_t i = 0; i < CONFIG_EVENT_MAX_SUBSCRIBERS; i++) {
-        if (entry->subscribers[i].is_active && entry->subscribers[i].subscriber_id == subscriber_id) {
+        if (entry->subscribers[i].callback != NULL && entry->subscribers[i].subscriber_id == subscriber_id) {
             return &entry->subscribers[i];
         }
     }
@@ -61,7 +61,7 @@ static bool subscriber_id_in_use(uint32_t id) {
         event_type_entry_t* entry = &g_event_system.event_types[t];
         event_system_entry_lock(entry);
         for (uint32_t i = 0; i < CONFIG_EVENT_MAX_SUBSCRIBERS; i++) {
-            if (entry->subscribers[i].is_active && entry->subscribers[i].subscriber_id == id) {
+            if (entry->subscribers[i].callback != NULL && entry->subscribers[i].subscriber_id == id) {
                 event_system_entry_unlock(entry);
                 return true;
             }
@@ -221,7 +221,7 @@ event_status_t event_subscribe(event_type_t type, event_callback_t callback, voi
 
     uint32_t free_slot = CONFIG_EVENT_MAX_SUBSCRIBERS;
     for (uint32_t i = 0; i < CONFIG_EVENT_MAX_SUBSCRIBERS; i++) {
-        if (!entry->subscribers[i].is_active) {
+        if (entry->subscribers[i].callback == NULL) {
             free_slot = i;
             break;
         }
@@ -237,7 +237,6 @@ event_status_t event_subscribe(event_type_t type, event_callback_t callback, voi
     entry->subscribers[free_slot].callback = callback;
     entry->subscribers[free_slot].user_data = user_data;
     entry->subscribers[free_slot].subscriber_id = new_id;
-    entry->subscribers[free_slot].is_active = true;
     entry->subscriber_count++;
     *subscriber_id = new_id;
 
@@ -271,7 +270,6 @@ event_status_t event_unsubscribe(event_type_t type, uint32_t subscriber_id) {
         EVENT_OP_RETURN(EVENT_ERR_NOT_FOUND);
     }
 
-    sub->is_active = false;
     sub->callback = NULL;
     sub->user_data = NULL;
     entry->subscriber_count--;
@@ -304,7 +302,6 @@ void event_unsubscribe_all(uint32_t subscriber_id) {
 
         subscriber_entry_t* sub = find_subscriber(entry, subscriber_id);
         if (sub != NULL) {
-            sub->is_active = false;
             sub->callback = NULL;
             sub->user_data = NULL;
             entry->subscriber_count--;
@@ -378,16 +375,14 @@ event_status_t event_notify_subscribers(const event_t* event) {
 
     if (entry->subscriber_count == 0) {
         event_system_entry_unlock(entry);
-        event_system_stats_lock();
-        g_event_system.total_events++;
-        event_system_stats_unlock();
+        atomic_inc(&g_event_system.total_events);
         EVENT_OP_RETURN(EVENT_ERR_NO_SUBSCRIBER);
     }
 
     for (uint32_t i = 0; i < CONFIG_EVENT_MAX_SUBSCRIBERS; i++) {
         subscriber_entry_t* sub = &entry->subscribers[i];
 
-        if (sub->is_active && sub->callback != NULL) {
+        if (sub->callback != NULL) {
             snap[n].cb = sub->callback;
             snap[n].ud = sub->user_data;
             n++;
@@ -404,9 +399,7 @@ event_status_t event_notify_subscribers(const event_t* event) {
         }
     }
 
-    event_system_stats_lock();
-    g_event_system.total_events++;
-    event_system_stats_unlock();
+    atomic_inc(&g_event_system.total_events);
 
     EVENT_OP_RETURN(EVENT_OK);
 }

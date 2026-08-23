@@ -16,12 +16,15 @@ config EVENT_SYSTEM
 
 config EVENT_MAX_TYPES
 	int "Maximum Event Types"
-	default 256
+	default 128
 	range 4 256
 	help
-	  Maximum number of event types supported.
-	  Each type uses approximately 288 bytes (with 16 subscribers).
-	  For 32KB SRAM systems, use 16 or less to save memory.
+	  Maximum number of event type ID space (types are indexed 0..N-1).
+	  Each type uses approximately 228 bytes (with 8 subscribers).
+	  The full feature stack (remote_ops / feature_gate / factory) needs
+	  IDs up to 72, so the default leaves headroom to 127; unit tests use
+	  IDs up to 224 and must set 256 explicitly. For 32KB SRAM systems,
+	  use 16 or less.
 
 config EVENT_QUEUE_SIZE
 	int "Event Queue Size"
@@ -450,6 +453,33 @@ config SYS_TIMER_ENABLE
 	default y
 	help
 	  Enable the system timer service for software timers.
+
+config SYS_TIMER_MAX_TIMERS
+	int "Maximum System Timer Count"
+	default 32
+	range 1 255
+	depends on SYS_TIMER_ENABLE
+	help
+	  Maximum number of simultaneously allocated software timers.
+	  Each timer slot uses about 160 bytes; all timers share one
+	  service thread (CONFIG_SYS_TIMER_STACK_SIZE).
+
+config SYS_TIMER_STACK_SIZE
+	int "System Timer Service Thread Stack Size"
+	default 2048
+	range 512 8192
+	depends on SYS_TIMER_ENABLE
+	help
+	  Stack size of the single timer service thread that executes
+	  all timer callbacks.
+
+config SYS_TIMER_PRIORITY
+	int "System Timer Service Thread Priority"
+	default 5
+	range -15 15
+	depends on SYS_TIMER_ENABLE
+	help
+	  Priority of the timer service thread (all callbacks share it).
 
 config SYS_WATCHDOG_ENABLE
 	bool "Enable System Watchdog"

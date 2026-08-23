@@ -95,6 +95,75 @@ static K_MUTEX_DEFINE(g_dispatcher_api_lock);
 /** 串行化 init/start/stop/deinit 以及外部手动消费，避免控制块被并发重置 */
 static K_SEM_DEFINE(g_dispatcher_lifecycle_gate, 1, 1);
 
+/**
+ * @brief 单批次统计累加器
+ *
+ * 每事件无锁折叠到本结构，批处理结束时（process_all 一轮 / process_one 一次）
+ * 持锁提交一次，将热路径的每事件锁往返降为每批一次。
+ * 全局 stats 的唯一写者是分发线程或持 lifecycle gate 的手动消费者，
+ * 种子读取无需加锁。
+ */
+typedef struct {
+    bool     enable_stats;   /**< init 快照：本批是否累计统计 */
+    bool     stats_seeded;   /**< EMA 是否已从全局统计接过种子 */
+    uint32_t count;          /**< 本批已处理事件数 */
+    uint32_t errors;         /**< 本批处理错误数 */
+    uint32_t max_latency_us; /**< 本批最大延迟 */
+    uint32_t avg_latency_us; /**< 与全局同公式（α=1/8）连续折叠的 EMA */
+} batch_stats_t;
+
+static void batch_stats_init(batch_stats_t* b) {
+    b->enable_stats = g_dispatcher.hot_enable_stats;
+    b->stats_seeded = false;
+    b->count = 0;
+    b->errors = 0;
+    b->max_latency_us = 0;
+    b->avg_latency_us = 0;
+}
+
+static void batch_stats_fold(batch_stats_t* b, uint32_t latency_us, bool error) {
+    b->count++;
+    if (error) {
+        b->errors++;
+    }
+    if (latency_us > b->max_latency_us) {
+        b->max_latency_us = latency_us;
+    }
+
+    if (!b->stats_seeded) {
+        if (g_dispatcher.stats.events_processed == 0U) {
+            b->avg_latency_us = latency_us; /* 全局首个事件：直接种子（v1 语义） */
+        } else {
+            b->avg_latency_us = (uint32_t) (((uint64_t) g_dispatcher.stats.avg_latency_us * 7 + latency_us) / 8);
+        }
+        b->stats_seeded = true;
+    } else {
+        b->avg_latency_us = (uint32_t) (((uint64_t) b->avg_latency_us * 7 + latency_us) / 8);
+    }
+}
+
+/** 持锁提交本批统计；count==0 时无状态变化，直接返回（不加锁） */
+static void dispatcher_commit_batch(batch_stats_t* b, uint32_t batch_size) {
+    if (b->count == 0U) {
+        return;
+    }
+
+    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
+    g_dispatcher.last_event_time = k_uptime_get();
+    g_dispatcher.events_in_batch = batch_size;
+
+    if (b->enable_stats) {
+        g_dispatcher.stats.events_processed += b->count;
+        g_dispatcher.stats.processing_errors += b->errors;
+        if (b->max_latency_us > g_dispatcher.stats.max_latency_us) {
+            g_dispatcher.stats.max_latency_us = b->max_latency_us;
+        }
+        g_dispatcher.stats.avg_latency_us = b->avg_latency_us;
+    }
+
+    k_mutex_unlock(&g_dispatcher.lock);
+}
+
 /* =============================================================================
  * 前置声明
  * ============================================================================= */
@@ -105,10 +174,11 @@ static K_SEM_DEFINE(g_dispatcher_lifecycle_gate, 1, 1);
 static void dispatcher_thread_func(void* p1, void* p2, void* p3);
 
 /**
- * @brief 处理单个事件
+ * @brief 处理单个事件（统计折叠进批累加器，无锁）
  * @param event 要处理的事件
+ * @param batch 批统计累加器
  */
-static void process_event(const event_t* event);
+static void process_event(const event_t* event, batch_stats_t* batch);
 
 /**
  * @brief 计算距上一个事件处理的空闲时间（微秒）
@@ -657,14 +727,20 @@ void event_dispatcher_clear_filter(void) {
  * @return EVENT_OK 成功，EVENT_ERR_INVALID_ARG 状态不正确，
  *         EVENT_ERR_QUEUE_EMPTY 队列为空
  */
-static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, bool manage_lifecycle) {
+static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, bool manage_lifecycle,
+                                                        batch_stats_t* batch) {
     dispatcher_state_t state;
     bool               thread_started;
     bool               ever_started;
     event_filter_t     filter;
     void*              filter_user_data;
-    bool               enable_stats;
     bool               lifecycle_locked = false;
+    batch_stats_t      local_batch;
+
+    if (batch == NULL) {
+        batch = &local_batch;
+        batch_stats_init(batch);
+    }
 
     if (manage_lifecycle && !event_dispatcher_is_current_thread()) {
         if (!dispatcher_lifecycle_try_lock()) {
@@ -732,15 +808,12 @@ static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, boo
     filter_user_data = g_dispatcher.filter_user_data;
     k_mutex_unlock(&g_dispatcher.lock);
 
-    enable_stats = g_dispatcher.hot_enable_stats;
-
     /* 应用过滤器（如果已设置） */
     if (filter != NULL) {
         if (!filter(&event, filter_user_data)) {
             /* SIL-2: 使用统一接口释放动态数据，正确处理 slab 来源 */
             event_free_data(&event);
-            /* SIL-2: 使用之前捕获的 enable_stats，避免数据竞争 */
-            if (enable_stats) {
+            if (batch->enable_stats) {
                 k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
                 g_dispatcher.stats.events_filtered++;
                 k_mutex_unlock(&g_dispatcher.lock);
@@ -752,10 +825,14 @@ static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, boo
         }
     }
 
-    process_event(&event);
+    process_event(&event, batch);
 
     /* SIL-2: 使用统一接口释放动态数据，正确处理 slab 来源 */
     event_free_data(&event);
+
+    if (batch == &local_batch) {
+        dispatcher_commit_batch(batch, 1U);
+    }
 
     if (lifecycle_locked) {
         dispatcher_lifecycle_unlock();
@@ -764,7 +841,7 @@ static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, boo
 }
 
 event_status_t event_dispatcher_process_one(k_timeout_t timeout) {
-    return event_dispatcher_process_one_impl(timeout, true);
+    return event_dispatcher_process_one_impl(timeout, true, NULL);
 }
 
 /**
@@ -802,20 +879,19 @@ uint32_t event_dispatcher_process_all(uint32_t max_events) {
         max_events = g_dispatcher.hot_max_events_per_cycle;
     }
 
-    uint32_t processed = 0;
+    uint32_t      processed = 0;
+    batch_stats_t batch;
+    batch_stats_init(&batch);
+
     while (processed < max_events) {
-        if (event_dispatcher_process_one_impl(K_NO_WAIT, false) != EVENT_OK) {
+        if (event_dispatcher_process_one_impl(K_NO_WAIT, false, &batch) != EVENT_OK) {
             break; /* 无更多事件 */
         }
         processed++;
     }
 
-    /* SIL-2: 更新批处理统计 */
-    if (g_dispatcher.hot_enable_stats && processed > 0) {
-        k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
-        g_dispatcher.events_in_batch = processed;
-        k_mutex_unlock(&g_dispatcher.lock);
-    }
+    /* 批末一次性提交：每批一次锁往返，替代 v1 的每事件一次 */
+    dispatcher_commit_batch(&batch, processed);
 
     if (lifecycle_locked) {
         dispatcher_lifecycle_unlock();
@@ -966,62 +1042,39 @@ static void dispatcher_thread_func(void* p1, void* p2, void* p3) {
 /**
  * @brief 处理单个事件
  *
- * 调用 event_notify_subscribers 分发事件，并更新统计信息。
+ * 调用 event_notify_subscribers 分发事件，统计折叠进 batch（无锁），
+ * 由调用方在批末统一提交。stats 关闭时跳过 cycle 计时与 64 位除法。
  *
  * @param event 要处理的事件
+ * @param batch 批统计累加器（调用方保证非 NULL）
  */
-static void process_event(const event_t* event) {
+static void process_event(const event_t* event, batch_stats_t* batch) {
     if (event == NULL) {
         return;
     }
 
-    uint64_t start_time = k_cycle_get_64();
+    const bool time_it = batch->enable_stats;
+    uint64_t   start_time = time_it ? k_cycle_get_64() : 0U;
 
     event_status_t status = event_notify_subscribers(event);
 
-    uint64_t end_time = k_cycle_get_64();
-    /* SIL-2: 使用安全的除法计算延迟，避免溢出；防御极端情况下的 cycle counter 回绕。
-     * LOW-6: sys_clock_hw_cycles_per_sec() 在 Zephyr 各平台下通常为编译时常量，
-     * 不可能返回 0，但保留防御性分支可在移植到新硬件时提供额外保护，
-     * 且分支极小（返回编译时常量），不会引入运行时开销。 */
-    uint32_t latency_us;
-    if (sys_clock_hw_cycles_per_sec() != 0) {
-        uint64_t delta = (end_time >= start_time) ? (end_time - start_time) : 0;
-        latency_us = (uint32_t) (delta * 1000000ULL / sys_clock_hw_cycles_per_sec());
-    } else {
-        latency_us = 0;
-        LOG_ERR("sys_clock_hw_cycles_per_sec() returned 0");
-    }
-
-    /* 更新统计信息，同时将 last_event_time 合并到同一锁区间以减少锁开销 */
-    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
-    g_dispatcher.last_event_time = k_uptime_get();
-
-    if (g_dispatcher.hot_enable_stats) {
-        g_dispatcher.stats.events_processed++;
-
-        /* 「无订阅者」不是处理错误：向已注册但当前无订阅者的类型发布事件属正常情形，
-         * 不应抬高 processing_errors，否则该指标会出现误报。 */
-        if (status != EVENT_OK && status != EVENT_ERR_NO_SUBSCRIBER) {
-            g_dispatcher.stats.processing_errors++;
-        }
-
-        if (latency_us > g_dispatcher.stats.max_latency_us) {
-            g_dispatcher.stats.max_latency_us = latency_us;
-        }
-
-        /* SIL-2: 指数移动平均 (EMA) 计算延迟，alpha = 1/8。
-         * 相比算术平均，EMA 对早期异常值不敏感，响应更快。
-         * LOW-NEW-8: 使用 64 位中间值防止 avg_latency_us * 7 溢出。 */
-        if (g_dispatcher.stats.events_processed == 1) {
-            g_dispatcher.stats.avg_latency_us = latency_us;
+    uint32_t latency_us = 0U;
+    if (time_it) {
+        uint64_t end_time = k_cycle_get_64();
+        /* SIL-2: 使用安全的除法计算延迟，避免溢出；防御极端情况下的 cycle counter 回绕。
+         * sys_clock_hw_cycles_per_sec() 通常为编译时常量，非零分支几乎无开销；
+         * 防御性分支保留以保护新硬件移植。 */
+        if (sys_clock_hw_cycles_per_sec() != 0) {
+            uint64_t delta = (end_time >= start_time) ? (end_time - start_time) : 0;
+            latency_us = (uint32_t) (delta * 1000000ULL / sys_clock_hw_cycles_per_sec());
         } else {
-            g_dispatcher.stats.avg_latency_us =
-                (uint32_t) (((uint64_t) g_dispatcher.stats.avg_latency_us * 7 + latency_us) / 8);
+            LOG_ERR("sys_clock_hw_cycles_per_sec() returned 0");
         }
     }
 
-    k_mutex_unlock(&g_dispatcher.lock);
+    /* 「无订阅者」不是处理错误：向已注册但当前无订阅者的类型发布事件属正常情形 */
+    const bool is_error = (status != EVENT_OK && status != EVENT_ERR_NO_SUBSCRIBER);
+    batch_stats_fold(batch, latency_us, is_error);
 
     LOG_DBG("Processed event type=%u, latency=%uus", (unsigned int) event->type, latency_us);
 }

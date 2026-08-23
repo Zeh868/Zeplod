@@ -370,13 +370,17 @@ static event_queue_cb_t* event_queue_cb_borrow_locked(const struct k_msgq* queue
 }
 
 /**
- * @brief 线程上下文借用控制块（短暂持锁）
+ * @brief 线程上下文借用控制块（无锁扫描）
+ *
+ * 注册表为写少读多（仅 init/deinit 修改，均持 g_queue_cb_lock）。msgq 为
+ * 对齐的字长指针，任何受支持架构上的读取都是原子的；并发新增最多让本次
+ * 扫描 miss（返回 NULL → EVENT_ERR_INVALID_ARG，调用方稍后重试即可），
+ * 并发删除只发生在 deinit，此时调用方本就不应再访问队列（与 ISR 路径
+ * event_queue_cb_borrow_isr 的契约一致）。热路径省去每事件两次全局锁
+ * 往返（enqueue + dequeue 各一次）。
  */
 static event_queue_cb_t* event_queue_cb_borrow(const struct k_msgq* queue) {
-    k_mutex_lock(&g_queue_cb_lock, K_FOREVER);
-    event_queue_cb_t* cb = event_queue_cb_borrow_locked(queue);
-    k_mutex_unlock(&g_queue_cb_lock);
-    return cb;
+    return event_queue_cb_borrow_locked(queue);
 }
 
 /**
@@ -497,10 +501,8 @@ event_status_t event_queue_enqueue(struct k_msgq* queue, const event_t* event, q
         return EVENT_ERR_INVALID_ARG;
     }
 
-    /* CRIT-NEW-2: ISR 路径不能持有互斥锁。
-     * event_queue_cb_borrow 内部使用 k_mutex_lock，在 ISR 中会触发内核断言。
-     * ISR 路径直接调用 k_msgq_put（Zephyr 原生支持），跳过 cb 统计。
-     * 统计丢失可接受，安全优先。 */
+    /* CRIT-NEW-2: ISR 路径无锁扫描注册表（与线程路径一致），
+     * 统计经 atomic 更新；reorder 期间经 isr_op_enter 关闭准入。 */
     if (k_is_in_isr()) {
         event_queue_cb_t* cb = event_queue_cb_borrow_isr(queue);
         event_status_t    st;

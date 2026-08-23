@@ -28,6 +28,12 @@ LOG_MODULE_REGISTER(sys_watchdog, CONFIG_SYS_LOG_LEVEL);
  * SIL-2: 配置验证宏
  * ============================================================================= */
 
+/* Zephyr 4.x watchdog.h 不再定义 WDT_OPT_NONE（仅 PAUSE_IN_SLEEP/PAUSE_HALTED），
+ * 语义"无附加选项"即 0；此兼容宏使新旧版本均可编译硬件看门狗路径。 */
+#ifndef WDT_OPT_NONE
+#define WDT_OPT_NONE 0
+#endif
+
 /** 看门狗线程join超时 (毫秒) */
 #ifndef SYS_WDT_THREAD_JOIN_TIMEOUT_MS
 #define SYS_WDT_THREAD_JOIN_TIMEOUT_MS 500U
@@ -122,8 +128,7 @@ int sys_wdt_init(const wdt_config_t* config) {
 
     /* 运行中或监控线程仍存活时拒绝重新初始化：memset 会摧毁 g_wdt.lock 与线程状态，
      * 且 monitor_thread_started 被清零后再次 start 会对同一线程控制块二次 k_thread_create。 */
-    if (g_wdt.status == WDT_STATUS_RUNNING || g_wdt.status == WDT_STATUS_PAUSED ||
-        g_wdt.monitor_thread_started) {
+    if (g_wdt.status == WDT_STATUS_RUNNING || g_wdt.status == WDT_STATUS_PAUSED || g_wdt.monitor_thread_started) {
         LOG_ERR("sys_wdt_init rejected: watchdog still active (status=%d)", g_wdt.status);
         return -EBUSY;
     }
@@ -222,9 +227,9 @@ int sys_wdt_start(void) {
 #endif
 
     if (!g_wdt.monitor_thread_started) {
-        k_tid_t tid = k_thread_create(&g_wdt.monitor_thread, g_wdt.monitor_stack,
-                                      K_THREAD_STACK_SIZEOF(g_wdt.monitor_stack), wdt_monitor_thread, NULL, NULL, NULL,
-                                      5, 0, K_FOREVER);
+        k_tid_t tid =
+            k_thread_create(&g_wdt.monitor_thread, g_wdt.monitor_stack, K_THREAD_STACK_SIZEOF(g_wdt.monitor_stack),
+                            wdt_monitor_thread, NULL, NULL, NULL, 5, 0, K_FOREVER);
         if (tid == NULL) {
             LOG_ERR("Failed to create watchdog monitor thread");
             g_wdt.status = WDT_STATUS_STOPPED;

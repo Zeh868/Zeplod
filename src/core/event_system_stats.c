@@ -13,16 +13,6 @@
 
 LOG_MODULE_DECLARE(event_system, CONFIG_SYS_LOG_LEVEL);
 
-void event_system_stats_lock(void) {
-    zepl_lock_enter(ZEP_LOCK_LEVEL_GLOBAL, (uintptr_t) &g_event_system.stats_lock);
-    k_mutex_lock(&g_event_system.stats_lock, K_FOREVER);
-}
-
-void event_system_stats_unlock(void) {
-    k_mutex_unlock(&g_event_system.stats_lock);
-    zepl_lock_exit(ZEP_LOCK_LEVEL_GLOBAL, (uintptr_t) &g_event_system.stats_lock);
-}
-
 extern void event_dispatcher_stats_inc_dropped(void);
 
 void event_system_inc_dropped_count(void) {
@@ -49,16 +39,9 @@ void event_get_statistics(uint32_t* total_events, uint32_t* queue_depth, uint32_
         return;
     }
 
-    event_system_stats_lock();
-
-    if (!g_event_system.initialized) {
-        event_system_stats_unlock();
-        event_system_op_exit();
-        return;
-    }
-
+    /* total_events 为原子计数：热路径 atomic_inc 无锁，此处原子快照即可 */
     if (total_events != NULL) {
-        *total_events = g_event_system.total_events;
+        *total_events = (uint32_t) atomic_get(&g_event_system.total_events);
     }
     if (queue_depth != NULL && g_event_system.event_queue != NULL) {
         *queue_depth = k_msgq_num_used_get(g_event_system.event_queue);
@@ -67,7 +50,6 @@ void event_get_statistics(uint32_t* total_events, uint32_t* queue_depth, uint32_
         *dropped_events = (uint32_t) atomic_get(&g_event_dropped_count);
     }
 
-    event_system_stats_unlock();
     event_system_op_exit();
 }
 
@@ -80,10 +62,7 @@ void event_system_reset_statistics(void) {
         return;
     }
 
-    event_system_stats_lock();
-    g_event_system.total_events = 0;
-    event_system_stats_unlock();
-
+    atomic_set(&g_event_system.total_events, 0);
     atomic_set(&g_event_dropped_count, 0);
 
     if (g_event_system.event_queue != NULL) {

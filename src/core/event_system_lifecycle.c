@@ -93,7 +93,7 @@ void event_system_cleanup_event_types(void) {
 void event_system_reset_control_block(void) {
     (void) zepl_state_machine_try_transition(&g_event_system.lifecycle, ZEP_STATE_UNINIT);
     g_event_system.initialized = false;
-    g_event_system.total_events = 0;
+    atomic_set(&g_event_system.total_events, 0);
     atomic_set(&g_event_system.next_subscriber_id, 1);
     g_event_system.subscriber_id_wrapped = false;
     g_event_system.event_queue = NULL;
@@ -149,8 +149,6 @@ event_status_t event_system_init(void) {
 
     memset(&g_event_system, 0, sizeof(g_event_system));
     zepl_state_machine_init(&g_event_system.lifecycle, ZEP_STATE_UNINIT);
-
-    k_mutex_init(&g_event_system.stats_lock);
 
     for (int i = 0; i < MAX_EVENT_TYPES; i++) {
         g_event_system.event_types[i].type = i;

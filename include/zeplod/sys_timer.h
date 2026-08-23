@@ -2,13 +2,19 @@
  * @file sys_timer.h
  * @brief 系统定时器服务头文件
  * @author zeh (china_qzh@163.com)
- * @version 1.0
- * @date 2026-04-01
+ * @version 2.0
+ * @date 2026-08-23
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-08-23       2.0            zeh            单服务线程模型（RAM 优化）
+ *
+ * @note v2.0：所有回调在唯一的定时器服务线程（CONFIG_SYS_TIMER_PRIORITY）
+ *       中执行。回调应尽量短小；耗时操作请发布事件交由相应模块处理，
+ *       长回调会推迟其他定时器的触发。回调耗时超过周期时，错过的触发
+ *       会被跳过（miss_count 不含此类跳过，仅统计到期队列打满的丢弃）。
  *
  */
 
@@ -63,7 +69,7 @@ typedef struct {
     sys_timer_callback_t callback;
     void*                user_data;
     const char*          name;
-    int                  priority; /* 定时器线程优先级 */
+    int priority; /* v2 兼容保留：所有回调共享服务线程优先级，此字段被忽略 */
 } sys_timer_config_t;
 
 /**
@@ -96,6 +102,10 @@ sys_timer_handle_t sys_timer_create(const sys_timer_config_t* config);
 
 /**
  * @brief 删除定时器
+ *
+ * 回调执行期间调用删除会等待回调结束后释放槽位；回调超过
+ * SYS_TIMER_DELETE_WAIT_MS 未结束时返回 -EIO，可重试。
+ * @note 从定时器回调内部删除自身返回 -EDEADLK（请在回调外删除）
  * @param timer 定时器句柄
  * @return 成功返回 0，失败返回负错误码
  */

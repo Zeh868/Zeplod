@@ -77,8 +77,7 @@ typedef struct {
     zepl_state_machine_t lifecycle;
     struct k_msgq*       event_queue;
     event_type_entry_t   event_types[MAX_EVENT_TYPES];
-    uint32_t             total_events;
-    struct k_mutex       stats_lock;
+    atomic_t             total_events; /**< 已分发事件计数（分发线程单写，原子读） */
     atomic_t             next_subscriber_id;
     bool                 subscriber_id_wrapped;
 } event_system_cb_t;
@@ -98,8 +97,6 @@ bool         event_system_lifecycle_try_lock(void);
 void         event_system_lifecycle_unlock(void);
 zepl_state_t event_system_lifecycle_state(void);
 
-void event_system_stats_lock(void);
-void event_system_stats_unlock(void);
 void event_system_subscriber_id_lock(void);
 void event_system_subscriber_id_unlock(void);
 void event_system_entry_lock(event_type_entry_t* entry);
