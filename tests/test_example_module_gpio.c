@@ -2,13 +2,17 @@
  * @file test_example_module_gpio.c
  * @brief GPIO 控制示例模块单元测试
  * @author OpenClaw Agent
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-10
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-10       1.0            agent          为 example_module_gpio 编写完整测试用例
+ * 2026-09-18       1.1            zeh            同步删除 src 侧已移除的 led_pin/
+ *                                                 button_pin 配置字段；按键读取用例补
+ *                                                 稳定性断言；无效命令魔数具名；teardown
+ *                                                 补 event_dispatcher_stop
  *
  */
 
@@ -16,11 +20,15 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/ztest.h>
 #include <string.h>
+#include <zeplod/event_dispatcher.h>
 #include <zeplod/event_system.h>
 #include <zeplod/example_module_gpio.h>
 #include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(test_example_module_gpio);
+
+/* 无效控制命令探针：落在 GPIO_CMD_* 合法命令集合之外 */
+#define CMD_INVALID 9999U
 
 /* =============================================================================
  * 测试夹具
@@ -36,6 +44,8 @@ static void* test_suite_setup(void) {
 static void test_suite_teardown(void* fixture) {
     (void) fixture;
     module_manager_shutdown();
+    /* 与其他套件对齐：分发器未初始化时 stop 幂等返回 EVENT_OK，不产生副作用 */
+    (void) event_dispatcher_stop();
     event_system_stop();
 }
 
@@ -60,8 +70,7 @@ ZTEST(example_module_gpio, test_init_null_config) {
  * @brief 测试模块初始化 - 有效配置
  */
 ZTEST(example_module_gpio, test_init_valid_config) {
-    example_module_gpio_config_t config = {
-        .led_pin = "GPIO0_5", .button_pin = "GPIO0_6", .blink_interval_ms = 100, .enable_button = true};
+    example_module_gpio_config_t config = {.blink_interval_ms = 100, .enable_button = true};
 
     int ret = example_module_gpio_init(&config);
     zassert_equal(ret, 0, "有效配置初始化应返回 0");
@@ -180,6 +189,9 @@ ZTEST(example_module_gpio, test_toggle_led) {
 
 /**
  * @brief 测试获取按键状态
+ *
+ * 真值取决于硬件/devicetree（无 sw0 时恒为 false），无法断言具体电平；
+ * 但同一静态输入下连续两次读取必须一致——状态抖动即实现缺陷。
  */
 ZTEST(example_module_gpio, test_get_button) {
     example_module_gpio_init(NULL);
@@ -187,11 +199,10 @@ ZTEST(example_module_gpio, test_get_button) {
 
     /* 获取按键状态 - 不应崩溃 */
     bool pressed = example_module_gpio_get_button();
-    /* 可能是 true 或 false，取决于实际硬件状态 */
 
     /* 再获取一次确认稳定 */
     bool pressed2 = example_module_gpio_get_button();
-    (void) pressed2;
+    zassert_equal(pressed2, pressed, "连续两次按键读取应一致（读值=%d/%d）", pressed, pressed2);
 
     example_module_gpio_stop();
     example_module_gpio_shutdown();
@@ -267,7 +278,8 @@ ZTEST(example_module_gpio, test_control_get_button) {
     uint8_t button_state = 0;
     int     ret = example_module_gpio_control(GPIO_CMD_GET_BUTTON, &button_state);
     zassert_equal(ret, 0, "GET_BUTTON 命令应返回 0");
-    /* button_state 应为 0 或 1 */
+    /* 布尔语义：输出只允许 0/1 两值，出现其他值说明未归一化 */
+    zassert_true(button_state == 0U || button_state == 1U, "按键状态应为 0/1，实为 %u", button_state);
 
     example_module_gpio_stop();
     example_module_gpio_shutdown();
@@ -294,7 +306,7 @@ ZTEST(example_module_gpio, test_control_set_blink) {
 ZTEST(example_module_gpio, test_control_invalid) {
     example_module_gpio_init(NULL);
 
-    int ret = example_module_gpio_control(9999, NULL);
+    int ret = example_module_gpio_control(CMD_INVALID, NULL);
     zassert_true(ret != 0, "无效命令应返回错误");
 
     example_module_gpio_shutdown();

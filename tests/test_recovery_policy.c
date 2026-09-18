@@ -2,7 +2,7 @@
  * @file test_recovery_policy.c
  * @brief recovery_policy 模块单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -10,6 +10,8 @@
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            初始版本
  * 2026-06-13       1.1            zeh            增加 clear_all / 升级路径用例
+ * 2026-09-18       1.2            zeh            fault dump 断言改按导出格式解析
+ *                                                 （magic + 记录数），不再猜字节偏移
  *
  */
 
@@ -17,11 +19,15 @@
 #include <zephyr/ztest.h>
 
 #include <errno.h>
+#include <string.h>
 
 #include <zeplod/event_system.h>
 #include <zeplod/module_manager.h>
 #include <zeplod/recovery_policy.h>
 #include <zeplod/sys_fault_dump.h>
+
+/* sys_fault_dump 导出的环头部 magic（源：sys_fault_dump.c FAULT_DUMP_MAGIC） */
+#define TEST_FAULT_DUMP_RING_MAGIC 0x5A4C4446U
 
 /* =============================================================================
  * 测试用桩模块（start 可配置失败次数）
@@ -173,6 +179,8 @@ ZTEST(recovery_policy_tests, test_fault_dump_on_module_error) {
     uint32_t mod_id;
     uint8_t  buf[512];
     size_t   n = 0U;
+    uint32_t ring_magic = 0U;
+    uint16_t ring_count = 0U;
 
     setup_recovery_policy();
     sys_fault_dump_clear();
@@ -182,8 +190,14 @@ ZTEST(recovery_policy_tests, test_fault_dump_on_module_error) {
     zassert_equal(module_manager_start_module(mod_id), -EIO, NULL);
 
     zassert_equal(sys_fault_dump_export(buf, sizeof(buf), &n), 0, NULL);
-    zassert_true(n > 0U, NULL);
-    zassert_true(buf[0] != 0U || buf[4] != 0U, "fault ring should contain records");
+
+    /* 导出格式为原始 fault_dump_ring_t：{magic u32, head u16, count u16, entries[]}。
+     * 按头三字段解析并校验记录数，不再对具体字节偏移做猜测性断言 */
+    zassert_true(n >= sizeof(ring_magic) + 2U * sizeof(uint16_t), "导出长度应至少包含环头部");
+    memcpy(&ring_magic, buf, sizeof(ring_magic));
+    memcpy(&ring_count, buf + sizeof(ring_magic) + sizeof(uint16_t), sizeof(ring_count));
+    zassert_equal(ring_magic, TEST_FAULT_DUMP_RING_MAGIC, "fault ring magic 不匹配");
+    zassert_true(ring_count >= 1U, "模块启动失败后 fault ring 应含至少一条记录");
 
     zassert_equal(module_manager_unregister(mod_id), MODULE_OK, NULL);
     teardown_recovery_policy();

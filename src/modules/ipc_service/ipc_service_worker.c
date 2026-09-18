@@ -2,8 +2,13 @@
  * @file ipc_service_worker.c
  * @brief IPC 服务工作线程
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补输入句柄 acquire+release×2 引用计数契约注释
  */
 
 #include "ipc_service_internal.h"
@@ -128,6 +133,12 @@ void ipc_service_worker_thread(void* p1, void* p2, void* p3) {
         }
 
 #if IS_ENABLED(CONFIG_THREAD_IPC_SERVICE_SHARED_MEM)
+        /* 输入句柄引用计数平衡：调用方随请求移交 1 份引用（所有权归 worker），
+         * worker 处理前又显式 acquire +1（供响应透传时对冲）。因此收尾需 release 两次：
+         * 1) 释放 worker 自己 acquire 的那份；
+         * 2) 若响应未透传原句柄（response_msg.shm_handle != 请求句柄），再释放随请求
+         *    移交的那份。透传场景下该份引用由 dispatcher（async 回调后）或调用方
+         *    收尾（sync_shm 拿到句柄后自行 release）负责释放。 */
         if (request_shm_acquired) {
             ipc_shm_release(service, request_msg.shm_handle);
         }

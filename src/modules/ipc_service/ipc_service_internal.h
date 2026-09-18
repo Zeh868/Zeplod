@@ -2,8 +2,13 @@
  * @file ipc_service_internal.h
  * @brief IPC 服务内部共享（不对外公开）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补修改日志段
  */
 
 #ifndef IPC_SERVICE_INTERNAL_H

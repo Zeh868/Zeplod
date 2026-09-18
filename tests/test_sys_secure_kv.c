@@ -2,13 +2,15 @@
  * @file test_sys_secure_kv.c
  * @brief sys_secure_kv 服务单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            get 入参改本地可写缓冲，去除对
+ *                                                 const 数据的类型压制
  *
  */
 
@@ -45,6 +47,7 @@ ZTEST(sys_secure_kv_tests, test_set_get_roundtrip) {
 
 ZTEST(sys_secure_kv_tests, test_remove_and_missing_key) {
     static const uint8_t data[] = {0x01, 0x02};
+    uint8_t              scratch[4]; /* 本地可写缓冲：get 输出参数不可指向 const 数据 */
 
     zassert_equal(sys_secure_kv_init(), 0, NULL);
     sys_secure_kv_clear();
@@ -52,7 +55,7 @@ ZTEST(sys_secure_kv_tests, test_remove_and_missing_key) {
     zassert_equal(sys_secure_kv_set("token", data, sizeof(data)), 0, NULL);
     zassert_equal(sys_secure_kv_remove("token"), 0, NULL);
     zassert_false(sys_secure_kv_has("token"), NULL);
-    zassert_equal(sys_secure_kv_get("token", (uint8_t*) data, sizeof(data), NULL), -ENOENT, NULL);
+    zassert_equal(sys_secure_kv_get("token", scratch, sizeof(scratch), NULL), -ENOENT, NULL);
 }
 
 ZTEST(sys_secure_kv_tests, test_clear_all) {

@@ -6,13 +6,14 @@
  * MODULE_MGR_EVENT_ERROR，按 Kconfig 执行模块重启、全量重启或暖复位。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 2 初始版本
+ * 2026-09-18       1.1            zeh            模块接口 7 件套补全 Doxygen 注释
  *
  */
 
@@ -46,16 +47,54 @@ typedef enum {
 #define RECOVERY_POLICY_CMD_RESET_COUNTS 1
 
 /* =============================================================================
- * 模块接口（module_interface_t）
+ * 模块接口（module_interface_t，由 module_manager 生命周期驱动）
  * ============================================================================= */
 
-int             recovery_policy_init(void* config);
-int             recovery_policy_start(void);
-int             recovery_policy_stop(void);
-int             recovery_policy_shutdown(void);
-void            recovery_policy_on_event(const event_t* event, void* user_data);
+/**
+ * @brief 初始化恢复策略模块（清零重启计数）
+ * @param config 模块配置指针；本模块未使用，允许为 NULL
+ * @return 0 成功；重复初始化幂等返回 0
+ */
+int recovery_policy_init(void* config);
+
+/**
+ * @brief 启动恢复策略（登记 module_manager 错误回调及 OTA/看门狗钩子）
+ * @return 0 成功；APP_ERR_INIT 未初始化；重复启动幂等返回 0
+ */
+int recovery_policy_start(void);
+
+/**
+ * @brief 停止恢复策略（撤销看门狗 pre-expire 回调，保留错误回调登记）
+ * @return 0 成功；未运行时亦返回 0（幂等）
+ */
+int recovery_policy_stop(void);
+
+/**
+ * @brief 关闭恢复策略（撤销全部回调与订阅，状态回落 UNINITIALIZED）
+ * @return 0 成功
+ */
+int recovery_policy_shutdown(void);
+
+/**
+ * @brief 事件回调占位（恢复动作经 module_manager 回调与 OTA 事件订阅触发）
+ * @param event 事件指针（非 NULL，由事件分发器保证）
+ * @param user_data 订阅时传入的用户数据（本模块未使用）
+ */
+void recovery_policy_on_event(const event_t* event, void* user_data);
+
+/**
+ * @brief 查询模块生命周期状态
+ * @return MODULE_STATUS_*（UNINITIALIZED/INITIALIZED/RUNNING/STOPPED）
+ */
 module_status_t recovery_policy_get_status(void);
-int             recovery_policy_control(int cmd, void* arg);
+
+/**
+ * @brief 模块控制命令入口
+ * @param cmd 命令字；仅支持 RECOVERY_POLICY_CMD_RESET_COUNTS
+ * @param arg 命令参数；RESET_COUNTS 未使用，须为 NULL
+ * @return 0 成功；-ENOTSUP 不支持的命令
+ */
+int recovery_policy_control(int cmd, void* arg);
 
 /* =============================================================================
  * 模块专用 API

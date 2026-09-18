@@ -2,8 +2,18 @@
  * @file feature_gate.c
  * @brief 功能开关模块实现
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh            Phase 5 初始版本
+ * 2026-06-13       1.1            zeh            license 变更事件发布
+ * 2026-09-18       1.2            zeh            补文件修改日志；注明 token 比较非恒时
+ *                                                 （非安全 DRM 定位的已知取舍）；格式对齐
+ *                                                 仓库基线
+ *
  */
 
 #include <zephyr/init.h>
@@ -46,6 +56,10 @@ static bool gate_token_matches(const char* token) {
         return false;
     }
 
+    /* 已知取舍：strcmp 为非恒时比较，理论上可被时序侧信道逐字节探测。
+       本模块定位为商业功能开关（非安全 DRM），不抵御对抗性攻击者，
+       不为恒时比较引入额外复杂度；如未来承载真正的授权控制，须改用
+       恒时比较（如逐字节 OR 累积差异后统一判定） */
     return strcmp(token, CONFIG_FEATURE_GATE_LICENSE) == 0;
 }
 

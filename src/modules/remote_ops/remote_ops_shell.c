@@ -2,8 +2,15 @@
  * @file remote_ops_shell.c
  * @brief 远程运维 Shell 命令
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh            Phase 5 初始版本
+ * 2026-09-18       1.1            zeh            补文件修改日志
+ *
  */
 
 #include <zeplod/remote_ops.h>

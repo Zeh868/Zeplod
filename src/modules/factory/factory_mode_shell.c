@@ -2,8 +2,15 @@
  * @file factory_mode_shell.c
  * @brief 工厂产测 Shell 命令
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh            Phase 4 初始版本
+ * 2026-09-18       1.1            zeh            补文件修改日志
+ *
  */
 
 #include <zeplod/factory_mode.h>

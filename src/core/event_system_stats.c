@@ -2,8 +2,14 @@
  * @file event_system_stats.c
  * @brief 事件系统统计与丢弃计数
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            删除 event_dispatcher_stats_inc_dropped 冗余 extern（头文件已声明）
  */
 
 #include <zephyr/logging/log.h>
@@ -12,8 +18,6 @@
 #include "event_system_internal.h"
 
 LOG_MODULE_DECLARE(event_system, CONFIG_SYS_LOG_LEVEL);
-
-extern void event_dispatcher_stats_inc_dropped(void);
 
 void event_system_inc_dropped_count(void) {
     atomic_inc(&g_event_dropped_count);

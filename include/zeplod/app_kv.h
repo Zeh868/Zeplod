@@ -5,13 +5,14 @@
  * 可选 CONFIG_APP_KV_PERSIST：整表序列化为单条 Settings blob 写入 flash（需分区与 overlay）。
  * 线程安全。
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：补全 set_int32/get_int32 Doxygen
  *
  */
 
@@ -70,7 +71,21 @@ typedef int (*app_kv_visit_fn)(const char* key, const char* value, void* user);
  */
 int app_kv_foreach(app_kv_visit_fn fn, void* user);
 
+/**
+ * @brief 以十进制文本写入 int32 值（等价于 app_kv_set 的整数便捷封装）
+ * @param key 键名（非空，长度 < APP_KV_KEY_MAX_LEN；NULL 或空串为参数错误）
+ * @param v 待写入的 32 位有符号整数
+ * @return APP_OK 成功；否则为 APP_ERR_INVALID_PARAM / APP_ERR_KV_FULL 等（见 app_kv_set）
+ */
 int app_kv_set_int32(const char* key, int32_t v);
+
+/**
+ * @brief 读取 int32 值（app_kv_get + strtol 解析，含范围校验）
+ * @param key 键名（非空；NULL 为参数错误）
+ * @param out 输出：解析后的值；NULL 为参数错误
+ * @return APP_OK 成功；APP_ERR_NOT_FOUND 键不存在；
+ *         APP_ERR_INVALID_PARAM 参数错误、内容非合法整数或超出 int32 范围
+ */
 int app_kv_get_int32(const char* key, int32_t* out);
 
 /**
@@ -108,6 +123,11 @@ typedef int (*app_kv_migrate_fn)(uint32_t from_ver, uint32_t to_ver, void* user_
  * @note 须满足 from_ver < to_ver；同一步骤重复注册返回 APP_ERR_ALREADY_EXISTS
  */
 int app_kv_register_migrate(uint32_t from_ver, uint32_t to_ver, app_kv_migrate_fn fn, void* user_data);
+
+#if defined(UNIT_TEST)
+/** 测试专用：清空迁移注册表（仅 ztest 用例间隔离使用，产品构建不可见） */
+void app_kv_test_reset_migrations(void);
+#endif
 
 /** 设置当前 schema 版本（RAM，不自动持久化） */
 int app_kv_set_schema_version(uint32_t version);

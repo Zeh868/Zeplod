@@ -6,7 +6,7 @@
  * 配置要求：CONFIG_EVENT_MAX_TYPES > 60。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -14,6 +14,8 @@
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 3 初始版本
  * 2026-07-09       1.1            zeh            优先级注册表 + failover：新增 CELLULAR 链路类型与 connect_auto()
+ * 2026-09-18       1.2            zeh            get_state 错误码对齐实现（APP_ERR_INVALID_PARAM）；
+ *                                                 模块接口 7 件套补全 Doxygen 注释
  *
  */
 
@@ -63,16 +65,54 @@ typedef struct {
 } connectivity_status_t;
 
 /* =============================================================================
- * 模块接口（module_interface_t）
+ * 模块接口（module_interface_t，由 module_manager 生命周期驱动）
  * ============================================================================= */
 
-int             connectivity_module_init(void* config);
-int             connectivity_module_start(void);
-int             connectivity_module_stop(void);
-int             connectivity_module_shutdown(void);
-void            connectivity_module_on_event(const event_t* event, void* user_data);
+/**
+ * @brief 初始化连接管理模块（构建后端注册表并逐一 init，失败后端被剔除）
+ * @param config 模块配置指针；本模块未使用，允许为 NULL
+ * @return 0 成功；APP_ERR_CONNECTIVITY 无任何可用后端；重复初始化幂等返回 0
+ */
+int connectivity_module_init(void* config);
+
+/**
+ * @brief 启动连接管理（订阅配网事件并触发开机自连）
+ * @return 0 成功；APP_ERR_INIT 未初始化；重复启动幂等返回 0
+ */
+int connectivity_module_start(void);
+
+/**
+ * @brief 停止连接管理（退订事件、停止 failover 轮询并断开活动链路）
+ * @return 0 成功；未运行时亦返回 0（幂等）
+ */
+int connectivity_module_stop(void);
+
+/**
+ * @brief 关闭连接管理（状态回落 UNINITIALIZED）
+ * @return 0 成功
+ */
+int connectivity_module_shutdown(void);
+
+/**
+ * @brief 事件回调占位（本模块状态经事件发布对外，不消费外部事件）
+ * @param event 事件指针（非 NULL，由事件分发器保证）
+ * @param user_data 订阅时传入的用户数据（本模块未使用）
+ */
+void connectivity_module_on_event(const event_t* event, void* user_data);
+
+/**
+ * @brief 查询模块生命周期状态
+ * @return MODULE_STATUS_*（UNINITIALIZED/INITIALIZED/RUNNING/STOPPED）
+ */
 module_status_t connectivity_module_get_status(void);
-int             connectivity_module_control(int cmd, void* arg);
+
+/**
+ * @brief 模块控制命令入口
+ * @param cmd 命令字（本模块未实现任何命令）
+ * @param arg 命令参数（未使用）
+ * @return -ENOTSUP 始终返回
+ */
+int connectivity_module_control(int cmd, void* arg);
 
 /* =============================================================================
  * 模块专用 API
@@ -109,8 +149,8 @@ int connectivity_module_disconnect(void);
 
 /**
  * @brief 查询当前连接状态
- * @param out 输出状态
- * @return 0 成功；-EINVAL
+ * @param out 输出状态指针，须非 NULL
+ * @return 0 成功；APP_ERR_INVALID_PARAM out 为 NULL
  */
 int connectivity_module_get_state(connectivity_status_t* out);
 

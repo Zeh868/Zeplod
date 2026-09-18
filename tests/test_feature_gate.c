@@ -2,8 +2,16 @@
  * @file test_feature_gate.c
  * @brief feature_gate 模块单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh             初始版本
+ * 2026-09-18       1.2            zeh             event_unsubscribe 改双参（类型+ID）；
+ *                                                  补套件 teardown 停分发器与事件系统
+ *
  */
 
 #include <zephyr/kernel.h>
@@ -56,6 +64,16 @@ static void license_event_cb(const event_t* ev, void* user_data) {
     k_sem_give(&g_license_sem);
 }
 
+static void gate_suite_teardown(void* fixture) {
+    (void) fixture;
+
+    /* 套件收尾对称：setup 启动了分发器与事件系统，这里统一停掉，
+     * 避免分发线程泄漏影响同构建内的后续套件 */
+    (void) event_dispatcher_stop();
+
+    (void) event_system_stop();
+}
+
 static void* gate_suite_setup(void) {
     int ret;
 
@@ -84,7 +102,7 @@ static void* gate_suite_setup(void) {
     return NULL;
 }
 
-ZTEST_SUITE(feature_gate_tests, NULL, gate_suite_setup, NULL, NULL, NULL);
+ZTEST_SUITE(feature_gate_tests, NULL, gate_suite_setup, NULL, NULL, gate_suite_teardown);
 
 ZTEST(feature_gate_tests, test_core_always_enabled) {
     setup_gate();
@@ -131,7 +149,7 @@ ZTEST(feature_gate_tests, test_premium_locked_until_license) {
 
     zassert_false(feature_gate_is_enabled(FEATURE_GATE_NAME_CLOUD), NULL);
 
-    event_unsubscribe(sub_id);
+    event_unsubscribe(EVENT_FEATURE_GATE_LICENSE_CHANGED, sub_id);
 
     teardown_gate();
 }

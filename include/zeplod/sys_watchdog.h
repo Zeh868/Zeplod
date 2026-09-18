@@ -2,13 +2,15 @@
  * @file sys_watchdog.h
  * @brief 系统看门狗服务头文件
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            补充 init 并发语义、get_stats
+ *                                                参数 NULL 约定
  *
  */
 
@@ -83,8 +85,13 @@ typedef struct {
 
 /**
  * @brief 初始化看门狗系统
- * @param config 看门狗配置
+ * @param config 看门狗配置；NULL 使用默认配置（Kconfig 超时、软件模式）
  * @return 成功返回 0，失败返回负错误码
+ * @retval -EBUSY 看门狗仍活跃（RUNNING/PAUSED、监控线程存活或并发操作进行中）
+ *
+ * @note 并发语义：重复初始化时短超时试锁探测"操作在途"（feed/监控正持锁拒绝），
+ *       并检查运行状态与监控线程存活标志；活跃时返回 -EBUSY，不会摧毁正在
+ *       使用的互斥锁与线程控制块。非活跃状态（STOPPED/EXPIRED/ERROR）允许重初始化
  */
 int sys_wdt_init(const wdt_config_t* config);
 
@@ -166,7 +173,7 @@ int sys_wdt_thread_alive(k_tid_t thread_id);
 
 /**
  * @brief 获取看门狗统计信息
- * @param stats 输出：统计信息结构体
+ * @param stats 输出：统计信息结构体；NULL 时为无操作（不写入、不报错）
  */
 void sys_wdt_get_stats(wdt_stats_t* stats);
 

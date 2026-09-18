@@ -12,7 +12,7 @@
  * - 支持 ISR 上下文发布事件
  * - 动态事件数据分配
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -20,6 +20,7 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.0            zeh            修正文档与注释
+ * 2026-09-18       1.1            zeh            event_subscribe @note 登记槽满错误码延期引入 EVENT_ERR_NO_RESOURCE 的计划
  *
  */
 
@@ -390,7 +391,8 @@ event_status_t event_unregister_type(event_type_t type);
  *
  * @note 订阅者 ID 用于后续取消订阅
  * @note 每个订阅者最多订阅 CONFIG_EVENT_MAX_SUBSCRIBERS 个事件类型
- * @note 达到订阅上限时返回 EVENT_ERR_QUEUE_FULL（与队列满共用错误码，非队列入队失败）
+ * @note 达到订阅上限时返回 EVENT_ERR_QUEUE_FULL（与队列入队失败共用此码；tests 依赖现值，
+ *       未来版本拟引入 EVENT_ERR_NO_RESOURCE 区分，过渡期调用方勿依赖两处语义差异）
  */
 event_status_t event_subscribe(event_type_t type, event_callback_t callback, void* user_data, uint32_t* subscriber_id);
 

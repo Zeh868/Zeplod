@@ -2,15 +2,14 @@
  * @file test_sys_timer.c
  * @brief sys_timer 单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
- *
- * Zehao Qian
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            等待超时魔数具名（TIMER_FIRE_WAIT_MS）
  *
  */
 
@@ -21,6 +20,9 @@
 #include "ztest_sync.h"
 
 LOG_MODULE_REGISTER(test_sys_timer);
+
+/* 异步触发等待上限：覆盖慢速调度下的定时器服务线程响应时间 */
+#define TIMER_FIRE_WAIT_MS 2000U
 
 static void timer_cb(sys_timer_handle_t timer, void* user_data) {
     (void) timer;
@@ -148,7 +150,7 @@ ZTEST(sys_timer, test_periodic_fires) {
     zassert_not_null(t, NULL);
     zassert_equal(sys_timer_start(t), 0, NULL);
 
-    zassert_true(ztest_wait_until(fired_at_least, (void*) 3, 2000U), "周期定时器应在 2s 内至少触发 3 次");
+    zassert_true(ztest_wait_until(fired_at_least, (void*) 3, TIMER_FIRE_WAIT_MS), "周期定时器应在 2s 内至少触发 3 次");
 
     zassert_equal(sys_timer_stop(t), 0, NULL);
     zassert_equal(sys_timer_delete(t), 0, NULL);
@@ -161,7 +163,7 @@ ZTEST(sys_timer, test_oneshot_fires_once) {
     sys_timer_handle_t t = sys_timer_oneshot(50U, count_cb, &g_fire_count);
     zassert_not_null(t, NULL);
 
-    zassert_true(ztest_wait_until(fired_at_least, (void*) 1, 2000U), "单次定时器应触发");
+    zassert_true(ztest_wait_until(fired_at_least, (void*) 1, TIMER_FIRE_WAIT_MS), "单次定时器应触发");
 
     /* 触发后再等 3 个周期时长，确保不会重复触发 */
     k_msleep(150U);
@@ -180,7 +182,7 @@ ZTEST(sys_timer, test_stats_fire_count) {
     sys_timer_handle_t t = sys_timer_periodic(50U, count_cb, &g_fire_count);
     zassert_not_null(t, NULL);
 
-    zassert_true(ztest_wait_until(fired_at_least, (void*) 2, 2000U), "应至少触发 2 次");
+    zassert_true(ztest_wait_until(fired_at_least, (void*) 2, TIMER_FIRE_WAIT_MS), "应至少触发 2 次");
 
     zassert_equal(sys_timer_get_stats(t, &stats), 0, NULL);
     zassert_true(stats.fire_count >= 2U, "fire_count 应 >= 2");
@@ -225,7 +227,7 @@ ZTEST(sys_timer, test_delete_from_callback_rejected) {
     zassert_not_null(t, NULL);
     zassert_equal(sys_timer_start(t), 0, NULL);
 
-    zassert_true(ztest_wait_until(deadlk_flag_set, NULL, 2000U), "回调内 delete 应返回 -EDEADLK");
+    zassert_true(ztest_wait_until(deadlk_flag_set, NULL, TIMER_FIRE_WAIT_MS), "回调内 delete 应返回 -EDEADLK");
 
     zassert_equal(sys_timer_delete(t), 0, "回调外 delete 应成功");
 }

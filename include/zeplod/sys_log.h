@@ -2,13 +2,15 @@
  * @file sys_log.h
  * @brief 系统日志服务头文件
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            补充 init 并发语义、print 禁止 ISR、
+ *                                                get_entries 参数 NULL 约定
  *
  */
 #ifndef SYS_LOG_H
@@ -81,8 +83,13 @@ typedef struct {
 
 /**
  * @brief 初始化日志系统
- * @param config 配置结构体
+ * @param config 配置结构体；NULL 使用默认配置（INF 级别、控制台+内存目的地）
  * @return 成功返回 0，失败返回负错误码
+ * @retval -EINVAL 配置参数非法（memory_buffer_size 非零但小于单条目大小）
+ * @retval -EBUSY 并发日志操作进行中（打印在途），拒绝重初始化
+ *
+ * @note 并发语义：重复初始化时以短超时试锁探测"打印在途"；有并发打印时返回
+ *       -EBUSY，不会摧毁正被使用的互斥锁与环形缓冲。无并发使用时允许安全重初始化
  */
 int sys_log_init(const sys_log_config_t* config);
 
@@ -118,6 +125,8 @@ void sys_log_set_destination(sys_log_dest_mask_t dest, bool enable);
  * @param ... 格式参数
  *
  * @note 时间戳由内部自动附加（k_uptime），无需调用方提供。
+ * @note 禁止在 ISR 中调用：内部使用 k_mutex（非中断安全），中断上下文请使用
+ *       Zephyr 原生 LOG_* 宏或 printk
  */
 void sys_log_print(sys_log_level_t level, const char* module, const char* format, ...);
 
@@ -133,10 +142,10 @@ void sys_log_hexdump(sys_log_level_t level, const char* module, const void* data
 
 /**
  * @brief 从内存缓冲区获取日志条目
- * @param entries 输出条目缓冲区
- * @param count 要获取的条目数
+ * @param entries 输出条目缓冲区；NULL 时直接返回 0（不写入）
+ * @param count 要获取的条目数；0 时直接返回 0
  * @param oldest_first true 表示先获取最旧的条目
- * @return 获取的条目数
+ * @return 实际获取的条目数（<= count，环内不足时返回现有条数）
  */
 uint32_t sys_log_get_entries(sys_log_entry_t* entries, uint32_t count, bool oldest_first);
 

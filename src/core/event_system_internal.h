@@ -2,8 +2,14 @@
  * @file event_system_internal.h
  * @brief 事件系统 core 内部共享（不对外公开）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            收编 event_system_inc_dropped_count 原型，消除 event_queue.c 裸 extern
  */
 
 #ifndef EVENT_SYSTEM_INTERNAL_H
@@ -112,4 +118,12 @@ void           event_system_cleanup_event_types(void);
 void           event_system_reset_control_block(void);
 
 bool event_system_type_is_registered(event_type_t type);
+
+/**
+ * @brief 全局丢弃计数 +1（定义于 event_system_stats.c）
+ *
+ * 队列溢出/丢弃路径调用；同时联动分发器的 events_dropped 统计。
+ * ISR 安全（内部仅原子操作）。
+ */
+void event_system_inc_dropped_count(void);
 #endif /* EVENT_SYSTEM_INTERNAL_H */

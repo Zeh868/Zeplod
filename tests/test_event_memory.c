@@ -2,12 +2,13 @@
  * @file test_event_memory.c
  * @brief 事件内存管理模块单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-17
  *
  * @par 修改日志:
  *    Date         Version        Author          Description
  * 2026-04-17       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            耗尽回调用例真正触发 slab 耗尽；混合优先级断言精确化；分配类用例自带 init 并套件级 shutdown 清理
  */
 
 #include <zephyr/logging/log.h>
@@ -16,6 +17,12 @@
 #include "event_memory.h"
 
 LOG_MODULE_REGISTER(test_event_memory);
+
+/** 大量分配用例的分配次数（覆盖 NORMAL 池 4 块上限的 4 倍，验证失败路径与释放） */
+#define MASS_ALLOC_COUNT 16
+
+/** 混合优先级用例的总分配次数（4 种优先级 + 8 次 NORMAL 追加） */
+#define TEST_MIXED_ALLOC_COUNT 12
 
 /* =============================================================================
  * Slab 选择函数测试
@@ -201,9 +208,13 @@ ZTEST(test_event_memory, test_slab_available) {
     /* CRITICAL 优先级 */
     available = event_slab_available(EVENT_PRIORITY_CRITICAL);
 #if EVENT_SLAB_ENABLED && EVENT_SLAB_CRITICAL_AVAILABLE
-    /* 初始状态应可用 */
+    /* 独立 CRITICAL 池存在且未使用，初始状态应可用 */
+    zassert_true(available, "CRITICAL 池应可用");
 #elif EVENT_SLAB_ENABLED
-    /* 回退到 NORMAL，取决于 NORMAL 池状态 */
+    /* 测试配置无独立 CRITICAL 池，回退 NORMAL 池；套件内无泄漏时应有余量 */
+    zassert_true(available, "回退 NORMAL 池应可用");
+#else
+    zassert_false(available, "Slab 未启用时应返回 false");
 #endif
 }
 
@@ -303,9 +314,9 @@ ZTEST(test_event_memory, test_slab_stats_after_allocation) {
  * Slab 耗尽回调测试
  * ============================================================================= */
 
-#if defined(CONFIG_EVENT_SLAB_EXHAUSTED_CB) && (CONFIG_EVENT_SLAB_EXHAUSTED_CB == 1)
+#if defined(CONFIG_EVENT_SLAB_EXHAUSTED_CB) && (CONFIG_EVENT_SLAB_EXHAUSTED_CB == 1) && EVENT_SLAB_ENABLED
 static int              g_exhausted_callback_count = 0;
-static event_priority_t g_last_exhausted_priority = 0;
+static event_priority_t g_last_exhausted_priority = (event_priority_t) 0;
 
 static void test_exhausted_callback(event_priority_t priority, const char* slab_name) {
     g_exhausted_callback_count++;
@@ -314,34 +325,44 @@ static void test_exhausted_callback(event_priority_t priority, const char* slab_
 }
 
 /**
- * @brief 测试注册 Slab 耗尽回调
+ * @brief 占满 NORMAL 池后继续分配，应触发耗尽回调（注册/触发/清除一条龙）
+ *
+ * 触发契约（对照 src/core/event_memory.c 与 event_system_memory.c）：
+ * event_create_rt 中 k_mem_slab_alloc 失败时调用 notify_slab_exhausted，
+ * 每失败一次回调已注册的 g_slab_exhausted_cb 一次，携带触发耗尽的优先级。
  */
-ZTEST(test_event_memory, test_register_exhausted_callback) {
-    g_exhausted_callback_count = 0;
+ZTEST(test_event_memory, test_exhausted_callback_fires_on_pool_depleted) {
+    event_t* events[CONFIG_EVENT_SLAB_NORMAL_COUNT];
+    uint32_t allocated = 0U;
 
-    /* 注册回调 */
+    zassert_equal(event_system_init(), EVENT_OK, NULL);
+
+    g_exhausted_callback_count = 0;
+    g_last_exhausted_priority = (event_priority_t) 0;
     event_register_slab_exhausted_cb(test_exhausted_callback);
 
-    /* 清除回调 */
+    /* 占满 NORMAL 池：此阶段不应触发回调（event_type_t 为 uint8_t，类型值保持在 255 内） */
+    for (int i = 0; i < CONFIG_EVENT_SLAB_NORMAL_COUNT; i++) {
+        events[i] = event_create_rt((event_type_t) (240 + i), EVENT_PRIORITY_NORMAL);
+        zassert_not_null(events[i], "NORMAL 池未满前分配应成功（第 %d 块）", i);
+        allocated++;
+    }
+    zassert_equal(g_exhausted_callback_count, 0, "池未耗尽不应触发回调");
+
+    /* 池已满：继续分配应失败并恰好触发一次回调 */
+    event_t* overflow = event_create_rt(244, EVENT_PRIORITY_NORMAL);
+
+    zassert_is_null(overflow, "NORMAL 池耗尽后 RT 创建应失败");
+    zassert_equal(g_exhausted_callback_count, 1, "耗尽回调应恰好触发一次");
+    zassert_equal(g_last_exhausted_priority, EVENT_PRIORITY_NORMAL, "回调应携带触发耗尽的优先级");
+
+    /* 清除回调并释放，避免污染后续用例 */
     event_register_slab_exhausted_cb(NULL);
+    for (uint32_t i = 0; i < allocated; i++) {
+        event_free(events[i]);
+    }
 }
-
-/**
- * @brief 测试清除 Slab 耗尽回调
- */
-ZTEST(test_event_memory, test_clear_exhausted_callback) {
-    g_exhausted_callback_count = 0;
-
-    /* 注册回调 */
-    event_register_slab_exhausted_cb(test_exhausted_callback);
-
-    /* 清除回调 */
-    event_register_slab_exhausted_cb(NULL);
-
-    /* 尝试触发耗尽（如果有足够内存，可能不会触发）*/
-    /* 这里只是验证不会崩溃 */
-}
-#endif /* CONFIG_EVENT_SLAB_EXHAUSTED_CB */
+#endif /* CONFIG_EVENT_SLAB_EXHAUSTED_CB && EVENT_SLAB_ENABLED */
 
 /* =============================================================================
  * 内存调试 API 测试
@@ -396,24 +417,27 @@ ZTEST(test_event_memory, test_dump_leaks) {
 
 /**
  * @brief 测试通过事件系统分配的事件使用 Slab
+ *
+ * event_create_rt 依赖事件系统 magic（未 init 时静默返回 NULL），故自带 init。
  */
 ZTEST(test_event_memory, test_event_create_rt_integration) {
-    event_t* event;
+    zassert_equal(event_system_init(), EVENT_OK, NULL);
 
-    event = event_create_rt(210, EVENT_PRIORITY_NORMAL);
+    event_t* event = event_create_rt(210, EVENT_PRIORITY_NORMAL);
 
-    if (event != NULL) {
-        /* 验证事件属性 */
-        zassert_equal(event->type, 210, "事件类型不匹配");
-        zassert_equal(event->priority, EVENT_PRIORITY_NORMAL, "优先级不匹配");
-        zassert_true((event->flags & EVENT_FLAG_FROM_SLAB) != 0, "应标记为来自 Slab");
+    /* 测试配置 NORMAL 池（4 块）空闲，应确定性成功 */
+    zassert_not_null(event, "NORMAL 池空闲时 RT 创建应成功");
+    zassert_equal(event->type, 210, "事件类型不匹配");
+    zassert_equal(event->priority, EVENT_PRIORITY_NORMAL, "优先级不匹配");
+    zassert_true((event->flags & EVENT_FLAG_FROM_SLAB) != 0, "应标记为来自 Slab");
 
-        event_free(event);
-    }
+    event_free(event);
 }
 
 /**
  * @brief 测试带数据的实时安全创建
+ *
+ * 32 字节 < 内联上限（测试配置 48 字节），HIGH 无独立池回退 NORMAL 池，应确定性成功。
  */
 ZTEST(test_event_memory, test_event_create_with_data_rt_integration) {
     event_t* event;
@@ -423,30 +447,38 @@ ZTEST(test_event_memory, test_event_create_with_data_rt_integration) {
         data[i] = (uint8_t) (i * 7);
     }
 
+    zassert_equal(event_system_init(), EVENT_OK, NULL);
+
     event = event_create_with_data_rt(220, EVENT_PRIORITY_HIGH, data, sizeof(data));
 
-    if (event != NULL) {
-        /* 验证事件属性 */
-        zassert_equal(event->type, 220, "事件类型不匹配");
-        zassert_equal(event->priority, EVENT_PRIORITY_HIGH, "优先级不匹配");
-        zassert_equal(event->data_len, sizeof(data), "数据长度不匹配");
+    zassert_not_null(event, "内联负载 + 池空闲时 RT 创建应成功");
+    zassert_equal(event->type, 220, "事件类型不匹配");
+    zassert_equal(event->priority, EVENT_PRIORITY_HIGH, "优先级不匹配");
+    zassert_equal(event->data_len, sizeof(data), "数据长度不匹配");
+    zassert_true((event->flags & EVENT_FLAG_DATA_INLINE) != 0, "内联上限内应走内联存储");
 
-        /* 验证数据 */
-        zassert_mem_equal(event->data.inline_data, data, sizeof(data), "数据内容不匹配");
+    /* 验证数据 */
+    zassert_mem_equal(event->data.inline_data, data, sizeof(data), "数据内容不匹配");
 
-        event_free(event);
-    }
+    event_free(event);
 }
 
 /**
  * @brief 测试大量分配后的 Slab 状态
  */
 ZTEST(test_event_memory, test_mass_allocation) {
-#define MASS_ALLOC_COUNT 16
-    event_t* events[MASS_ALLOC_COUNT];
+    event_t* events[MASS_ALLOC_COUNT] = {0};
     int      allocated = 0;
 
-    /* 大量分配 */
+    zassert_equal(event_system_init(), EVENT_OK, NULL);
+
+#if defined(CONFIG_EVENT_RUNTIME_STATUS) && (CONFIG_EVENT_RUNTIME_STATUS == 1)
+    event_slab_stats_t stats_before;
+
+    event_get_slab_stats(&stats_before);
+#endif
+
+    /* 大量分配：超出 NORMAL 池容量的部分应失败而不是崩溃 */
     for (int i = 0; i < MASS_ALLOC_COUNT; i++) {
         events[i] = event_create_rt(230 + i, EVENT_PRIORITY_NORMAL);
         if (events[i] != NULL) {
@@ -470,46 +502,61 @@ ZTEST(test_event_memory, test_mass_allocation) {
     }
 
 #if defined(CONFIG_EVENT_RUNTIME_STATUS) && (CONFIG_EVENT_RUNTIME_STATUS == 1)
-    /* 验证释放后的状态 */
+    /* 验证释放后的状态：已用块应回到分配前水位 */
     event_get_slab_stats(&stats);
-    /* 已用块应减少 */
+    zassert_equal(stats.normal_used, stats_before.normal_used, "全部释放后已用块应恢复原水位");
 #endif
 }
 
 /**
  * @brief 测试不同优先级混合分配
+ *
+ * 测试配置（tests/prj.conf）：HIGH/CRITICAL 池为 0 块，四种优先级全部回退
+ * NORMAL 池（4 块，见 event_memory.c 的 select 回退设计）。因此前 4 次分配
+ * （CRITICAL/HIGH/NORMAL/LOW）恰好占满 NORMAL 池，后续 8 次 NORMAL 分配全部失败。
  */
 ZTEST(test_event_memory, test_mixed_priority_allocation) {
-    event_t* events[12];
-    int      allocated = 0;
+    event_t* events[TEST_MIXED_ALLOC_COUNT] = {0};
+    uint32_t allocated = 0U;
 
-    /* 混合优先级分配 */
-    events[allocated] = event_create_rt(240, EVENT_PRIORITY_CRITICAL);
-    if (events[allocated] != NULL)
-        allocated++;
+    zassert_equal(event_system_init(), EVENT_OK, NULL);
 
-    events[allocated] = event_create_rt(241, EVENT_PRIORITY_HIGH);
-    if (events[allocated] != NULL)
-        allocated++;
+    /* 混合优先级分配（固定槽位，便于逐槽断言） */
+    events[0] = event_create_rt(240, EVENT_PRIORITY_CRITICAL);
+    events[1] = event_create_rt(241, EVENT_PRIORITY_HIGH);
+    events[2] = event_create_rt(242, EVENT_PRIORITY_NORMAL);
+    events[3] = event_create_rt(243, EVENT_PRIORITY_LOW);
 
-    events[allocated] = event_create_rt(242, EVENT_PRIORITY_NORMAL);
-    if (events[allocated] != NULL)
-        allocated++;
-
-    events[allocated] = event_create_rt(243, EVENT_PRIORITY_LOW);
-    if (events[allocated] != NULL)
-        allocated++;
-
-    /* 再分配一些 */
-    for (int i = 0; i < 8; i++) {
-        events[allocated] = event_create_rt(250 + i, EVENT_PRIORITY_NORMAL);
-        if (events[allocated] != NULL)
-            allocated++;
+    /* 再追加 NORMAL 分配直到超出池容量（240+i 对应 244..251，保持在 uint8_t 域内） */
+    for (int i = 4; i < TEST_MIXED_ALLOC_COUNT; i++) {
+        events[i] = event_create_rt((event_type_t) (240 + i), EVENT_PRIORITY_NORMAL);
     }
 
-    /* 全部释放 */
-    for (int i = 0; i < allocated; i++) {
-        event_free(events[i]);
+    for (int i = 0; i < TEST_MIXED_ALLOC_COUNT; i++) {
+        if (events[i] != NULL) {
+            allocated++;
+        }
+    }
+
+#if EVENT_SLAB_ENABLED && !EVENT_SLAB_HIGH_AVAILABLE && !EVENT_SLAB_CRITICAL_AVAILABLE
+    /* 全部回退 NORMAL 池：恰好前 4 次成功 */
+    zassert_equal(allocated, 4U, "四种优先级共享 NORMAL 池时应有 4 次成功");
+    for (int i = 0; i < 4; i++) {
+        zassert_not_null(events[i], "前 4 次分配（槽位 %d）应成功", i);
+    }
+    for (int i = 4; i < TEST_MIXED_ALLOC_COUNT; i++) {
+        zassert_is_null(events[i], "NORMAL 池已满，槽位 %d 分配应失败", i);
+    }
+#else
+    /* 存在独立 HIGH/CRITICAL 池的配置下不假设精确水位，只验证基本可用性 */
+    zassert_true(allocated >= 1U, "应至少成功分配一个事件");
+#endif
+
+    /* 全部释放（含 NULL 槽位跳过） */
+    for (int i = 0; i < TEST_MIXED_ALLOC_COUNT; i++) {
+        if (events[i] != NULL) {
+            event_free(events[i]);
+        }
     }
 }
 
@@ -517,4 +564,11 @@ ZTEST(test_event_memory, test_mixed_priority_allocation) {
  * 测试套件
  * ============================================================================= */
 
-ZTEST_SUITE(test_event_memory, NULL, NULL, NULL, NULL, NULL);
+static void event_memory_after_each(void* fixture) {
+    (void) fixture;
+    /* 分配类用例自带 init；此处统一 shutdown，清除类型表并复位控制块，
+     * 避免依赖其他套件遗留的初始化状态 */
+    (void) event_system_shutdown();
+}
+
+ZTEST_SUITE(test_event_memory, NULL, NULL, NULL, event_memory_after_each, NULL);

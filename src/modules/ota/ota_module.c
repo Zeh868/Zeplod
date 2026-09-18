@@ -2,7 +2,7 @@
  * @file ota_module.c
  * @brief OTA 模块实现
  * @author zeh (china_qzh@163.com)
- * @version 1.5
+ * @version 1.6
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -14,7 +14,23 @@
  * 2026-06-13       1.3            zeh            MCUmgr SMP 被动接入桥接
  * 2026-06-13       1.4            zeh            双 ingest 路径；会话互斥
  * 2026-06-13       1.5            zeh            start 回滚；MCUmgr abort/错误传播
+ * 2026-09-18       1.6            zeh            修复与 img_mgmt mutex 的 ABBA 死锁：
+ *                                                 img_mgmt_reset_upload 移出 g_ota.lock
+ *                                                 持有区间；verify/close/boot_request_upgrade
+ *                                                 等 flash 慢 IO 移至 xfer_lock 下锁外执行；
+ *                                                 传输回调空指针防护；进度锚点具名
  *
+ */
+
+/*
+ * 锁序总约定（g_ota.lock ↔ img_mgmt mutex）：
+ * 任何线程不得在持有 g_ota.lock 时调用可能获取 img_mgmt mutex 的 API
+ * （如 ota_transport_mcumgr_smp_cancel_upload()/img_mgmt_reset_upload()）。
+ * 正向锁序为 img_mgmt mutex → g_ota.lock：img_mgmt_upload() 持 img_mgmt mutex
+ * 期间经 mgmt_callback_notify() 同步回调本模块（ota_module_mcumgr_* 系列，
+ * 内部获取 g_ota.lock）；若存在反向路径（g_ota.lock → img_mgmt mutex），
+ * 两条路径并发即成 ABBA 死锁。因此 MCUmgr 取消上传一律在解锁后补发，
+ * 见 ota_reset_session_locked()。
  */
 
 #include <zeplod/ota_module.h>
@@ -50,6 +66,12 @@ typedef enum {
     OTA_INGEST_ACTIVE,   /**< ota_module_begin_download 主动路径 */
 } ota_ingest_owner_t;
 
+/** 进度锚点：进入 VERIFYING 阶段时的百分比下限 */
+#define OTA_PROGRESS_ANCHOR_VERIFYING     95U
+
+/** 进度锚点：下载量达到预期上限时封顶的百分比（保留 100 给 READY_REBOOT） */
+#define OTA_PROGRESS_ANCHOR_DOWNLOAD_DONE 99U
+
 typedef struct {
     ota_sm_t                   sm;
     const ota_transport_ops_t* active_transport; /**< Kconfig 选定的主动传输后端 */
@@ -80,7 +102,7 @@ static void ota_unlock(void);
 static void ota_xfer_abort_locked(const ota_transport_ops_t* transport);
 static void ota_build_progress(ota_progress_t* prog, ota_state_t state, int error_code);
 static int  ota_publish_progress(const ota_progress_t* prog);
-static void ota_reset_session_locked(void);
+static bool ota_reset_session_locked(void);
 static int  ota_transport_fail_locked(int err, ota_progress_t* out_prog);
 static int  ota_register_event_types(void);
 
@@ -129,11 +151,11 @@ static uint8_t ota_percent_for_state(ota_state_t state, size_t image_size) {
             return 0U;
         }
         if (image_size >= cap) {
-            return 99U;
+            return OTA_PROGRESS_ANCHOR_DOWNLOAD_DONE;
         }
         return (uint8_t) ((image_size * 100U) / cap);
     case OTA_STATE_VERIFYING:
-        return 95U;
+        return OTA_PROGRESS_ANCHOR_VERIFYING;
     case OTA_STATE_READY_REBOOT:
         return 100U;
     case OTA_STATE_ERROR:
@@ -170,12 +192,20 @@ static int ota_publish_progress(const ota_progress_t* prog) {
 /**
  * @brief 中止当前会话并复位状态机
  *
- * 持锁调用：按 ingest 来源取消 MCUmgr 或主动传输，清空 image_size。
+ * 持锁调用：复位本地会话簿记与状态机；主动传输（ACTIVE）的中止在 xfer_lock 下
+ * 就地完成（其实现不触碰 img_mgmt mutex）。MCUmgr 侧的取消
+ * （ota_transport_mcumgr_smp_cancel_upload → img_mgmt_reset_upload 会获取 img_mgmt
+ * mutex）禁止在 g_ota.lock 持有区间执行（见文件头锁序说明），仅登记意向，
+ * 返回 true 由调用方在解锁后补发；返回 false 表示无需锁外取消。
+ *
+ * @return true 表示调用方解锁后须调用 ota_transport_mcumgr_smp_cancel_upload()
  */
-static void ota_reset_session_locked(void) {
+static bool ota_reset_session_locked(void) {
+    bool mcumgr_cancel_pending = false;
+
 #if IS_ENABLED(CONFIG_OTA_TRANSPORT_MCUMGR_SMP)
     if (g_ota.session_open && g_ota.ingest_owner == OTA_INGEST_MCUMGR) {
-        ota_transport_mcumgr_smp_cancel_upload();
+        mcumgr_cancel_pending = true;
     }
 #endif
     if (g_ota.session_open && g_ota.ingest_owner == OTA_INGEST_ACTIVE) {
@@ -185,6 +215,8 @@ static void ota_reset_session_locked(void) {
     g_ota.ingest_owner = OTA_INGEST_NONE;
     ota_sm_init(&g_ota.sm);
     g_ota.image_size = 0U;
+
+    return mcumgr_cancel_pending;
 }
 
 /** 传输失败路径：转 ERROR、abort 传输、释放 ingest（持锁） */
@@ -332,14 +364,20 @@ int ota_module_start(void) {
 }
 
 int ota_module_stop(void) {
+    bool mcumgr_cancel_pending;
+
     LOG_INF("Stopping OTA module...");
 
     ota_lock();
-    ota_reset_session_locked();
+    mcumgr_cancel_pending = ota_reset_session_locked();
     g_ota.status = MODULE_STATUS_STOPPED;
     ota_unlock();
 
+    /* img_mgmt_reset_upload 可能获取 img_mgmt mutex，须在 g_ota.lock 之外调用（锁序见文件头） */
 #if IS_ENABLED(CONFIG_OTA_TRANSPORT_MCUMGR_SMP)
+    if (mcumgr_cancel_pending) {
+        ota_transport_mcumgr_smp_cancel_upload();
+    }
     {
         const ota_transport_ops_t* smp = ota_transport_mcumgr_smp_get();
 
@@ -347,6 +385,8 @@ int ota_module_stop(void) {
             (void) smp->close((ota_transport_ops_t*) smp);
         }
     }
+#else
+    (void) mcumgr_cancel_pending;
 #endif
 
     LOG_INF("OTA module stopped");
@@ -426,7 +466,9 @@ int ota_module_begin_update(void) {
 
     state = ota_sm_get_state(&g_ota.sm);
     if (state == OTA_STATE_ERROR || state == OTA_STATE_READY_REBOOT) {
-        ota_reset_session_locked();
+        /* MCUMGR ingest 已在上方拒绝（owner != MCUMGR），此处的取消意向恒为 false，
+           不存在需锁外补发的 img_mgmt 调用 */
+        (void) ota_reset_session_locked();
     }
 
     ret = ota_sm_on_download_start(&g_ota.sm);
@@ -453,9 +495,9 @@ int ota_module_begin_update(void) {
 }
 
 int ota_module_write_chunk(size_t offset, const uint8_t* data, size_t len) {
-    int                         ret;
-    ota_progress_t              prog;
-    const ota_transport_ops_t*  transport;
+    int                        ret;
+    ota_progress_t             prog;
+    const ota_transport_ops_t* transport;
 
     if (data == NULL || len == 0U) {
         return APP_ERR_INVALID_PARAM;
@@ -467,6 +509,10 @@ int ota_module_write_chunk(size_t offset, const uint8_t* data, size_t len) {
         g_ota.ingest_owner != OTA_INGEST_ACTIVE) {
         ota_unlock();
         return APP_ERR_OTA_INVALID_STATE;
+    }
+    if (g_ota.active_transport == NULL || g_ota.active_transport->write_chunk == NULL) {
+        ota_unlock();
+        return APP_ERR_OTA_TRANSPORT;
     }
     transport = g_ota.active_transport;
     ota_unlock();
@@ -505,8 +551,9 @@ int ota_module_write_chunk(size_t offset, const uint8_t* data, size_t len) {
 }
 
 int ota_module_finish_update(void) {
-    int            ret;
-    ota_progress_t prog;
+    int                        ret;
+    ota_progress_t             prog;
+    const ota_transport_ops_t* transport;
 
     ota_lock();
 
@@ -521,18 +568,29 @@ int ota_module_finish_update(void) {
         ota_unlock();
         return APP_ERR_OTA_INVALID_STATE;
     }
+    transport = g_ota.active_transport;
     ota_build_progress(&prog, OTA_STATE_VERIFYING, 0);
     ota_unlock();
     (void) ota_publish_progress(&prog);
 
+    /* verify（flash 慢速 IO）与 write_chunk 相同：在 xfer_lock 下、g_ota.lock 之外执行 */
+    if (transport == NULL || transport->verify == NULL) {
+        ret = APP_ERR_OTA_TRANSPORT;
+    } else {
+        zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
+        k_mutex_lock(&g_ota.xfer_lock, K_FOREVER);
+        ret = transport->verify((ota_transport_ops_t*) transport);
+        k_mutex_unlock(&g_ota.xfer_lock);
+        zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
+    }
+
     ota_lock();
     /* 释放锁期间可能发生并发 abort/stop，重锁后须重新校验会话仍有效 */
     if (ota_sm_get_state(&g_ota.sm) != OTA_STATE_VERIFYING || !g_ota.session_open ||
-        g_ota.ingest_owner != OTA_INGEST_ACTIVE) {
+        g_ota.ingest_owner != OTA_INGEST_ACTIVE || g_ota.active_transport != transport) {
         ota_unlock();
         return APP_ERR_OTA_INVALID_STATE;
     }
-    ret = g_ota.active_transport->verify((ota_transport_ops_t*) g_ota.active_transport);
     if (ret != 0) {
         ret = ota_transport_fail_locked(ret, &prog);
         ota_unlock();
@@ -546,14 +604,23 @@ int ota_module_finish_update(void) {
         return APP_ERR_OTA_INVALID_STATE;
     }
 
-    if (g_ota.active_transport->close != NULL) {
-        (void) g_ota.active_transport->close((ota_transport_ops_t*) g_ota.active_transport);
-    }
+    /* close（MCUboot 路径含 boot_request_upgrade flash 写）同样移出 g_ota.lock：
+       先在锁内完成会话收尾簿记，再于 xfer_lock 下（与 abort 的擦除互斥）锁外执行。
+       收尾先行意味着 close 执行期间新会话可并发开始；若与 close 交错导致其
+       open 标志被清，新会话将以 -EIO 干净失败（无数据损坏），属调用方误用边界 */
     g_ota.session_open = false;
     g_ota.ingest_owner = OTA_INGEST_NONE;
     ota_build_progress(&prog, OTA_STATE_READY_REBOOT, 0);
     ota_unlock();
     (void) ota_publish_progress(&prog);
+
+    if (transport != NULL && transport->close != NULL) {
+        zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
+        k_mutex_lock(&g_ota.xfer_lock, K_FOREVER);
+        (void) transport->close((ota_transport_ops_t*) transport);
+        k_mutex_unlock(&g_ota.xfer_lock);
+        zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_ota.xfer_lock);
+    }
     return 0;
 }
 
@@ -570,11 +637,22 @@ int ota_module_get_state(ota_state_t* out_state) {
 
 int ota_module_abort_update(void) {
     ota_progress_t prog;
+    bool           mcumgr_cancel_pending;
 
     ota_lock();
-    ota_reset_session_locked();
+    mcumgr_cancel_pending = ota_reset_session_locked();
     ota_build_progress(&prog, OTA_STATE_IDLE, 0);
     ota_unlock();
+
+    /* img_mgmt_reset_upload 可能获取 img_mgmt mutex，须在 g_ota.lock 之外调用（锁序见文件头） */
+#if IS_ENABLED(CONFIG_OTA_TRANSPORT_MCUMGR_SMP)
+    if (mcumgr_cancel_pending) {
+        ota_transport_mcumgr_smp_cancel_upload();
+    }
+#else
+    (void) mcumgr_cancel_pending;
+#endif
+
     (void) ota_publish_progress(&prog);
     return 0;
 }
@@ -653,7 +731,12 @@ bool ota_module_mcumgr_on_dfu_started(void) {
     ota_lock();
     st = ota_sm_get_state(&g_ota.sm);
     if (st == OTA_STATE_ERROR || st == OTA_STATE_READY_REBOOT) {
-        ota_reset_session_locked();
+        /* 本回调运行在 img_mgmt 持锁（img_mgmt mutex）上下文中：
+           1. 不得调用 img_mgmt_reset_upload（会话取消意向在此丢弃，锁序见文件头）——
+              即便命中取消条件，此刻 reset 会清掉 img_mgmt 刚建立的 upload 状态，
+              毁掉正在开始的这次上传；
+           2. 只复位本地 OTA 簿记，交出新会话由 img_mgmt 自身的上传状态接管 */
+        (void) ota_reset_session_locked();
         g_ota.ingest_owner = OTA_INGEST_MCUMGR;
     }
 
@@ -712,6 +795,7 @@ void ota_module_mcumgr_on_dfu_pending(void) {
     (void) ota_publish_progress(&prog);
 
     ota_lock();
+    /* 释放锁期间可能发生并发 stop/abort，重锁后须复核会话仍处于 VERIFYING */
     if (!g_ota.session_open || g_ota.ingest_owner != OTA_INGEST_MCUMGR ||
         ota_sm_get_state(&g_ota.sm) != OTA_STATE_VERIFYING) {
         ota_mcumgr_fail_locked(-EINVAL, &prog);
@@ -727,10 +811,21 @@ void ota_module_mcumgr_on_dfu_pending(void) {
         (void) ota_publish_progress(&prog);
         return;
     }
+    ota_unlock();
 
     /* TEST 升级保留 MCUboot 安全回滚窗口：新镜像重启后若未 confirm
-     * （ota_module_confirm_image() 或外部 mcumgr），再次重启将回滚旧镜像。 */
+     * （ota_module_confirm_image() 或外部 mcumgr），再次重启将回滚旧镜像。
+     * boot_request_upgrade 为 flash 慢速写，置于 g_ota.lock 之外执行（见文件头锁序说明），
+     * 避免持锁慢 IO 阻塞 get_state/abort 等查询；期间若会话被并发 stop/abort 复位，
+     * 下方复核将直接返回（stop/abort 已发布 IDLE，不再叠加发布）。 */
     ret = boot_request_upgrade(BOOT_UPGRADE_TEST);
+
+    ota_lock();
+    if (!g_ota.session_open || g_ota.ingest_owner != OTA_INGEST_MCUMGR ||
+        ota_sm_get_state(&g_ota.sm) != OTA_STATE_READY_REBOOT) {
+        ota_unlock();
+        return;
+    }
     if (ret != 0) {
         ret = ota_transport_fail_locked(ret, &prog);
         ota_unlock();
@@ -749,7 +844,9 @@ void ota_module_mcumgr_on_dfu_stopped(void) {
     ota_progress_t prog;
 
     ota_lock();
-    ota_reset_session_locked();
+    /* DFU_STOPPED 由 img_mgmt 在其持锁区间内通知，上传状态 img_mgmt 自身即将（或已经）
+       复位；此处丢弃 MCUmgr 取消意向，避免同线程重入 img_mgmt_reset_upload 干扰其收尾 */
+    (void) ota_reset_session_locked();
     ota_build_progress(&prog, OTA_STATE_IDLE, 0);
     ota_unlock();
     (void) ota_publish_progress(&prog);

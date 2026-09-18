@@ -2,13 +2,14 @@
  * @file sys_diag.c
  * @brief 系统诊断服务实现
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            u32_from_size 辅助函数按 CONFIG_SYS_MEMORY_ENABLE 条件编译，消除禁用内存服务配置下的未使用告警
  *
  */
 
@@ -55,9 +56,11 @@ LOG_MODULE_REGISTER(sys_diag, CONFIG_SYS_LOG_LEVEL);
  * 内部辅助
  * ============================================================================= */
 
+#if defined(CONFIG_SYS_MEMORY_ENABLE)
 static uint32_t sys_diag_u32_from_size(size_t value) {
     return (value > (size_t) UINT32_MAX) ? UINT32_MAX : (uint32_t) value;
 }
+#endif
 
 #if defined(CONFIG_SYS_MEMORY_ENABLE)
 static void sys_diag_collect_heap(sys_diag_snapshot_t* out) {

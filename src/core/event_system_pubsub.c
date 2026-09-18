@@ -2,8 +2,14 @@
  * @file event_system_pubsub.c
  * @brief 事件类型注册、订阅与订阅者通知
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            拆分 register_type/subscribe 超长函数；标注槽满复用 EVENT_ERR_QUEUE_FULL 的延期计划
  */
 
 #include <zephyr/logging/log.h>
@@ -78,42 +84,43 @@ bool event_system_type_is_registered(event_type_t type) {
     return atomic_get(&g_event_system.event_types[type].registered) != 0;
 }
 
-event_status_t event_register_type(event_type_t type, const char* name) {
-    if (!event_system_op_enter()) {
-        return EVENT_ERR_INVALID_ARG;
-    }
-    if (g_event_system.magic != EVENT_SYSTEM_MAGIC || !g_event_system.initialized) {
-        EVENT_OP_RETURN(EVENT_ERR_INVALID_ARG);
-    }
-
+/**
+ * @brief 校验注册参数：类型 ID 范围、名称非空与长度
+ *
+ * @return EVENT_OK 合法，EVENT_ERR_INVALID_ARG 非法
+ */
+static event_status_t event_register_type_validate(event_type_t type, const char* name) {
     if ((uint32_t) type > MAX_EVENT_TYPE_ID) {
         LOG_ERR("Invalid event type: %d", type);
-        EVENT_OP_RETURN(EVENT_ERR_INVALID_ARG);
+        return EVENT_ERR_INVALID_ARG;
     }
 
     if (name == NULL) {
         LOG_ERR("event_register_type: name cannot be NULL");
-        EVENT_OP_RETURN(EVENT_ERR_INVALID_ARG);
+        return EVENT_ERR_INVALID_ARG;
     }
 
-    {
-        size_t name_len = strlen(name);
-        if (name_len == 0U || name_len >= CONFIG_EVENT_TYPE_NAME_MAX) {
-            LOG_ERR("Event type name invalid length %zu (max %d)", name_len, CONFIG_EVENT_TYPE_NAME_MAX - 1);
-            EVENT_OP_RETURN(EVENT_ERR_INVALID_ARG);
-        }
+    size_t name_len = strlen(name);
+    if (name_len == 0U || name_len >= CONFIG_EVENT_TYPE_NAME_MAX) {
+        LOG_ERR("Event type name invalid length %zu (max %d)", name_len, CONFIG_EVENT_TYPE_NAME_MAX - 1);
+        return EVENT_ERR_INVALID_ARG;
     }
 
-    event_type_entry_t* entry = &g_event_system.event_types[type];
+    return EVENT_OK;
+}
 
-    event_system_entry_lock(entry);
-
+/**
+ * @brief 持 entry 锁执行注册：幂等重注册放行，名称冲突拒绝，否则落表
+ *
+ * @pre 调用方已持 entry 锁；本函数负责在返回前释放该锁
+ */
+static event_status_t event_register_type_locked(event_type_entry_t* entry, event_type_t type, const char* name) {
     if (entry->name_storage[0] != '\0') {
         if (strcmp(entry->name_storage, name) == 0) {
             entry->name = entry->name_storage;
             atomic_set(&entry->registered, 1);
             event_system_entry_unlock(entry);
-            EVENT_OP_RETURN(EVENT_OK);
+            return EVENT_OK;
         }
 
         /* 仅在名称不一致（异常路径）时才拷贝出快照用于日志，避免幂等重复注册的常见路径做无谓拷贝 */
@@ -123,7 +130,7 @@ event_status_t event_register_type(event_type_t type, const char* name) {
         registered_name[sizeof(registered_name) - 1U] = '\0';
         event_system_entry_unlock(entry);
         LOG_WRN("Event type %d already registered with different name '%s' (new '%s')", type, registered_name, name);
-        EVENT_OP_RETURN(EVENT_ERR_INVALID_ARG);
+        return EVENT_ERR_INVALID_ARG;
     }
 
     (void) strncpy(entry->name_storage, name, sizeof(entry->name_storage) - 1U);
@@ -136,7 +143,27 @@ event_status_t event_register_type(event_type_t type, const char* name) {
     event_system_entry_unlock(entry);
 
     LOG_DBG("Registered event type: %s (%d)", name, type);
-    EVENT_OP_RETURN(EVENT_OK);
+    return EVENT_OK;
+}
+
+event_status_t event_register_type(event_type_t type, const char* name) {
+    if (!event_system_op_enter()) {
+        return EVENT_ERR_INVALID_ARG;
+    }
+    if (g_event_system.magic != EVENT_SYSTEM_MAGIC || !g_event_system.initialized) {
+        EVENT_OP_RETURN(EVENT_ERR_INVALID_ARG);
+    }
+
+    event_status_t vret = event_register_type_validate(type, name);
+    if (vret != EVENT_OK) {
+        EVENT_OP_RETURN(vret);
+    }
+
+    event_type_entry_t* entry = &g_event_system.event_types[type];
+
+    event_system_entry_lock(entry);
+    event_status_t ret = event_register_type_locked(entry, type, name);
+    EVENT_OP_RETURN(ret);
 }
 
 event_status_t event_unregister_type(event_type_t type) {
@@ -178,6 +205,51 @@ event_status_t event_unregister_type(event_type_t type) {
     EVENT_OP_RETURN(EVENT_OK);
 }
 
+/**
+ * @brief 分配未冲突的订阅者 ID（持 subscriber_id 锁调用，锁由调用方释放）
+ *
+ * ID 由全局原子计数递增生成，INVALID 值跳过；回绕后（wrapped）须全表查重，
+ * 避免与仍存活的订阅冲突。连续尝试超过 UINT16_MAX 次视为 ID 空间耗尽。
+ *
+ * @param[out] new_id_out 分配成功的 ID
+ * @return true 分配成功，false ID 空间耗尽
+ */
+static bool event_subscribe_alloc_id(uint32_t* new_id_out) {
+    uint32_t attempts = 0;
+
+    while (true) {
+        uint32_t new_id = (uint32_t) atomic_inc(&g_event_system.next_subscriber_id);
+
+        if (++attempts > UINT16_MAX) {
+            LOG_ERR("Subscriber ID space exhausted after %u attempts", attempts);
+            return false;
+        }
+        if (new_id == EVENT_SUBSCRIBER_ID_INVALID) {
+            g_event_system.subscriber_id_wrapped = true;
+            continue;
+        }
+        if (!g_event_system.subscriber_id_wrapped || !subscriber_id_in_use(new_id)) {
+            *new_id_out = new_id;
+            return true;
+        }
+    }
+}
+
+/**
+ * @brief 查找空闲订阅槽
+ *
+ * @param entry 事件类型条目
+ * @return 空闲槽下标，-1 表示槽满
+ */
+static int32_t event_subscribe_find_free_slot(const event_type_entry_t* entry) {
+    for (uint32_t i = 0; i < CONFIG_EVENT_MAX_SUBSCRIBERS; i++) {
+        if (entry->subscribers[i].callback == NULL) {
+            return (int32_t) i;
+        }
+    }
+    return -1;
+}
+
 event_status_t event_subscribe(event_type_t type, event_callback_t callback, void* user_data, uint32_t* subscriber_id) {
     if (!event_system_op_enter()) {
         return EVENT_ERR_INVALID_ARG;
@@ -195,21 +267,9 @@ event_status_t event_subscribe(event_type_t type, event_callback_t callback, voi
     event_system_subscriber_id_lock();
 
     uint32_t new_id;
-    uint32_t attempts = 0;
-    while (true) {
-        new_id = (uint32_t) atomic_inc(&g_event_system.next_subscriber_id);
-        if (++attempts > UINT16_MAX) {
-            LOG_ERR("Subscriber ID space exhausted after %u attempts", attempts);
-            event_system_subscriber_id_unlock();
-            EVENT_OP_RETURN(EVENT_ERR_NO_MEM);
-        }
-        if (new_id == EVENT_SUBSCRIBER_ID_INVALID) {
-            g_event_system.subscriber_id_wrapped = true;
-            continue;
-        }
-        if (!g_event_system.subscriber_id_wrapped || !subscriber_id_in_use(new_id)) {
-            break;
-        }
+    if (!event_subscribe_alloc_id(&new_id)) {
+        event_system_subscriber_id_unlock();
+        EVENT_OP_RETURN(EVENT_ERR_NO_MEM);
     }
 
     event_system_entry_lock(entry);
@@ -219,15 +279,11 @@ event_status_t event_subscribe(event_type_t type, event_callback_t callback, voi
         EVENT_OP_RETURN(EVENT_ERR_NOT_FOUND);
     }
 
-    uint32_t free_slot = CONFIG_EVENT_MAX_SUBSCRIBERS;
-    for (uint32_t i = 0; i < CONFIG_EVENT_MAX_SUBSCRIBERS; i++) {
-        if (entry->subscribers[i].callback == NULL) {
-            free_slot = i;
-            break;
-        }
-    }
+    int32_t free_slot = event_subscribe_find_free_slot(entry);
 
-    if (free_slot == CONFIG_EVENT_MAX_SUBSCRIBERS) {
+    /* 槽满复用 EVENT_ERR_QUEUE_FULL：tests 依赖该现值，暂不改码；
+     * 未来版本拟引入 EVENT_ERR_NO_RESOURCE 区分（已在 event_system.h @note 登记延期） */
+    if (free_slot < 0) {
         event_system_entry_unlock(entry);
         event_system_subscriber_id_unlock();
         LOG_ERR("No room for more subscribers on event type %d", type);

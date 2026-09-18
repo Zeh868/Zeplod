@@ -2,7 +2,7 @@
  * @file sys_timer.h
  * @brief 系统定时器服务头文件
  * @author zeh (china_qzh@163.com)
- * @version 2.0
+ * @version 2.1
  * @date 2026-08-23
  *
  * @par 修改日志:
@@ -10,6 +10,8 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-08-23       2.0            zeh            单服务线程模型（RAM 优化）
+ * 2026-09-18       2.1            zeh            补充 init 并发语义、get_stats
+ *                                                参数 NULL 约定
  *
  * @note v2.0：所有回调在唯一的定时器服务线程（CONFIG_SYS_TIMER_PRIORITY）
  *       中执行。回调应尽量短小；耗时操作请发布事件交由相应模块处理，
@@ -90,6 +92,11 @@ typedef struct {
 /**
  * @brief 初始化定时器系统
  * @return 成功返回 0，失败返回负错误码
+ * @retval -EBUSY 仍有定时器被占用（未 delete），拒绝重置定时器表
+ * @retval -ENOMEM 服务线程创建失败（仅首次初始化可能出现）
+ *
+ * @note 并发语义：重复初始化时检查活跃定时器数（timer_count > 0 拒绝）；归零时
+ *       重置定时器表并清空到期队列，服务线程持久存活、重复 init 复用不重建
  */
 int sys_timer_init(void);
 
@@ -175,8 +182,8 @@ uint32_t sys_timer_get_time_until_expiry(sys_timer_handle_t timer);
 /**
  * @brief 获取定时器统计
  * @param timer 定时器句柄
- * @param stats 输出：统计信息结构体
- * @return 成功返回 0，失败返回负错误码
+ * @param stats 输出：统计信息结构体；NULL 时返回 -EINVAL
+ * @return 成功返回 0；-EINVAL 句柄无效或 stats 为 NULL
  */
 int sys_timer_get_stats(sys_timer_handle_t timer, sys_timer_stats_t* stats);
 

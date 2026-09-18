@@ -2,13 +2,17 @@
  * @file factory_mode.c
  * @brief 工厂产测模式模块实现
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 4 初始版本
+ * 2026-09-18       1.1            zeh            finalize_pass：KV 键余量具名、snprintf
+ *                                                 返回值核对、待写条目锁内快照后锁外落盘
+ *                                                 （消除 unlock/relock 间隙的表撕裂）；
+ *                                                 value 超长错误码统一为 APP_ERR_INVALID_PARAM
  *
  */
 
@@ -28,6 +32,16 @@
 #include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(factory_mode, CONFIG_SYS_LOG_LEVEL);
+
+/* =============================================================================
+ * 常量
+ * ============================================================================= */
+
+/** app_kv 提交键的固定前缀（finalize_pass 落盘时拼为 "factory.cal.<key>"） */
+#define FACTORY_KV_KEY_PREFIX      "factory.cal."
+
+/** kv_key 缓冲区在前缀/结尾 NUL 之外预留的余量（覆盖 FACTORY_KV_KEY_PREFIX 长度 + NUL） */
+#define FACTORY_KV_KEY_PREFIX_ROOM 16U
 
 /* =============================================================================
  * 内部数据结构
@@ -233,8 +247,9 @@ int factory_mode_set_calibration(const char* key, const char* value) {
     if (klen == 0U || klen >= CONFIG_FACTORY_MODE_CAL_KEY_MAX_LEN) {
         return APP_ERR_INVALID_PARAM;
     }
+    /* 与 key 超长统一同一错误码，调用方无须区分两个字段的失败类型 */
     if (vlen >= CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN) {
-        return -ENOMEM;
+        return APP_ERR_INVALID_PARAM;
     }
 
     factory_lock();
@@ -288,8 +303,10 @@ int factory_mode_get_calibration(const char* key, char* out, size_t out_len) {
 }
 
 int factory_mode_finalize_pass(void) {
-    char kv_key[CONFIG_FACTORY_MODE_CAL_KEY_MAX_LEN + 16U];
+    char kv_key[CONFIG_FACTORY_MODE_CAL_KEY_MAX_LEN + FACTORY_KV_KEY_PREFIX_ROOM];
+    char kv_val[CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN];
     int  ret = 0;
+    bool failed = false;
 
 #if !IS_ENABLED(CONFIG_APP_KV_ENABLE)
     return APP_ERR_DISABLED;
@@ -306,25 +323,45 @@ int factory_mode_finalize_pass(void) {
         return APP_ERR_FACTORY;
     }
 
+    /* 锁内把待写条目快照到局部缓冲，锁外执行 app_kv_set（flash 慢 IO）：
+       旧实现循环内 unlock/relock 直接引用表项，间隙期并发 exit()/RESET 改写
+       cal_slots 会导致 key/value 撕裂（写到一半的键值对） */
     for (size_t i = 0U; i < CONFIG_FACTORY_MODE_CAL_MAX_ENTRIES; i++) {
+        int n;
+
         if (!g_factory.cal_slots[i].used) {
             continue;
         }
 
-        (void) snprintf(kv_key, sizeof(kv_key), "factory.cal.%s", g_factory.cal_slots[i].key);
+        n = snprintf(kv_key, sizeof(kv_key), FACTORY_KV_KEY_PREFIX "%s", g_factory.cal_slots[i].key);
+        if (n < 0 || n >= (int) sizeof(kv_key)) {
+            /* 前缀+键超出缓冲：按缓冲不足处理（正常入参下不可达，防御性兜底） */
+            ret = -ENOMEM;
+            failed = true;
+            break;
+        }
+        memcpy(kv_val, g_factory.cal_slots[i].value, sizeof(kv_val));
         factory_unlock();
 
-        ret = app_kv_set(kv_key, g_factory.cal_slots[i].value);
-        if (ret != APP_OK) {
-            factory_lock();
-            g_factory.state = FACTORY_STATE_FAILED;
-            g_factory.last_error = ret;
-            factory_unlock();
-            (void) factory_publish_state(FACTORY_STATE_FAILED, ret);
-            return ret;
-        }
-
+        ret = app_kv_set(kv_key, kv_val);
         factory_lock();
+        if (ret != APP_OK) {
+            failed = true;
+            break;
+        }
+        /* app_kv_set 期间模式可能被并发 exit()/RESET 退出：仅仍处 ACTIVE 才继续提交 */
+        if (g_factory.state != FACTORY_STATE_ACTIVE) {
+            factory_unlock();
+            return APP_ERR_FACTORY;
+        }
+    }
+
+    if (failed) {
+        g_factory.state = FACTORY_STATE_FAILED;
+        g_factory.last_error = ret;
+        factory_unlock();
+        (void) factory_publish_state(FACTORY_STATE_FAILED, ret);
+        return ret;
     }
 
     g_factory.state = FACTORY_STATE_PASSED;

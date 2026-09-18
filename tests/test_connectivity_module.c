@@ -2,7 +2,7 @@
  * @file test_connectivity_module.c
  * @brief connectivity_module 单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -10,6 +10,7 @@
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 3 初始版本
  * 2026-06-13       1.1            zeh            事件订阅、RUNNING/幂等路径
+ * 2026-09-18       1.2            zeh            补套件 teardown 停分发器与事件系统
  *
  */
 
@@ -53,7 +54,17 @@ static void* connectivity_suite_setup(void) {
     return NULL;
 }
 
-ZTEST_SUITE(connectivity_module_tests, NULL, connectivity_suite_setup, NULL, NULL, NULL);
+static void connectivity_suite_teardown(void* fixture) {
+    (void) fixture;
+
+    /* 套件收尾对称：setup 启动了分发器与事件系统，这里统一停掉，
+     * 避免分发线程泄漏影响同构建内的后续套件 */
+    (void) event_dispatcher_stop();
+
+    (void) event_system_stop();
+}
+
+ZTEST_SUITE(connectivity_module_tests, NULL, connectivity_suite_setup, NULL, NULL, connectivity_suite_teardown);
 
 /* =============================================================================
  * 事件回调

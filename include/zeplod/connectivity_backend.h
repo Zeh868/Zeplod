@@ -12,7 +12,7 @@
  *   不得执行阻塞 I/O 或长时间等待），因此调用方可能在持有模块锁的情况下调用它们。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.2
+ * @version 1.3
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -21,6 +21,7 @@
  * 2026-06-13       1.0            zeh            Phase 3 初始版本
  * 2026-07-09       1.1            zeh            新增 Wi-Fi 后端声明
  * 2026-07-09       1.2            zeh            vtable 追加 is_available；新增以太网/蜂窝后端声明
+ * 2026-09-18       1.3            zeh            vtable 逐字段标注必需/可选及 NULL 语义
  *
  */
 
@@ -41,10 +42,29 @@ extern "C" {
 typedef struct connectivity_backend_ops connectivity_backend_ops_t;
 
 struct connectivity_backend_ops {
+    /** 后端私有上下文（必需）：各回调以此回取自身状态，不得为 NULL */
     void* ctx;
+    /**
+     * @brief （可选）初始化后端资源
+     * @return 0 成功；非 0 时 connectivity_module 将该后端从注册表剔除
+     * @note 为 NULL 时视为无需初始化（直接成功）
+     */
     int (*init)(connectivity_backend_ops_t* ops);
+    /**
+     * @brief （必需）发起连接
+     * @return 0 成功；非 0 表示失败（connectivity_module 会对该后端调用 disconnect 收尾）
+     * @note 允许阻塞（等待 net_mgmt 回调等）；connectivity_module 保证在模块锁外调用
+     */
     int (*connect)(connectivity_backend_ops_t* ops);
+    /**
+     * @brief （可选）断开连接
+     * @note 为 NULL 时表示后端无需显式断开（如仅清缓存的实现）；允许阻塞，锁外调用
+     */
     int (*disconnect)(connectivity_backend_ops_t* ops);
+    /**
+     * @brief （必需）查询链路是否已 up
+     * @note 须非阻塞；为 NULL 时该后端永远不会被判定为已连接（无法成为活动后端）
+     */
     bool (*is_link_up)(const connectivity_backend_ops_t* ops);
     /**
      * @brief （可选）查询后端对应硬件当前是否可用（存在且有载波/信号）

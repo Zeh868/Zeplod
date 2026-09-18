@@ -6,14 +6,20 @@
  * 量产可叠加 SNTP 后端同步。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 3 初始版本
+ * 2026-06-13       1.1            zeh            64 位 uptime、互斥锁（与实现同步）
+ * 2026-09-18       1.2            zeh            注明错误码体系双轨差异（登记延期）
  *
+ * @note 错误码体系说明：本模块返回 APP_ERR_INIT / APP_ERR_INVALID_PARAM /
+ *       APP_ERR_TIME 等应用层错误码，而 services 其余模块返回 -EINVAL / -EBUSY
+ *       等 errno 风格负值——两套体系并存。统一为单一体系属跨模块接口变更，
+ *       本轮登记延期（详见 2026-09-18 审查整改记录），暂以各自头文件声明为准。
  */
 
 #ifndef SYS_TIME_H

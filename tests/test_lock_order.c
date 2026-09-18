@@ -1,6 +1,14 @@
 /**
  * @file test_lock_order.c
  * @brief Unit tests for lock ordering helper.
+ * @author zeh (china_qzh@163.com)
+ * @version 1.1
+ * @date 2026-06-12
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-06-12       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补全文件头模板（author/version/date/修改日志）
  */
 
 #include <zephyr/ztest.h>

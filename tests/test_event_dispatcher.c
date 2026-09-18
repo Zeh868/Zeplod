@@ -2,15 +2,14 @@
  * @file test_event_dispatcher.c
  * @brief event_dispatcher 单元测试（勿与 event_system_start 同时跑两套队列消费者，避免抢同一队列）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
- *
- * Zehao Qian
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            嵌套函数提取为文件级 static；publish_copy 返回值检查
  *
  */
 
@@ -71,6 +70,23 @@ static bool dispatcher_slow_filter(const event_t* event, void* user_data) {
     atomic_set(&g_dispatcher_slow_filter_started, 1);
     k_msleep(EVENT_DISPATCHER_THREAD_JOIN_TIMEOUT_MS + 300U);
     atomic_set(&g_dispatcher_slow_filter_done, 1);
+    return false;
+}
+
+/* 只允许 type=100 的事件通过（test_set_filter 用） */
+static bool dispatcher_type100_filter(const event_t* event, void* user_data) {
+    ARG_UNUSED(user_data);
+
+    atomic_inc(&g_filter_call_count);
+    return event->type == 100;
+}
+
+/* 总是拒绝的过滤器，用于统计 events_filtered（test_filter_block_all 用） */
+static bool dispatcher_block_all_filter(const event_t* event, void* user_data) {
+    ARG_UNUSED(event);
+    ARG_UNUSED(user_data);
+
+    atomic_inc(&g_filter_block_count);
     return false;
 }
 
@@ -145,20 +161,13 @@ ZTEST(event_dispatcher, test_set_filter) {
     zassert_equal(event_register_type(101, "filter_t101"), EVENT_OK, NULL);
     zassert_equal(event_dispatcher_init(NULL), EVENT_OK, NULL);
 
-    /* 定义过滤函数：只允许特定类型的事件 */
-    bool test_filter(const event_t* event, void* user_data) {
-        (void) user_data;
-        atomic_inc(&g_filter_call_count);
-        return event->type == 100; /* 只允许 type=100 的事件 */
-    }
-
-    event_dispatcher_set_filter(test_filter, NULL);
+    event_dispatcher_set_filter(dispatcher_type100_filter, NULL);
 
     zassert_equal(event_dispatcher_start(), EVENT_OK, NULL);
 
     /* 发布不同类型的事件 */
-    event_publish_copy(100, EVENT_PRIORITY_NORMAL, "allowed", 7);
-    event_publish_copy(101, EVENT_PRIORITY_NORMAL, "blocked", 7);
+    zassert_equal(event_publish_copy(100, EVENT_PRIORITY_NORMAL, "allowed", 7), EVENT_OK, NULL);
+    zassert_equal(event_publish_copy(101, EVENT_PRIORITY_NORMAL, "blocked", 7), EVENT_OK, NULL);
 
     zassert_true(ztest_wait_atomic_nonzero(&g_filter_call_count, 2000U), "过滤器应被调用");
     zassert_true(atomic_get(&g_filter_call_count) > 0, "过滤器应被调用");
@@ -489,20 +498,12 @@ ZTEST(event_dispatcher, test_filter_block_all) {
     zassert_equal(event_register_type(210, "filter_block_t210"), EVENT_OK, NULL);
     zassert_equal(event_dispatcher_init(NULL), EVENT_OK, NULL);
 
-    /* 设置一个总是返回 false 的过滤器 */
-    bool block_all_filter(const event_t* event, void* user_data) {
-        (void) event;
-        (void) user_data;
-        atomic_inc(&g_filter_block_count);
-        return false;
-    }
-
-    event_dispatcher_set_filter(block_all_filter, NULL);
+    event_dispatcher_set_filter(dispatcher_block_all_filter, NULL);
     zassert_equal(event_dispatcher_start(), EVENT_OK, NULL);
 
     /* 发布事件 */
     for (int i = 0; i < 5; i++) {
-        event_publish_copy(210, EVENT_PRIORITY_NORMAL, "test", 4);
+        zassert_equal(event_publish_copy(210, EVENT_PRIORITY_NORMAL, "test", 4), EVENT_OK, "publish %d", i);
     }
 
     zassert_true(ztest_wait_until(filter_blocked_at_least_five, NULL, 2000U), "事件应被过滤器阻止");

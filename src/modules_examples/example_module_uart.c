@@ -4,13 +4,20 @@
  *
  * 演示如何使用 Zephyr UART API 进行串口通信。
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.3
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：删除 ISR 内 TX 完成空转轮询；
+ *                                                 init 校验缓冲区配置防越界；stop 改有界
+ *                                                 k_thread_join；status 改 atomic；补返回值
+ *                                                 检查与 switch default；删除无发布方的
+ *                                                 TX_COMPLETE/ERROR 死注册与死字段 baudrate
+ * 2026-09-18       1.3            zeh            复审整改：init 事件注册失败路径回退状态；
+ *                                                 rx 线程 create 返回值检查
  *
  */
 
@@ -36,7 +43,12 @@ LOG_MODULE_REGISTER(example_module_uart, CONFIG_SYS_LOG_LEVEL);
 
 #define UART_THREAD_PRIORITY   5
 #define UART_THREAD_STACK_SIZE 2048
-#define UART_DEFAULT_BAUDRATE  115200
+
+/** rx_thread 单次批量读取并发布的最大字节数（栈上缓冲，须小于环形缓冲容量） */
+#define UART_RX_BATCH_SIZE 64
+
+/** stop 时等待 rx_thread 退出的有界超时；线程循环 k_msleep(10)，正常远小于该值 */
+#define UART_THREAD_JOIN_TIMEOUT_MS 200
 
 /* =============================================================================
  * 内部数据结构
@@ -44,7 +56,12 @@ LOG_MODULE_REGISTER(example_module_uart, CONFIG_SYS_LOG_LEVEL);
 
 typedef struct {
     example_module_uart_config_t config;
-    module_status_t              status;
+    /*
+     * status 被 rx_thread/ISR 与模块管理器线程共同访问：
+     * 状态切换仅为枚举整数值的单写者多读者场景，用 atomic 保证可见性即可，
+     * 不引入互斥锁（读侧容忍读到上一状态的旧值，最多多执行一轮循环判断）。
+     */
+    atomic_t                     status;
     struct k_thread              rx_thread;
     K_KERNEL_STACK_MEMBER(rx_stack, UART_THREAD_STACK_SIZE);
     const struct device* dev;
@@ -88,29 +105,40 @@ int example_module_uart_init(void* config) {
         g_module_uart.config = *(example_module_uart_config_t*) config;
     } else {
         g_module_uart.config.device_name = "UART_0";
-        g_module_uart.config.baudrate = UART_DEFAULT_BAUDRATE;
         g_module_uart.config.rx_buffer_size = sizeof(g_rx_buffer_static);
         g_module_uart.config.tx_buffer_size = sizeof(g_tx_buffer_static);
         g_module_uart.config.enable_interrupt = true;
     }
 
+    /* 缓冲区配置须落在内部静态缓冲范围内，否则取模运算会越界（外部输入先校验再使用） */
+    if (g_module_uart.config.rx_buffer_size == 0U || g_module_uart.config.rx_buffer_size > sizeof(g_rx_buffer_static) ||
+        g_module_uart.config.tx_buffer_size == 0U || g_module_uart.config.tx_buffer_size > sizeof(g_tx_buffer_static)) {
+        LOG_ERR("Invalid buffer config: rx=%u tx=%u (1..%u)",
+                (unsigned int) g_module_uart.config.rx_buffer_size, (unsigned int) g_module_uart.config.tx_buffer_size,
+                (unsigned int) sizeof(g_rx_buffer_static));
+        return -EINVAL;
+    }
+
     g_module_uart.rx_buffer = g_rx_buffer_static;
     g_module_uart.tx_buffer = g_tx_buffer_static;
-    g_module_uart.status = MODULE_STATUS_INITIALIZED;
+    atomic_set(&g_module_uart.status, MODULE_STATUS_INITIALIZED);
 
     k_mutex_init(&g_module_uart.tx_lock);
 
     /* 注册事件类型 */
-    event_register_type(EVENT_TYPE_UART_RX_DATA, "uart_rx_data");
-    event_register_type(EVENT_TYPE_UART_TX_COMPLETE, "uart_tx_complete");
-    event_register_type(EVENT_TYPE_UART_ERROR, "uart_error");
+    if (event_register_type(EVENT_TYPE_UART_RX_DATA, "uart_rx_data") != EVENT_OK) {
+        LOG_ERR("event_register_type uart_rx_data failed");
+        atomic_set(&g_module_uart.status, MODULE_STATUS_UNINITIALIZED);
+        return -EIO;
+    }
 
     LOG_INF("UART 模块初始化完成");
     return 0;
 }
 
 int example_module_uart_start(void) {
-    if (g_module_uart.status != MODULE_STATUS_INITIALIZED && g_module_uart.status != MODULE_STATUS_STOPPED) {
+    if (atomic_get(&g_module_uart.status) != MODULE_STATUS_INITIALIZED &&
+        atomic_get(&g_module_uart.status) != MODULE_STATUS_STOPPED) {
         return -1;
     }
 
@@ -120,7 +148,7 @@ int example_module_uart_start(void) {
     g_module_uart.dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
 #else
     LOG_ERR("devicetree 未选择 zephyr_console");
-    g_module_uart.status = MODULE_STATUS_ERROR;
+    atomic_set(&g_module_uart.status, MODULE_STATUS_ERROR);
     return -1;
 #endif
 #else
@@ -128,13 +156,13 @@ int example_module_uart_start(void) {
 #endif
     if (g_module_uart.dev == NULL) {
         LOG_ERR("找不到 UART 设备");
-        g_module_uart.status = MODULE_STATUS_ERROR;
+        atomic_set(&g_module_uart.status, MODULE_STATUS_ERROR);
         return -1;
     }
 
     if (!device_is_ready(g_module_uart.dev)) {
         LOG_ERR("UART 设备未就绪");
-        g_module_uart.status = MODULE_STATUS_ERROR;
+        atomic_set(&g_module_uart.status, MODULE_STATUS_ERROR);
         return -1;
     }
 
@@ -152,21 +180,28 @@ int example_module_uart_start(void) {
         uart_irq_rx_enable(g_module_uart.dev);
     }
 
-    g_module_uart.status = MODULE_STATUS_RUNNING;
+    atomic_set(&g_module_uart.status, MODULE_STATUS_RUNNING);
 
     /* 创建接收线程 */
-    k_thread_create(&g_module_uart.rx_thread, g_module_uart.rx_stack, K_THREAD_STACK_SIZEOF(g_module_uart.rx_stack),
-                    uart_rx_thread, NULL, NULL, NULL, UART_THREAD_PRIORITY, 0, K_FOREVER);
+    k_tid_t rx_tid =
+        k_thread_create(&g_module_uart.rx_thread, g_module_uart.rx_stack, K_THREAD_STACK_SIZEOF(g_module_uart.rx_stack),
+                        uart_rx_thread, NULL, NULL, NULL, UART_THREAD_PRIORITY, 0, K_FOREVER);
+    if (rx_tid == NULL) {
+        LOG_ERR("Failed to create UART rx thread");
+        atomic_set(&g_module_uart.status, MODULE_STATUS_ERROR);
+        return -ENOMEM;
+    }
 
-    k_thread_name_set(&g_module_uart.rx_thread, "mod_uart_rx");
-    k_thread_start(&g_module_uart.rx_thread);
+    k_thread_name_set(rx_tid, "mod_uart_rx");
+    k_thread_start(rx_tid);
 
-    LOG_INF("UART 模块已启动：%s @ %dbps", g_module_uart.dev->name, g_module_uart.config.baudrate);
+    /* 波特率由 devicetree/驱动默认配置决定，本模块不做 uart_configure */
+    LOG_INF("UART 模块已启动：%s", g_module_uart.dev->name);
     return 0;
 }
 
 int example_module_uart_stop(void) {
-    if (g_module_uart.status != MODULE_STATUS_RUNNING) {
+    if (atomic_get(&g_module_uart.status) != MODULE_STATUS_RUNNING) {
         return 0;
     }
 
@@ -175,12 +210,13 @@ int example_module_uart_stop(void) {
     }
 
     /* SIL-2: 先设置状态让线程自行退出，避免 k_thread_abort 强制终止 */
-    g_module_uart.status = MODULE_STATUS_STOPPED;
+    atomic_set(&g_module_uart.status, MODULE_STATUS_STOPPED);
 
-    /* 等待线程检测到状态变化并自然退出
-     * 线程循环中有 k_msleep(10)，等待 100ms 足够
-     */
-    k_msleep(100);
+    /* 有界汇合接收线程：线程循环 k_msleep(10)，正常应立即退出；超时说明线程异常滞留 */
+    int join_ret = k_thread_join(&g_module_uart.rx_thread, K_MSEC(UART_THREAD_JOIN_TIMEOUT_MS));
+    if (join_ret != 0) {
+        LOG_ERR("uart rx_thread join timeout/failed: %d", join_ret);
+    }
 
     LOG_INF("UART 模块已停止");
     return 0;
@@ -188,23 +224,29 @@ int example_module_uart_stop(void) {
 
 int example_module_uart_shutdown(void) {
     example_module_uart_stop();
-    g_module_uart.status = MODULE_STATUS_UNINITIALIZED;
+    atomic_set(&g_module_uart.status, MODULE_STATUS_UNINITIALIZED);
     return 0;
 }
 
 void example_module_uart_on_event(const event_t* event, void* user_data) {
+    ARG_UNUSED(user_data);
+
     if (event == NULL)
         return;
 
     switch (event->type) {
-    case EVENT_TYPE_UART_TX_COMPLETE:
-        LOG_DBG("UART 发送完成");
+    case EVENT_TYPE_UART_RX_DATA:
+        /* RX 数据由 rx_thread 直接发布给订阅者，本模块自身无需处理 */
+        break;
+
+    default:
+        LOG_DBG("Unhandled event type: %d", event->type);
         break;
     }
 }
 
 module_status_t example_module_uart_get_status(void) {
-    return g_module_uart.status;
+    return (module_status_t) atomic_get(&g_module_uart.status);
 }
 
 int example_module_uart_control(int cmd, void* arg) {
@@ -280,6 +322,13 @@ int example_module_uart_receive(void* data, size_t len) {
     k_spinlock_key_t key = k_spin_lock(&g_module_uart.rx_lock);
     size_t           available = g_module_uart.rx_head - g_module_uart.rx_tail;
     size_t           capacity = g_module_uart.config.rx_buffer_size;
+
+    /* 与 ISR 侧写入路径对称的零容量防护：init 已校验，出现即异常配置 */
+    if (capacity == 0U) {
+        k_spin_unlock(&g_module_uart.rx_lock, key);
+        return 0;
+    }
+
     if (available > capacity) {
         /* 防御性修正：理论上不会出现，出现时丢弃最旧数据保证边界安全 */
         g_module_uart.rx_tail = g_module_uart.rx_head - capacity;
@@ -317,6 +366,8 @@ void example_module_uart_clear_rx_buffer(void) {
 }
 
 void example_module_uart_get_stats(uint32_t* tx_count, uint32_t* rx_count, uint32_t* errors) {
+    /* 统计仅作观测用途：tx_count/error_count 由 ISR 与线程无锁递增，此处读取
+     * 不加锁，可能读到略微滞后的瞬时值；对诊断语义可接受，不值得引入临界区。 */
     if (tx_count != NULL)
         *tx_count = g_module_uart.tx_count;
     if (rx_count != NULL)
@@ -336,17 +387,20 @@ static void uart_rx_thread(void* p1, void* p2, void* p3) {
 
     LOG_INF("UART 接收线程已启动");
 
-    while (g_module_uart.status == MODULE_STATUS_RUNNING) {
+    while (atomic_get(&g_module_uart.status) == MODULE_STATUS_RUNNING) {
         /* 检查接收缓冲区 */
         size_t count = example_module_uart_get_rx_count();
 
         if (count > 0) {
             /* 读取数据并发布事件 */
-            uint8_t buffer[64];
+            uint8_t buffer[UART_RX_BATCH_SIZE];
             int     received = example_module_uart_receive(buffer, MIN(count, sizeof(buffer)));
 
             if (received > 0) {
-                event_publish_copy(EVENT_TYPE_UART_RX_DATA, EVENT_PRIORITY_NORMAL, buffer, received);
+                if (event_publish_copy(EVENT_TYPE_UART_RX_DATA, EVENT_PRIORITY_NORMAL, buffer, (size_t) received) !=
+                    EVENT_OK) {
+                    LOG_ERR("publish uart_rx_data failed (len=%d)", received);
+                }
                 LOG_DBG("UART 接收 %d 字节", received);
             }
         }
@@ -378,11 +432,11 @@ static void uart_irq_callback(const struct device* dev, void* user_data) {
             }
         }
 
-        while (uart_irq_tx_complete(cb->dev)) {
-            /* 发送完成 */
-        }
+        /* 发送走 uart_poll_out（线程侧阻塞式逐字节发送），TX 完成中断不使能，
+         * 无需在此轮询等待 TX 完成；误留轮询会在 TX 中断未使能时死循环。 */
 
         if (uart_err_check(cb->dev) != 0) {
+            /* 统计级语义：仅观测用，ISR 内无锁递增，读侧容忍瞬时旧值 */
             cb->error_count++;
         }
     }
@@ -402,9 +456,8 @@ static int example_module_uart_auto_register(void) {
     uint32_t                     module_id;
     example_module_uart_config_t uart_cfg = {
         .device_name = CONFIG_EXAMPLE_MODULE_UART_DEVICE_NAME,
-        .baudrate = UART_DEFAULT_BAUDRATE,
-        .rx_buffer_size = 256,
-        .tx_buffer_size = 256,
+        .rx_buffer_size = sizeof(g_rx_buffer_static),
+        .tx_buffer_size = sizeof(g_tx_buffer_static),
         .enable_interrupt = true,
     };
 

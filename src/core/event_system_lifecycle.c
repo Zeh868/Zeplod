@@ -2,8 +2,14 @@
  * @file event_system_lifecycle.c
  * @brief 事件系统生命周期（init/start/stop/shutdown）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            拆分 init/stop/shutdown 超长函数（门控/资源准备/停止流程提取为辅助函数）
  */
 
 #include <zephyr/logging/log.h>
@@ -106,9 +112,14 @@ void event_system_init_rollback(void) {
     atomic_clear(&g_restart_dispatcher_on_start);
 }
 
-event_status_t event_system_init(void) {
-    LOG_DBG("Initializing event system...");
-
+/**
+ * @brief init 前置门控：拒绝 ISR 与分发器线程，其余调用者阻塞取得生命周期锁
+ *
+ * 分发器线程内禁止阻塞等待（k_sleep 语义非法），仅尝试一次。
+ *
+ * @return EVENT_OK 已持锁，EVENT_ERR_INVALID_ARG 调用上下文被拒绝
+ */
+static event_status_t event_system_init_gate(void) {
     /* 生命周期锁在 ISR 中不可获取（k_sleep 语义非法），拒绝 ISR 上下文调用 */
     if (k_is_in_isr()) {
         return EVENT_ERR_INVALID_ARG;
@@ -119,8 +130,54 @@ event_status_t event_system_init(void) {
             LOG_ERR("Cannot init event system from dispatcher thread during lifecycle transition");
             return EVENT_ERR_INVALID_ARG;
         }
-    } else {
-        event_system_lifecycle_lock_wait();
+        return EVENT_OK;
+    }
+
+    event_system_lifecycle_lock_wait();
+    return EVENT_OK;
+}
+
+/**
+ * @brief 复位控制块、初始化事件类型表并创建队列（持生命周期锁调用）
+ *
+ * 关闭 ops gate 并等待在途事件操作排空后，才允许触碰共享状态。
+ *
+ * @return EVENT_OK 成功，其他错误码见 event_status_t（失败时已执行回滚，锁仍由调用方持有）
+ */
+static event_status_t event_system_init_resources(void) {
+    event_system_ops_close();
+    event_status_t wait_ret = event_system_ops_wait_zero();
+    if (wait_ret != EVENT_OK) {
+        return wait_ret;
+    }
+
+    memset(&g_event_system, 0, sizeof(g_event_system));
+    zepl_state_machine_init(&g_event_system.lifecycle, ZEP_STATE_UNINIT);
+
+    for (int i = 0; i < MAX_EVENT_TYPES; i++) {
+        g_event_system.event_types[i].type = i;
+        k_mutex_init(&g_event_system.event_types[i].lock);
+    }
+
+    g_event_system.event_queue = &g_event_msgq;
+    atomic_clear(&g_restart_dispatcher_on_start);
+
+    event_status_t qret = event_queue_init(&g_event_msgq, g_event_msgq_buffer, CONFIG_EVENT_QUEUE_SIZE);
+    if (qret != EVENT_OK) {
+        event_system_init_rollback();
+        LOG_ERR("event_queue_init failed: %d", qret);
+        return qret;
+    }
+
+    return EVENT_OK;
+}
+
+event_status_t event_system_init(void) {
+    LOG_DBG("Initializing event system...");
+
+    event_status_t ret = event_system_init_gate();
+    if (ret != EVENT_OK) {
+        return ret;
     }
 
     if (g_event_system.initialized) {
@@ -140,30 +197,10 @@ event_status_t event_system_init(void) {
         return EVENT_ERR_INVALID_ARG;
     }
 
-    event_system_ops_close();
-    event_status_t wait_ret = event_system_ops_wait_zero();
-    if (wait_ret != EVENT_OK) {
+    ret = event_system_init_resources();
+    if (ret != EVENT_OK) {
         event_system_lifecycle_unlock();
-        return wait_ret;
-    }
-
-    memset(&g_event_system, 0, sizeof(g_event_system));
-    zepl_state_machine_init(&g_event_system.lifecycle, ZEP_STATE_UNINIT);
-
-    for (int i = 0; i < MAX_EVENT_TYPES; i++) {
-        g_event_system.event_types[i].type = i;
-        k_mutex_init(&g_event_system.event_types[i].lock);
-    }
-
-    g_event_system.event_queue = &g_event_msgq;
-    atomic_clear(&g_restart_dispatcher_on_start);
-
-    event_status_t qret = event_queue_init(&g_event_msgq, g_event_msgq_buffer, CONFIG_EVENT_QUEUE_SIZE);
-    if (qret != EVENT_OK) {
-        event_system_init_rollback();
-        event_system_lifecycle_unlock();
-        LOG_ERR("event_queue_init failed: %d", qret);
-        return qret;
+        return ret;
     }
 
     g_event_system.magic = EVENT_SYSTEM_MAGIC;
@@ -259,6 +296,50 @@ event_status_t event_system_start(void) {
     return EVENT_OK;
 }
 
+/**
+ * @brief RUNNING 时迁移到 STOPPING（持生命周期锁调用；stop/shutdown 共用）
+ *
+ * @return EVENT_OK 已处于停止流程（含非 RUNNING 直接通过），
+ *         EVENT_ERR_INVALID_ARG 迁移失败（已解锁）
+ */
+static event_status_t event_system_begin_stopping(void) {
+    if (event_system_lifecycle_state() != ZEP_STATE_RUNNING) {
+        return EVENT_OK;
+    }
+    if (zepl_state_machine_try_transition(&g_event_system.lifecycle, ZEP_STATE_STOPPING) != 0) {
+        LOG_ERR("Failed to transition event system to STOPPING");
+        event_system_lifecycle_unlock();
+        return EVENT_ERR_INVALID_ARG;
+    }
+    return EVENT_OK;
+}
+
+/**
+ * @brief stop 路径停止分发器：RUNNING/PAUSED 时登记 start 重启标记
+ *
+ * @return EVENT_OK 成功（含分发器未初始化），其他错误码：失败时已重新打开 ops gate
+ */
+static event_status_t event_system_stop_dispatcher(void) {
+    if (!event_dispatcher_is_initialized()) {
+        return EVENT_OK;
+    }
+
+    dispatcher_state_t disp_st = event_dispatcher_get_state();
+    if (disp_st == DISPATCHER_RUNNING || disp_st == DISPATCHER_PAUSED) {
+        atomic_set(&g_restart_dispatcher_on_start, 1);
+    }
+
+    event_status_t dret = event_dispatcher_stop();
+    if (dret != EVENT_OK) {
+        LOG_WRN("event_dispatcher_stop during event_system_stop: %d", dret);
+        /* 分发器线程仍在运行，重新开放事件入队 gate 以保持系统可用 */
+        event_system_ops_open();
+        return dret;
+    }
+
+    return EVENT_OK;
+}
+
 event_status_t event_system_stop(void) {
     if (k_is_in_isr()) {
         return EVENT_ERR_INVALID_ARG;
@@ -281,46 +362,33 @@ event_status_t event_system_stop(void) {
         return EVENT_ERR_INVALID_ARG;
     }
 
+    /* 未运行且不在 STOPPING 流程中：空闲态幂等返回 */
     if (atomic_get(&g_event_system.running) == 0 && event_system_lifecycle_state() != ZEP_STATE_STOPPING) {
         event_system_lifecycle_unlock();
         return EVENT_OK;
     }
 
-    {
-        const zepl_state_t lc_state = event_system_lifecycle_state();
-
-        if (lc_state == ZEP_STATE_RUNNING &&
-            zepl_state_machine_try_transition(&g_event_system.lifecycle, ZEP_STATE_STOPPING) != 0) {
-            LOG_ERR("Failed to transition event system to STOPPING");
-            event_system_lifecycle_unlock();
-            return EVENT_ERR_INVALID_ARG;
-        }
+    event_status_t ret = event_system_begin_stopping();
+    if (ret != EVENT_OK) {
+        return ret;
     }
 
     atomic_set(&g_event_system.running, 0);
     event_system_ops_close();
 
-    event_status_t wait_ret = event_system_ops_wait_zero();
-    if (wait_ret != EVENT_OK) {
+    ret = event_system_ops_wait_zero();
+    if (ret != EVENT_OK) {
         event_system_lifecycle_unlock();
-        return wait_ret;
+        return ret;
     }
 
-    if (event_dispatcher_is_initialized()) {
-        dispatcher_state_t disp_st = event_dispatcher_get_state();
-        if (disp_st == DISPATCHER_RUNNING || disp_st == DISPATCHER_PAUSED) {
-            atomic_set(&g_restart_dispatcher_on_start, 1);
-        }
-
-        event_status_t dret = event_dispatcher_stop();
-        if (dret != EVENT_OK) {
-            LOG_WRN("event_dispatcher_stop during event_system_stop: %d", dret);
-            event_system_ops_open();
-            event_system_lifecycle_unlock();
-            return dret;
-        }
+    ret = event_system_stop_dispatcher();
+    if (ret != EVENT_OK) {
+        event_system_lifecycle_unlock();
+        return ret;
     }
 
+    /* 清空未处理事件（动态负载在此释放）；stop 不销毁队列/订阅表，可再次 start */
     event_queue_purge(g_event_system.event_queue);
 
     (void) zepl_state_machine_try_transition(&g_event_system.lifecycle, ZEP_STATE_STOPPED);
@@ -355,28 +423,18 @@ event_status_t event_system_shutdown(void) {
         return EVENT_ERR_INVALID_ARG;
     }
 
-    if (!g_event_system.initialized) {
-        event_system_lifecycle_unlock();
-        return EVENT_OK;
-    }
-
-    {
-        const zepl_state_t lc_state = event_system_lifecycle_state();
-        if (lc_state == ZEP_STATE_RUNNING &&
-            zepl_state_machine_try_transition(&g_event_system.lifecycle, ZEP_STATE_STOPPING) != 0) {
-            LOG_ERR("Failed to transition event system to STOPPING");
-            event_system_lifecycle_unlock();
-            return EVENT_ERR_INVALID_ARG;
-        }
+    event_status_t ret = event_system_begin_stopping();
+    if (ret != EVENT_OK) {
+        return ret;
     }
 
     atomic_set(&g_event_system.running, 0);
     event_system_ops_close();
 
-    event_status_t wait_ret = event_system_ops_wait_zero();
-    if (wait_ret != EVENT_OK) {
+    ret = event_system_ops_wait_zero();
+    if (ret != EVENT_OK) {
         event_system_lifecycle_unlock();
-        return wait_ret;
+        return ret;
     }
 
     if (event_dispatcher_is_initialized()) {
@@ -392,6 +450,7 @@ event_status_t event_system_shutdown(void) {
         (void) zepl_state_machine_try_transition(&g_event_system.lifecycle, ZEP_STATE_STOPPED);
     }
 
+    /* 顺序约束：须在 magic 置 IDLE 前完成队列清理，否则 event_free_data 可能跳过释放 */
     event_queue_deinit(g_event_system.event_queue);
 
     event_system_cleanup_event_types();

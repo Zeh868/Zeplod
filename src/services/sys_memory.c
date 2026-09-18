@@ -5,13 +5,15 @@
  * 支持多内存池，每个池基于空闲链表（first-fit）管理。
  * 提供分配、释放、重新分配、统计、跟踪等功能。
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            修复分配块尺寸别名覆写UB、freed标记
+ *                                                失效、init竞态防护、锁序登记、魔数清理
  *
  */
 
@@ -20,6 +22,8 @@
 #include <limits.h>
 #include <stdalign.h>
 #include <string.h>
+#include <zeplod/app_config.h>
+#include <zeplod/lock_order.h>
 #include <zeplod/sys_memory.h>
 
 LOG_MODULE_REGISTER(sys_memory, CONFIG_SYS_LOG_LEVEL);
@@ -46,6 +50,9 @@ LOG_MODULE_REGISTER(sys_memory, CONFIG_SYS_LOG_LEVEL);
 #define MEMORY_ALIGN_BYTES 8U                                          ///< 内存对齐字节数（保证对齐到8字节）
 #define MIN_BLOCK_SIZE     (sizeof(free_block_t) + MEMORY_ALIGN_BYTES) ///< 最小可分割块大小
 
+/** 重新初始化时静默化探测的试锁超时（毫秒）：仅为探测"有无并发操作在途"，非真实等待 */
+#define SYS_MEM_REINIT_PROBE_TIMEOUT_MS 1
+
 /* =============================================================================
  * 内部数据结构
  * ============================================================================= */
@@ -67,6 +74,7 @@ typedef struct alloc_header {
     size_t   requested_size;    ///< 用户请求大小（原始未对齐）
     size_t   aligned_size;      ///< 实际分配的用户数据大小（已对齐）
     size_t   actual_block_size; ///< 实际占用的总块大小（含头部和尾部碎片）
+    uint32_t freed_magic;       ///< 已释放标记（放尾部：块首部入空闲链表后会被 free_block_t 覆盖）
     /* 之后紧跟用户数据 */
 } alloc_header_t;
 
@@ -132,6 +140,43 @@ static uint8_t (*g_mem_buffer)[DEFAULT_POOL_SIZE] = NULL;
 /* =============================================================================
  * 内部辅助函数
  * ============================================================================= */
+
+/**
+ * @brief 池锁加锁（锁序登记 + 互斥锁）
+ *
+ * 锁序约定：pool->lock 与 tracker.lock 同为 RESOURCE 层，二者 key（成员地址）
+ * 恒单调（pools[] 在结构体前部、tracker 在后部），嵌套只允许 pool → tracker
+ * 方向（见 pool_free_locked），禁止 tracker → pool 反向嵌套。
+ */
+static void pool_lock(mem_pool_t* pool) {
+    zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &pool->lock);
+    k_mutex_lock(&pool->lock, K_FOREVER);
+}
+
+/**
+ * @brief 池锁解锁（互斥锁 + 锁序登记出栈）
+ */
+static void pool_unlock(mem_pool_t* pool) {
+    k_mutex_unlock(&pool->lock);
+    zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &pool->lock);
+}
+
+/**
+ * @brief 跟踪器锁加锁（锁序登记 + 互斥锁）
+ * @note 若已持有任一池锁，本函数构成 pool → tracker 同层嵌套（key 恒单调，合法）
+ */
+static void tracker_lock(void) {
+    zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_sys_mem.tracker.lock);
+    k_mutex_lock(&g_sys_mem.tracker.lock, K_FOREVER);
+}
+
+/**
+ * @brief 跟踪器锁解锁（互斥锁 + 锁序登记出栈）
+ */
+static void tracker_unlock(void) {
+    k_mutex_unlock(&g_sys_mem.tracker.lock);
+    zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_sys_mem.tracker.lock);
+}
 
 /**
  * @brief 根据类型获取内存池指针
@@ -209,11 +254,11 @@ static mem_pool_t* lock_pool_from_ptr(void* ptr, alloc_header_t** header_out) {
         return NULL;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
 
     /* SIL-2: 再次验证指针是否在池内（锁内确保一致性） */
     if (!ptr_in_pool(pool, ptr)) {
-        k_mutex_unlock(&pool->lock);
+        pool_unlock(pool);
         return NULL;
     }
 
@@ -224,7 +269,7 @@ static mem_pool_t* lock_pool_from_ptr(void* ptr, alloc_header_t** header_out) {
     if (ptr_offset < sizeof(alloc_header_t)) {
         LOG_ERR("Pointer too close to pool start: offset=%zu < header=%zu", (size_t) ptr_offset,
                 sizeof(alloc_header_t));
-        k_mutex_unlock(&pool->lock);
+        pool_unlock(pool);
         return NULL;
     }
 
@@ -232,17 +277,19 @@ static mem_pool_t* lock_pool_from_ptr(void* ptr, alloc_header_t** header_out) {
 
     /* SIL-2: 验证 header 也在池内 */
     if (!ptr_in_pool(pool, header)) {
-        k_mutex_unlock(&pool->lock);
+        pool_unlock(pool);
         return NULL;
     }
 
-    /* 验证魔数和池类型 */
-    if (header->magic != MEMORY_MAGIC && header->magic != MEMORY_FREED_MAGIC) {
-        k_mutex_unlock(&pool->lock);
+    /* 验证魔数：只接受 MEMORY_MAGIC。已释放块的 freed 标记存于 header 尾部
+     * freed_magic 字段（首部 magic 在入空闲链表后会被链表指针覆盖，无法承载标记），
+     * double-free 由 pool_free_locked 依据 freed_magic 识别并告警 */
+    if (header->magic != MEMORY_MAGIC) {
+        pool_unlock(pool);
         return NULL;
     }
     if (header->pool_type >= SYS_MEM_POOL_COUNT || header->pool_type != (uint32_t) pool->type) {
-        k_mutex_unlock(&pool->lock);
+        pool_unlock(pool);
         return NULL;
     }
 
@@ -260,7 +307,7 @@ static void tracker_add(void* ptr, size_t size, const char* module, uint32_t lin
         return;
     }
 
-    k_mutex_lock(&g_sys_mem.tracker.lock, K_FOREVER);
+    tracker_lock();
 
     const uint32_t max_r = g_sys_mem.tracker.max_records;
     uint32_t       idx;
@@ -298,7 +345,7 @@ static void tracker_add(void* ptr, size_t size, const char* module, uint32_t lin
         g_sys_mem.tracker.count++;
     }
 
-    k_mutex_unlock(&g_sys_mem.tracker.lock);
+    tracker_unlock();
 }
 
 /**
@@ -309,7 +356,7 @@ static void tracker_remove(void* ptr) {
         return;
     }
 
-    k_mutex_lock(&g_sys_mem.tracker.lock, K_FOREVER);
+    tracker_lock();
 
     const uint32_t max_r = g_sys_mem.tracker.max_records;
 
@@ -324,7 +371,7 @@ static void tracker_remove(void* ptr) {
         }
     }
 
-    k_mutex_unlock(&g_sys_mem.tracker.lock);
+    tracker_unlock();
 }
 
 /**
@@ -377,6 +424,75 @@ static void coalesce_free_blocks(mem_pool_t* pool) {
 }
 
 /**
+ * @brief 从空闲链表取出可容纳 total_needed 的块（first-fit），必要时分割
+ *
+ * 调用时需持有池锁。
+ *
+ * @param pool 目标内存池
+ * @param total_needed 含头部的总需求大小（字节）
+ * @param actual_block_size_out 输出：本次分配实际占用的总块大小（分割分支为 total_needed，
+ *                              整块分支为原空闲块尺寸）
+ * @return 分配块（头部）起始地址；无合适块时返回 NULL
+ *
+ * @note header 写入与 free_block_t 内存重叠（整块分支 header 直接覆盖原 free_block_t），
+ *       必须在写 header 前保存原块尺寸并通过 actual_block_size_out 带出，否则读取到的是
+ *       被 header 字段覆写后的垃圾值（别名覆写 UB）
+ */
+static uint8_t* pool_take_block_locked(mem_pool_t* pool, size_t total_needed, size_t* actual_block_size_out) {
+    /* 查找第一个足够大的空闲块 */
+    free_block_t* prev = NULL;
+    free_block_t* curr = pool->free_list;
+    while (curr != NULL) {
+        if (curr->size >= total_needed) {
+            break;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+
+    if (curr == NULL) {
+        return NULL;
+    }
+
+    uint8_t* block_start = (uint8_t*) curr;
+    size_t   remaining = curr->size - total_needed;
+
+    if (remaining >= MIN_BLOCK_SIZE) {
+        /* 分割：从当前块尾部切出分配块，剩余部分保留在前（空闲链表按地址有序便于合并） */
+        curr->size = remaining;
+        block_start = (uint8_t*) curr + remaining;
+        *actual_block_size_out = total_needed;
+    } else {
+        /* 整个块用于分配，从链表中移除；此后 header 写入将覆盖原 free_block_t 内存 */
+        if (prev == NULL) {
+            pool->free_list = curr->next;
+        } else {
+            prev->next = curr->next;
+        }
+        *actual_block_size_out = curr->size; /* 必须在 header 写入前保存（别名覆写） */
+    }
+
+    return block_start;
+}
+
+/**
+ * @brief 初始化分配头部
+ *
+ * 调用时需持有池锁。
+ */
+static void pool_alloc_header_init(mem_pool_t* pool, uint8_t* block_start, size_t req_size, size_t aligned_req,
+                                   size_t actual_block_size) {
+    alloc_header_t* header = (alloc_header_t*) block_start;
+
+    header->magic = MEMORY_MAGIC;
+    header->pool_type = (uint32_t) pool->type;
+    header->requested_size = req_size;
+    header->aligned_size = aligned_req;
+    header->actual_block_size = actual_block_size;
+    header->freed_magic = 0U; /* 清除上一轮生命周期的已释放标记 */
+}
+
+/**
  * @brief 从空闲链表中分配内存
  *
  * 返回分配的用户指针（位于分配头部之后）。
@@ -408,39 +524,12 @@ static void* pool_alloc_locked(mem_pool_t* pool, size_t req_size, bool zero, con
         return NULL;
     }
 
-    /* 查找第一个足够大的空闲块 */
-    free_block_t* prev = NULL;
-    free_block_t* curr = pool->free_list;
-    while (curr != NULL) {
-        if (curr->size >= total_needed) {
-            break;
-        }
-        prev = curr;
-        curr = curr->next;
-    }
-
-    if (curr == NULL) {
+    /* 查找并摘取空闲块（actual_block_size 在 header 写入前保存带出，规避别名覆写） */
+    size_t   actual_block_size = 0U;
+    uint8_t* block_start = pool_take_block_locked(pool, total_needed, &actual_block_size);
+    if (block_start == NULL) {
         pool->fail_count++;
         return NULL;
-    }
-
-    /* 分配内存块 */
-    uint8_t* block_start = (uint8_t*) curr;
-    size_t   remaining = curr->size - total_needed;
-
-    if (remaining >= MIN_BLOCK_SIZE) {
-        /* 分割：分配尾部（或头部），我们选择从当前块尾部切出，保持剩余块在前 */
-        /* 将当前空闲块缩小为剩余部分，新分配块放在后面 */
-        curr->size = remaining;
-        block_start = (uint8_t*) curr + remaining; /* 新分配块的起始地址 */
-    } else {
-        /* 整个块用于分配，从链表中移除 */
-        if (prev == NULL) {
-            pool->free_list = curr->next;
-        } else {
-            prev->next = curr->next;
-        }
-        /* 此时 block_start 仍是原块起始地址 */
     }
 
     /* SIL-2: 最终边界检查 - 确保分配块不超出池 */
@@ -451,13 +540,7 @@ static void* pool_alloc_locked(mem_pool_t* pool, size_t req_size, bool zero, con
         return NULL;
     }
 
-    /* 初始化分配头部 */
-    alloc_header_t* header = (alloc_header_t*) block_start;
-    header->magic = MEMORY_MAGIC;
-    header->pool_type = (uint32_t) pool->type;
-    header->requested_size = req_size;
-    header->aligned_size = aligned_req;
-    header->actual_block_size = (remaining >= MIN_BLOCK_SIZE) ? total_needed : curr->size;
+    pool_alloc_header_init(pool, block_start, req_size, aligned_req, actual_block_size);
 
     void* user_ptr = block_start + sizeof(alloc_header_t);
 
@@ -467,7 +550,7 @@ static void* pool_alloc_locked(mem_pool_t* pool, size_t req_size, bool zero, con
     }
 
     /* 更新统计 */
-    pool->used_size += header->actual_block_size;
+    pool->used_size += actual_block_size;
     if (pool->used_size > pool->max_used) {
         pool->max_used = pool->used_size;
     }
@@ -481,13 +564,16 @@ static void* pool_alloc_locked(mem_pool_t* pool, size_t req_size, bool zero, con
  * @brief 释放内存（内部，调用时需持有池锁）
  */
 static void pool_free_locked(mem_pool_t* pool, void* ptr, alloc_header_t* header) {
-    if (header->magic != MEMORY_MAGIC) {
+    /* freed 标记存于 header 尾部 freed_magic 字段：块首部 magic 在入空闲链表后会被
+     * free_block_t.next 覆盖（原实现把标记写在首部，写完即被链表指针冲掉，
+     * double-free 检测形同虚设），故双 free 检测依据尾部标记 + 首部魔数双重判断 */
+    if (header->magic != MEMORY_MAGIC || header->freed_magic == MEMORY_FREED_MAGIC) {
         LOG_WRN("Double free or corrupted header: ptr=%p", ptr);
         return;
     }
 
-    /* 标记为已释放 */
-    header->magic = MEMORY_FREED_MAGIC;
+    /* 标记为已释放（尾部字段，不被链表指针覆盖；首部 magic 保持有效魔数） */
+    header->freed_magic = MEMORY_FREED_MAGIC;
 
     /* 将这块内存加入空闲链表 */
     free_block_t* new_free = (free_block_t*) header;
@@ -544,75 +630,124 @@ static size_t get_allocation_size_locked(const alloc_header_t* header) {
  * 核心 API 实现
  * ============================================================================= */
 
-int sys_mem_init(const sys_mem_config_t* config) {
-    LOG_DBG("Initializing memory system...");
+/**
+ * @brief 校验初始化配置（在任何全局状态写入之前调用）
+ *
+ * @param config 入参配置；NULL 表示使用默认值（默认值必然合法）
+ * @return 0 合法；-EINVAL max_allocations 非法
+ */
+static int mem_config_validate(const sys_mem_config_t* config) {
+    uint32_t max_alloc = (config != NULL) ? config->max_allocations : (uint32_t) MAX_ALLOCATIONS;
 
-    /* 静默化检查：有活跃分配或并发操作进行中时拒绝重新初始化。
-     * memset 会摧毁池锁/跟踪器锁与分配状态；若其他线程正持锁分配/释放，
-     * 将导致锁内存损坏与不可恢复的堆破坏。逐池短暂取锁确认无人持锁后再重置
-     * （BSS 零初始化的 k_mutex 在 Zephyr 中可直接加锁）。
-     * 持有的锁在下方 memset 后由统一的 k_mutex_init 重建，无需释放。 */
-    {
-        mem_pool_t* held[SYS_MEM_POOL_COUNT];
-        int         held_count = 0;
-
-        for (int i = 0; i < SYS_MEM_POOL_COUNT; i++) {
-            mem_pool_t* pool = &g_sys_mem.pools[i];
-
-            if (!pool->initialized) {
-                continue;
-            }
-            if (pool->active_count != 0U) {
-                for (int j = 0; j < held_count; j++) {
-                    k_mutex_unlock(&held[j]->lock);
-                }
-                LOG_ERR("sys_mem_init rejected: pool %d has %u active allocation(s)", i,
-                        (unsigned int) pool->active_count);
-                return -EBUSY;
-            }
-            if (k_mutex_lock(&pool->lock, K_MSEC(1)) != 0) {
-                for (int j = 0; j < held_count; j++) {
-                    k_mutex_unlock(&held[j]->lock);
-                }
-                LOG_ERR("sys_mem_init rejected: concurrent memory operation in progress");
-                return -EBUSY;
-            }
-            held[held_count++] = pool;
-        }
-
-        if (g_sys_mem.tracker.tracking_enabled && k_mutex_lock(&g_sys_mem.tracker.lock, K_MSEC(1)) != 0) {
-            for (int j = 0; j < held_count; j++) {
-                k_mutex_unlock(&held[j]->lock);
-            }
-            LOG_ERR("sys_mem_init rejected: tracker busy");
-            return -EBUSY;
-        }
-    }
-
-    /* 清零除互斥锁外的全局控制块 */
-    memset(&g_sys_mem, 0, sizeof(g_sys_mem));
-
-    /* 设置配置（使用传入或默认值） */
-    if (config != NULL) {
-        g_sys_mem.config = *config;
-    } else {
-        /* 默认配置 */
-        g_sys_mem.config.pool_sizes[SYS_MEM_POOL_GENERAL] = DEFAULT_POOL_SIZE;
-        g_sys_mem.config.pool_sizes[SYS_MEM_POOL_EVENT] = DEFAULT_POOL_SIZE / 2;
-        g_sys_mem.config.pool_sizes[SYS_MEM_POOL_MODULE] = DEFAULT_POOL_SIZE / 2;
-        g_sys_mem.config.pool_sizes[SYS_MEM_POOL_DMA] = 0;
-        g_sys_mem.config.enable_tracking = true;
-        g_sys_mem.config.enable_defrag = false;
-        g_sys_mem.config.max_allocations = MAX_ALLOCATIONS;
-    }
-
-    /* 验证配置参数 */
-    if (g_sys_mem.config.max_allocations == 0 || g_sys_mem.config.max_allocations > MAX_ALLOCATIONS) {
-        LOG_ERR("Invalid max_allocations: %u", (uint32_t) g_sys_mem.config.max_allocations);
+    if (max_alloc == 0U || max_alloc > (uint32_t) MAX_ALLOCATIONS) {
+        LOG_ERR("Invalid max_allocations: %u", max_alloc);
         return -EINVAL;
     }
+    return 0;
+}
 
-    /* 初始化所有内存池 */
+/**
+ * @brief 重新初始化前的静默化探测（in-use 检查）
+ *
+ * memset 会摧毁池锁/跟踪器锁与分配状态；若其他线程正持锁分配/释放，将导致锁
+ * 内存损坏与不可恢复的堆破坏。故逐池检查活跃分配数并短暂试锁确认无人持锁
+ * （BSS 零初始化的 k_mutex 在 Zephyr 中可直接加锁）。
+ *
+ * 成功返回时所有已初始化池锁与跟踪器锁均被本线程持有（不放行其他线程），
+ * 这些锁随后被 memset 摧毁并由 k_mutex_init 重建（替代真实 unlock）。
+ *
+ * @return 0 探测通过（持有多把锁）；-EBUSY 有活跃分配或并发操作进行中
+ */
+static int mem_reinit_try_quiesce(void) {
+    mem_pool_t* held[SYS_MEM_POOL_COUNT];
+    int         held_count = 0;
+    bool        tracker_held = false;
+    int         ret = 0;
+
+    for (int i = 0; i < SYS_MEM_POOL_COUNT; i++) {
+        mem_pool_t* pool = &g_sys_mem.pools[i];
+
+        if (!pool->initialized) {
+            continue;
+        }
+        if (pool->active_count != 0U) {
+            LOG_ERR("sys_mem_init rejected: pool %d has %u active allocation(s)", i, (unsigned int) pool->active_count);
+            ret = -EBUSY;
+            goto rollback;
+        }
+        if (k_mutex_lock(&pool->lock, K_MSEC(SYS_MEM_REINIT_PROBE_TIMEOUT_MS)) != 0) {
+            LOG_ERR("sys_mem_init rejected: concurrent memory operation in progress");
+            ret = -EBUSY;
+            goto rollback;
+        }
+        zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &pool->lock);
+        held[held_count++] = pool;
+    }
+
+    if (g_sys_mem.tracker.tracking_enabled) {
+        if (k_mutex_lock(&g_sys_mem.tracker.lock, K_MSEC(SYS_MEM_REINIT_PROBE_TIMEOUT_MS)) != 0) {
+            LOG_ERR("sys_mem_init rejected: tracker busy");
+            ret = -EBUSY;
+            goto rollback;
+        }
+        zepl_lock_enter(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_sys_mem.tracker.lock);
+        tracker_held = true;
+    }
+    return 0;
+
+rollback:
+    /* 失败路径对称回滚：真实解锁 + 登记出栈（逆序保持 LIFO） */
+    if (tracker_held) {
+        tracker_unlock();
+    }
+    while (held_count > 0) {
+        mem_pool_t* pool = held[--held_count];
+        pool_unlock(pool);
+    }
+    return ret;
+}
+
+/**
+ * @brief 清除静默化探测建立的锁登记（不做真实 unlock）
+ *
+ * 探测持有的锁即将被 memset 摧毁并由 k_mutex_init 重建（重建等效于释放），
+ * 此处仅按 enter 的逆序清除 zepl_lock 登记栈，保持 enter/exit 平衡。
+ */
+static void mem_reinit_clear_registry(void) {
+    if (g_sys_mem.tracker.tracking_enabled) {
+        zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &g_sys_mem.tracker.lock);
+    }
+    for (int i = SYS_MEM_POOL_COUNT - 1; i >= 0; i--) {
+        mem_pool_t* pool = &g_sys_mem.pools[i];
+        if (pool->initialized) {
+            zepl_lock_exit(ZEP_LOCK_LEVEL_RESOURCE, (uintptr_t) &pool->lock);
+        }
+    }
+}
+
+/**
+ * @brief 应用配置（传入或默认值）；调用前已通过 mem_config_validate
+ */
+static void mem_config_apply(const sys_mem_config_t* config) {
+    if (config != NULL) {
+        g_sys_mem.config = *config;
+        return;
+    }
+
+    /* 默认配置 */
+    g_sys_mem.config.pool_sizes[SYS_MEM_POOL_GENERAL] = DEFAULT_POOL_SIZE;
+    g_sys_mem.config.pool_sizes[SYS_MEM_POOL_EVENT] = DEFAULT_POOL_SIZE / 2;
+    g_sys_mem.config.pool_sizes[SYS_MEM_POOL_MODULE] = DEFAULT_POOL_SIZE / 2;
+    g_sys_mem.config.pool_sizes[SYS_MEM_POOL_DMA] = 0;
+    g_sys_mem.config.enable_tracking = true;
+    g_sys_mem.config.enable_defrag = false;
+    g_sys_mem.config.max_allocations = MAX_ALLOCATIONS;
+}
+
+/**
+ * @brief 初始化所有内存池（缓冲区、空闲链表、互斥锁）
+ */
+static void mem_pools_setup(void) {
     for (int i = 0; i < SYS_MEM_POOL_COUNT; i++) {
         mem_pool_t* pool = &g_sys_mem.pools[i];
         size_t      configured_size = g_sys_mem.config.pool_sizes[i];
@@ -656,13 +791,43 @@ int sys_mem_init(const sys_mem_config_t* config) {
 
         LOG_DBG("Pool %d initialized: %u bytes", i, (uint32_t) pool->total_size);
     }
+}
 
-    /* 初始化跟踪器 */
+/**
+ * @brief 初始化分配跟踪器
+ */
+static void mem_tracker_setup(void) {
     g_sys_mem.tracker.head = 0;
     g_sys_mem.tracker.count = 0;
     g_sys_mem.tracker.max_records = g_sys_mem.config.max_allocations;
     g_sys_mem.tracker.tracking_enabled = g_sys_mem.config.enable_tracking;
     k_mutex_init(&g_sys_mem.tracker.lock);
+}
+
+int sys_mem_init(const sys_mem_config_t* config) {
+    LOG_DBG("Initializing memory system...");
+
+    /* 配置校验前置：失败必须发生在任何全局状态写入之前（首次 init 为 BSS 零值，
+     * 重复 init 时保留原状态不动），避免半初始化 */
+    int ret = mem_config_validate(config);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = mem_reinit_try_quiesce();
+    if (ret != 0) {
+        return ret;
+    }
+
+    /* 探测持有的锁将被 memset 摧毁并重建（见 mem_reinit_try_quiesce 注释），先清登记 */
+    mem_reinit_clear_registry();
+
+    /* 清零除互斥锁外的全局控制块 */
+    memset(&g_sys_mem, 0, sizeof(g_sys_mem));
+
+    mem_config_apply(config);
+    mem_pools_setup();
+    mem_tracker_setup();
 
     LOG_DBG("Memory system initialized");
     return 0;
@@ -681,7 +846,7 @@ void* sys_mem_alloc(sys_mem_pool_type_t type, size_t size) {
         return NULL;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
     void* ptr = pool_alloc_locked(pool, size, false, NULL, 0);
     if (ptr != NULL) {
         /* 锁内登记跟踪记录（锁序 pool->lock → tracker.lock，与 pool_free_locked 一致）：
@@ -689,7 +854,7 @@ void* sys_mem_alloc(sys_mem_pool_type_t type, size_t size) {
          * 留下指向已释放内存的陈旧泄漏记录。 */
         tracker_add(ptr, size, NULL, 0);
     }
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
     return ptr;
 }
 
@@ -706,12 +871,12 @@ void* sys_mem_calloc(sys_mem_pool_type_t type, size_t size) {
         return NULL;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
     void* ptr = pool_alloc_locked(pool, size, true, NULL, 0);
     if (ptr != NULL) {
         tracker_add(ptr, size, NULL, 0);
     }
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
     return ptr;
 }
 
@@ -733,7 +898,7 @@ void sys_mem_free(sys_mem_pool_type_t type, void* ptr) {
     }
 
     pool_free_locked(pool, ptr, header);
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
 }
 
 void* sys_mem_realloc(sys_mem_pool_type_t type, void* ptr, size_t size) {
@@ -756,7 +921,7 @@ void* sys_mem_realloc(sys_mem_pool_type_t type, void* ptr, size_t size) {
         return NULL;
     }
     size_t old_size = get_allocation_size_locked(header);
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
 
     if (old_size == 0) {
         return NULL;
@@ -794,7 +959,7 @@ void sys_mem_get_stats(sys_mem_pool_type_t type, sys_mem_stats_t* stats) {
         return;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
 
     stats->total_size = pool->total_size;
     stats->used_size = pool->used_size;
@@ -819,7 +984,7 @@ void sys_mem_get_stats(sys_mem_pool_type_t type, sys_mem_stats_t* stats) {
         stats->fragmentation = 0;
     }
 
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
 }
 
 void sys_mem_reset_stats(sys_mem_pool_type_t type) {
@@ -828,13 +993,13 @@ void sys_mem_reset_stats(sys_mem_pool_type_t type) {
         return;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
     pool->max_used = pool->used_size;
     pool->alloc_count = 0;
     pool->free_count = 0;
     pool->fail_count = 0;
     /* active_count 不清零：它反映真实的活跃分配，与累计统计分离 */
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
 }
 
 uint32_t sys_mem_get_active_allocations(sys_mem_pool_type_t type) {
@@ -843,10 +1008,82 @@ uint32_t sys_mem_get_active_allocations(sys_mem_pool_type_t type) {
         return 0;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
     uint32_t active = pool->active_count;
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
     return active;
+}
+
+/**
+ * @brief 打印空闲块布局
+ *
+ * 调用时需持有池锁的操作在函数内部完成。
+ */
+static void dump_pool_free_blocks(mem_pool_t* pool) {
+    pool_lock(pool);
+    printk("Free blocks:\n");
+    free_block_t* fb = pool->free_list;
+    int           idx = 0;
+    while (fb != NULL) {
+        printk("  [%d] addr=%p size=%u\n", idx++, fb, (uint32_t) fb->size);
+        fb = fb->next;
+    }
+    pool_unlock(pool);
+}
+
+/**
+ * @brief 打印跟踪器中的活跃分配（含池归属验证）
+ *
+ * 锁序约定：全局统一为 pool->lock 先于 tracker.lock（见 pool_free_locked
+ * 在持有池锁时调用 tracker_remove）。因此此处禁止在持有 tracker.lock 的
+ * 同时再去获取 pool->lock，否则会与释放路径形成 AB-BA 死锁。
+ * 解决方式：逐槽在 tracker.lock 下做快照后立即释放，再用池锁验证打印。
+ */
+static void dump_active_allocations(sys_mem_pool_type_t type) {
+    if (!g_sys_mem.tracker.tracking_enabled) {
+        return;
+    }
+
+    bool header_printed = false;
+
+    tracker_lock();
+    const uint32_t max_r = g_sys_mem.tracker.max_records;
+    tracker_unlock();
+
+    for (uint32_t i = 0; i < max_r; i++) {
+        sys_mem_alloc_info_t info_copy;
+        bool                 active = false;
+
+        tracker_lock();
+        if (g_sys_mem.tracker.slot_active[i]) {
+            info_copy = g_sys_mem.tracker.records[i];
+            active = true;
+        }
+        tracker_unlock();
+
+        if (!active) {
+            continue;
+        }
+
+        mem_pool_t* owner = lock_pool_from_ptr(info_copy.ptr, NULL);
+        if (owner == NULL) {
+            continue;
+        }
+        alloc_header_t* header = get_alloc_header(info_copy.ptr);
+        if (header != NULL && header->magic == MEMORY_MAGIC && header->pool_type == (uint32_t) type) {
+            if (!header_printed) {
+                printk("Active Allocations:\n");
+                header_printed = true;
+            }
+            printk("  [%u] ptr=%p, size=%u, time=%u", i, info_copy.ptr, (uint32_t) info_copy.size,
+                   info_copy.timestamp);
+            if (info_copy.module[0] != '\0') {
+                printk(" (%s:%u)", info_copy.module, info_copy.line);
+            }
+            printk("\n");
+        }
+        pool_unlock(owner);
+    }
 }
 
 void sys_mem_dump_allocations(sys_mem_pool_type_t type) {
@@ -854,6 +1091,9 @@ void sys_mem_dump_allocations(sys_mem_pool_type_t type) {
     if (pool == NULL || !pool->initialized) {
         return;
     }
+
+    /* printk 直用依据：sys_memory.h 已声明 dump 输出到 printk/控制台而非日志系统——
+     * 内存故障诊断需在日志子系统不可用（早期启动/堆破坏）时仍能工作 */
 
     /* 获取统计快照 */
     sys_mem_stats_t stats;
@@ -864,66 +1104,8 @@ void sys_mem_dump_allocations(sys_mem_pool_type_t type) {
            (uint32_t) stats.free_size, (uint32_t) stats.max_used);
     printk("Allocations: %u, Frees: %u, Fails: %u\n", stats.alloc_count, stats.free_count, stats.fail_count);
 
-    /* 打印空闲块信息 */
-    k_mutex_lock(&pool->lock, K_FOREVER);
-    printk("Free blocks:\n");
-    free_block_t* fb = pool->free_list;
-    int           idx = 0;
-    while (fb != NULL) {
-        printk("  [%d] addr=%p size=%u\n", idx++, fb, (uint32_t) fb->size);
-        fb = fb->next;
-    }
-    k_mutex_unlock(&pool->lock);
-
-    /* 打印活跃分配（来自跟踪器）
-     *
-     * 锁序约定：全局统一为 pool->lock 先于 tracker.lock（见 pool_free_locked
-     * 在持有池锁时调用 tracker_remove）。因此此处禁止在持有 tracker.lock 的
-     * 同时再去获取 pool->lock，否则会与释放路径形成 AB-BA 死锁。
-     * 解决方式：逐槽在 tracker.lock 下做快照后立即释放，再用池锁验证打印。 */
-    if (g_sys_mem.tracker.tracking_enabled) {
-        uint32_t max_r;
-        bool     header_printed = false;
-
-        k_mutex_lock(&g_sys_mem.tracker.lock, K_FOREVER);
-        max_r = g_sys_mem.tracker.max_records;
-        k_mutex_unlock(&g_sys_mem.tracker.lock);
-
-        for (uint32_t i = 0; i < max_r; i++) {
-            sys_mem_alloc_info_t info_copy;
-            bool                 active = false;
-
-            k_mutex_lock(&g_sys_mem.tracker.lock, K_FOREVER);
-            if (g_sys_mem.tracker.slot_active[i]) {
-                info_copy = g_sys_mem.tracker.records[i];
-                active = true;
-            }
-            k_mutex_unlock(&g_sys_mem.tracker.lock);
-
-            if (!active) {
-                continue;
-            }
-
-            mem_pool_t* owner = lock_pool_from_ptr(info_copy.ptr, NULL);
-            if (owner == NULL) {
-                continue;
-            }
-            alloc_header_t* header = get_alloc_header(info_copy.ptr);
-            if (header != NULL && header->magic == MEMORY_MAGIC && header->pool_type == (uint32_t) type) {
-                if (!header_printed) {
-                    printk("Active Allocations:\n");
-                    header_printed = true;
-                }
-                printk("  [%u] ptr=%p, size=%u, time=%u", i, info_copy.ptr, (uint32_t) info_copy.size,
-                       info_copy.timestamp);
-                if (info_copy.module[0] != '\0') {
-                    printk(" (%s:%u)", info_copy.module, info_copy.line);
-                }
-                printk("\n");
-            }
-            k_mutex_unlock(&owner->lock);
-        }
-    }
+    dump_pool_free_blocks(pool);
+    dump_active_allocations(type);
 
     printk("=== End Dump ===\n\n");
 }
@@ -935,7 +1117,10 @@ uint32_t sys_mem_check_leaks(sys_mem_pool_type_t type) {
 
     uint32_t leaks = 0;
 
-    k_mutex_lock(&g_sys_mem.tracker.lock, K_FOREVER);
+    /* 仅持 tracker 锁读 header 字段：与并发分配/释放存在瞬时竞态（分配中 magic 尚未
+     * 写好、释放中标记刚更新），诊断值允许瞬时失真。不为此引入 tracker → pool 的
+     * 反向嵌套锁——那会违反既定的 pool → tracker 锁序（见 pool_lock 注释）。 */
+    tracker_lock();
 
     const uint32_t max_r = g_sys_mem.tracker.max_records;
 
@@ -961,7 +1146,7 @@ uint32_t sys_mem_check_leaks(sys_mem_pool_type_t type) {
         }
     }
 
-    k_mutex_unlock(&g_sys_mem.tracker.lock);
+    tracker_unlock();
     return leaks;
 }
 
@@ -975,7 +1160,7 @@ size_t sys_mem_defrag(sys_mem_pool_type_t type) {
         return 0;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
 
     size_t reclaimed = 0;
 
@@ -996,7 +1181,7 @@ size_t sys_mem_defrag(sys_mem_pool_type_t type) {
         reclaimed = 0; /* 碎片整理不释放内存,只优化布局 */
     }
 
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
     return reclaimed;
 }
 
@@ -1011,9 +1196,9 @@ size_t sys_mem_get_heap_size(void) {
         if (!pool->initialized) {
             continue;
         }
-        k_mutex_lock(&pool->lock, K_FOREVER);
+        pool_lock(pool);
         total += pool->total_size;
-        k_mutex_unlock(&pool->lock);
+        pool_unlock(pool);
     }
     return total;
 }
@@ -1025,23 +1210,26 @@ size_t sys_mem_get_free_size(void) {
         if (!pool->initialized) {
             continue;
         }
-        k_mutex_lock(&pool->lock, K_FOREVER);
+        pool_lock(pool);
         free_size += pool->total_size - pool->used_size;
-        k_mutex_unlock(&pool->lock);
+        pool_unlock(pool);
     }
     return free_size;
 }
 
 size_t sys_mem_get_min_free_size(void) {
+    /* 语义说明：返回各池"各自峰值使用时刻"剩余量（total_size - max_used）的最小值，
+     * 而非同一时刻的全局合计——max_used 是各池独立的峰值，不同池的峰值可出现在
+     * 不同时刻，多池同时紧张时本值偏保守。 */
     size_t min_free = SIZE_MAX;
     for (int i = 0; i < SYS_MEM_POOL_COUNT; i++) {
         mem_pool_t* pool = &g_sys_mem.pools[i];
         if (!pool->initialized) {
             continue;
         }
-        k_mutex_lock(&pool->lock, K_FOREVER);
+        pool_lock(pool);
         size_t free = pool->total_size - pool->max_used;
-        k_mutex_unlock(&pool->lock);
+        pool_unlock(pool);
         if (free < min_free) {
             min_free = free;
         }
@@ -1060,20 +1248,18 @@ void* sys_mem_alloc_with_info(sys_mem_pool_type_t type, size_t size, const char*
             return NULL;
     }
 
-    k_mutex_lock(&pool->lock, K_FOREVER);
+    pool_lock(pool);
     void* ptr = pool_alloc_locked(pool, size, false, module, line);
     if (ptr != NULL) {
         tracker_add(ptr, size, module, line);
     }
-    k_mutex_unlock(&pool->lock);
+    pool_unlock(pool);
     return ptr;
 }
 
 /* =============================================================================
  * SYS_INIT 自动初始化
  * ============================================================================= */
-
-#include <zeplod/app_config.h>
 
 static int sys_mem_auto_init(void) {
 #if APP_CONFIG_ENABLE_MEMORY_MGR
@@ -1085,10 +1271,13 @@ static int sys_mem_auto_init(void) {
                                        },
                                    .enable_tracking = true,
                                    .enable_defrag = false,
-                                   .max_allocations = 256};
-    sys_mem_init(&mem_config);
-#endif
+                                   .max_allocations = MAX_ALLOCATIONS};
+    /* 显式传播初始化失败：SYS_INIT 返回非 0 时 Zephyr 会在启动阶段报致命错误，
+     * 而不是带着未初始化的内存系统继续运行 */
+    return sys_mem_init(&mem_config);
+#else
     return 0;
+#endif
 }
 
 SYS_INIT(sys_mem_auto_init, POST_KERNEL, APP_INIT_PRIO_SYS_MEM);

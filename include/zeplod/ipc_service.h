@@ -20,7 +20,7 @@
  * 4. 使用 ipc_call_sync/async/future 调用服务
  * 5. 调用 ipc_service_stop() 停止服务
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -28,6 +28,7 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.1            zeh            stop/cancel 语义与 ipc_call_sync 超时文档
+ * 2026-09-18       1.2            zeh            补 re-init 前置条件与 future shm 访问器缺失登记
  *
  */
 
@@ -247,6 +248,11 @@ typedef struct ipc_service {
  *       - CONFIG_THREAD_IPC_SERVICE_STACK_SIZE
  *       - CONFIG_THREAD_IPC_SERVICE_REQUEST_QUEUE_SIZE
  *       - CONFIG_THREAD_IPC_SERVICE_RESPONSE_QUEUE_SIZE
+ * @warning 硬性前置条件：对已初始化实例重新 init（stop 后 re-init）前，必须确认所有
+ *          in-flight 同步调用（ipc_call_sync / ipc_future_wait 等）均已返回。init 会整块
+ *          清零实例（含 pending 表与信号量），若调用方仍阻塞在旧信号量上将永久睡眠或
+ *          访问已回收内存。实现层会尽力拒绝仍有 pending 请求的 re-init（返回 -EBUSY），
+ *          但该检查存在竞态窗口，不能替代本约定。
  */
 int ipc_service_init(ipc_service_t* service, const char* name, ipc_service_func_t service_func, int priority);
 
@@ -362,6 +368,9 @@ int ipc_call_async(ipc_service_t* service, const void* data, size_t data_size, i
  *
  * @note 调用线程立即返回，不阻塞
  * @note 使用 ipc_future_wait 或 ipc_future_is_ready 获取结果
+ * @note 已登记（API 不对称）：future 模式的共享内存输出句柄暂无访问器——future 携带的
+ *       shm_handle 只能随 ipc_future_release 整体释放，调用方无法单独取用句柄延长
+ *       生命周期。需要句柄级输出时请改用 ipc_call_sync_shm；后续版本考虑补充访问 API。
  * @warning 调用者必须保证输入数据（data 及其指向的内存）在 future 完成前保持有效，
  *          不得因 ipc_call_future 立即返回就释放栈缓冲区或堆内存。
  */

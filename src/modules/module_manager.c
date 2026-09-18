@@ -10,8 +10,13 @@
  * - module_manager_stats.c       统计与回调
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-04-01       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            快照栈上限 3072 提取为具名宏 MM_MAX_SNAPSHOT_BYTES
  */
 
 #include <zephyr/logging/log.h>
@@ -28,7 +33,7 @@ atomic_t        g_module_mgr_shutting_down = ATOMIC_INIT(0);
 atomic_t        g_module_mgr_initialized = ATOMIC_INIT(0);
 static uint32_t g_module_event_cookie_next = 1U;
 
-BUILD_ASSERT(sizeof(module_info_t) * CONFIG_MAX_MODULES <= 3072,
+BUILD_ASSERT(sizeof(module_info_t) * CONFIG_MAX_MODULES <= MM_MAX_SNAPSHOT_BYTES,
              "module_manager snapshot too large for stack; reduce CONFIG_MAX_MODULES or "
              "CONFIG_MODULE_MAX_EVENT_SUBSCRIPTIONS");
 

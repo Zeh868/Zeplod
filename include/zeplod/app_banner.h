@@ -4,6 +4,16 @@
  *
  * @note 每行建议不超过 80 列，避免串口终端换行错位。
  * @note 使用 \r\n 结尾以确保各种终端正确换行。
+ * @author zeh (china_qzh@163.com)
+ * @version 1.1
+ * @date 2026-04-01
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-04-01       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补全文件头模板（作者/版本/日期/修改日志）
+ *
  */
 
 #ifndef APP_BANNER_H

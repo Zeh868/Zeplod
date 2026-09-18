@@ -15,16 +15,6 @@ config OTA_MODULE_AUTOINIT
 	  Register ota_module via module_manager at APP_INIT_PRIO_MODULE_OTA.
 	  Disable for unit tests that call ota_module_init() manually.
 
-config OTA_MODULE_STACK_SIZE
-	int "OTA worker stack size (reserved)"
-	default 2048
-	range 1024 8192
-
-config OTA_MODULE_PRIORITY
-	int "OTA worker thread priority (reserved)"
-	default 7
-	range 1 15
-
 config OTA_TRANSPORT_NULL
 	bool "Null (RAM) transport for ztest / native_sim only"
 	default n

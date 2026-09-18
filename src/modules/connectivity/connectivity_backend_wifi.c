@@ -9,7 +9,7 @@
  * 依旧成立（真正的连接过程仍是异步完成，只是由本后端把等待收敛在 connect() 内）。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.4
  * @date 2026-07-09
  *
  * @par 修改日志:
@@ -26,14 +26,10 @@
  * 2026-07-10       1.3            zeh            链路状态改读 net_if 真实 oper 状态（对齐 eth/cellular），
  *                                                 不再依赖易脱节的事件缓存；connect 检测到已关联则直接
  *                                                 返回成功，避免对活链路重复 CONNECT 造成抖动与误判 ERROR
+ * 2026-09-18       1.4            zeh            include 顺序对齐仓库规范；connect/is_available
+ *                                                 的栈上 SSID/PSK 用后 memset 清零
  *
  */
-
-#include <zeplod/connectivity_backend.h>
-
-#include <errno.h>
-#include <stddef.h>
-#include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -42,6 +38,11 @@
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/sys/util.h>
 
+#include <errno.h>
+#include <stddef.h>
+#include <string.h>
+
+#include <zeplod/connectivity_backend.h>
 #include <zeplod/provisioning_module.h>
 
 LOG_MODULE_REGISTER(connectivity_backend_wifi, CONFIG_SYS_LOG_LEVEL);
@@ -219,10 +220,17 @@ static int wifi_connect(connectivity_backend_ops_t* ops) {
     ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, ctx->iface, &params, sizeof(params));
     if (ret != 0) {
         LOG_ERR("NET_REQUEST_WIFI_CONNECT failed: %d", ret);
+        memset(ssid, 0, sizeof(ssid));
+        memset(psk, 0, sizeof(psk));
         return ret;
     }
 
     ret = k_sem_take(&ctx->connect_sem, K_MSEC(CONFIG_CONNECTIVITY_BACKEND_WIFI_CONNECT_TIMEOUT_MS));
+
+    /* 栈上凭据（含 PSK 明文）用后立即清零，缩短残留在栈内存中的时间窗口 */
+    memset(ssid, 0, sizeof(ssid));
+    memset(psk, 0, sizeof(psk));
+
     if (ret != 0) {
         LOG_WRN("Wi-Fi connect timed out after %d ms", CONFIG_CONNECTIVITY_BACKEND_WIFI_CONNECT_TIMEOUT_MS);
         return -ETIMEDOUT;
@@ -280,7 +288,11 @@ static bool wifi_is_available(const connectivity_backend_ops_t* ops) {
     if (!wifi_ensure_iface(ctx)) {
         return false;
     }
-    return provisioning_module_get_credentials(ssid, sizeof(ssid), psk, sizeof(psk)) == 0;
+    int ret = provisioning_module_get_credentials(ssid, sizeof(ssid), psk, sizeof(psk));
+    /* 同 wifi_connect：探查用的栈上凭据用后清零 */
+    memset(ssid, 0, sizeof(ssid));
+    memset(psk, 0, sizeof(psk));
+    return ret == 0;
 }
 
 /* =============================================================================

@@ -4,13 +4,19 @@
  *
  * 演示如何使用 Zephyr GPIO API 控制 LED 和读取按键。
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.2
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：stop 注销 GPIO 回调并关中断、
+ * 2026-09-18       1.2            zeh            复审整改：SET_BLINK 与 set_blink_interval 契约对齐（拒绝 0）
+ *                                                 改有界 k_thread_join；status 改 atomic；
+ *                                                 补事件/GPIO API 返回值检查与 switch
+ *                                                 default；button_isr 演示 ISR 安全发布；
+ *                                                 删除不生效的 led_pin/button_pin 配置字段
  *
  */
 
@@ -43,13 +49,20 @@ LOG_MODULE_REGISTER(example_module_gpio, CONFIG_SYS_LOG_LEVEL);
 #define GPIO_THREAD_PRIORITY   5
 #define GPIO_THREAD_STACK_SIZE 2048
 
+/** stop 时等待 GPIO 线程退出的有界超时；线程循环 k_msleep(50)，正常远小于该值 */
+#define GPIO_THREAD_JOIN_TIMEOUT_MS 200
+
 /* =============================================================================
  * 内部数据结构
  * ============================================================================= */
 
 typedef struct {
     example_module_gpio_config_t config;
-    module_status_t              status;
+    /*
+     * status 被 GPIO 线程/ISR 与模块管理器线程共同访问：
+     * 枚举整数的单写者多读者切换，用 atomic 保证可见性即可，不加互斥锁。
+     */
+    atomic_t                     status;
     struct k_thread              thread;
     K_KERNEL_STACK_MEMBER(stack, GPIO_THREAD_STACK_SIZE);
     const struct gpio_dt_spec* led;
@@ -72,6 +85,7 @@ static example_module_gpio_cb_t g_module_gpio;
 
 static void gpio_thread_func(void* p1, void* p2, void* p3);
 static void button_isr(const struct device* dev, struct gpio_callback* cb, uint32_t pins);
+static int  gpio_button_hw_teardown(void);
 
 /* =============================================================================
  * 模块接口实现
@@ -87,8 +101,6 @@ int example_module_gpio_init(void* config) {
         g_module_gpio.config = *(example_module_gpio_config_t*) config;
     } else {
         /* 默认配置 */
-        g_module_gpio.config.led_pin = "LED0";
-        g_module_gpio.config.button_pin = "SW0";
         g_module_gpio.config.blink_interval_ms = 500;
         g_module_gpio.config.enable_button = true;
     }
@@ -97,6 +109,7 @@ int example_module_gpio_init(void* config) {
     g_module_gpio.config.enable_button = false;
 #endif
 
+    /* 引脚由 devicetree alias (led0/sw0) 决定，配置中的引脚名字符串不生效 */
     g_module_gpio.led = &s_led0;
 #if DT_NODE_EXISTS(DT_ALIAS(sw0))
     g_module_gpio.button = &s_sw0;
@@ -104,26 +117,40 @@ int example_module_gpio_init(void* config) {
     g_module_gpio.button = NULL;
 #endif
 
-    g_module_gpio.status = MODULE_STATUS_INITIALIZED;
+    atomic_set(&g_module_gpio.status, MODULE_STATUS_INITIALIZED);
 
     /* 注册事件类型 */
-    event_register_type(EVENT_TYPE_GPIO_BUTTON_PRESSED, "gpio_button_pressed");
-    event_register_type(EVENT_TYPE_GPIO_BUTTON_RELEASED, "gpio_button_released");
-    event_register_type(EVENT_TYPE_GPIO_LED_STATE, "gpio_led_state");
+    if (event_register_type(EVENT_TYPE_GPIO_BUTTON_PRESSED, "gpio_button_pressed") != EVENT_OK) {
+        LOG_ERR("event_register_type gpio_button_pressed failed");
+        return -EIO;
+    }
+    if (event_register_type(EVENT_TYPE_GPIO_BUTTON_RELEASED, "gpio_button_released") != EVENT_OK) {
+        LOG_ERR("event_register_type gpio_button_released failed");
+        return -EIO;
+    }
+    if (event_register_type(EVENT_TYPE_GPIO_LED_STATE, "gpio_led_state") != EVENT_OK) {
+        LOG_ERR("event_register_type gpio_led_state failed");
+        return -EIO;
+    }
 
     LOG_INF("GPIO 模块初始化完成");
     return 0;
 }
 
 int example_module_gpio_start(void) {
-    if (g_module_gpio.status != MODULE_STATUS_INITIALIZED && g_module_gpio.status != MODULE_STATUS_STOPPED) {
+    if (atomic_get(&g_module_gpio.status) != MODULE_STATUS_INITIALIZED &&
+        atomic_get(&g_module_gpio.status) != MODULE_STATUS_STOPPED) {
         return -1;
     }
 
     if (!gpio_is_ready_dt(g_module_gpio.led)) {
         LOG_WRN("LED GPIO 未就绪");
     } else {
-        gpio_pin_configure_dt(g_module_gpio.led, GPIO_OUTPUT_ACTIVE);
+        if (gpio_pin_configure_dt(g_module_gpio.led, GPIO_OUTPUT_ACTIVE) != 0) {
+            LOG_ERR("LED GPIO configure failed");
+            atomic_set(&g_module_gpio.status, MODULE_STATUS_ERROR);
+            return -EIO;
+        }
         g_module_gpio.led_state = true;
     }
 
@@ -131,14 +158,29 @@ int example_module_gpio_start(void) {
         if (!gpio_is_ready_dt(g_module_gpio.button)) {
             LOG_WRN("按键 GPIO 未就绪");
         } else {
-            gpio_pin_configure_dt(g_module_gpio.button, GPIO_INPUT | GPIO_PULL_UP);
-            gpio_pin_interrupt_configure_dt(g_module_gpio.button, GPIO_INT_EDGE_BOTH);
+            int ret = gpio_pin_configure_dt(g_module_gpio.button, GPIO_INPUT | GPIO_PULL_UP);
+            if (ret != 0) {
+                LOG_ERR("按键 GPIO configure failed: %d", ret);
+                atomic_set(&g_module_gpio.status, MODULE_STATUS_ERROR);
+                return -EIO;
+            }
+            ret = gpio_pin_interrupt_configure_dt(g_module_gpio.button, GPIO_INT_EDGE_BOTH);
+            if (ret != 0) {
+                LOG_ERR("按键中断 configure failed: %d", ret);
+                atomic_set(&g_module_gpio.status, MODULE_STATUS_ERROR);
+                return -EIO;
+            }
             gpio_init_callback(&g_module_gpio.button_cb, button_isr, BIT(g_module_gpio.button->pin));
-            gpio_add_callback(g_module_gpio.button->port, &g_module_gpio.button_cb);
+            ret = gpio_add_callback(g_module_gpio.button->port, &g_module_gpio.button_cb);
+            if (ret != 0) {
+                LOG_ERR("gpio_add_callback failed: %d", ret);
+                atomic_set(&g_module_gpio.status, MODULE_STATUS_ERROR);
+                return -EIO;
+            }
         }
     }
 
-    g_module_gpio.status = MODULE_STATUS_RUNNING;
+    atomic_set(&g_module_gpio.status, MODULE_STATUS_RUNNING);
 
     /* 创建线程 */
     k_thread_create(&g_module_gpio.thread, g_module_gpio.stack, K_THREAD_STACK_SIZEOF(g_module_gpio.stack),
@@ -152,17 +194,21 @@ int example_module_gpio_start(void) {
 }
 
 int example_module_gpio_stop(void) {
-    if (g_module_gpio.status != MODULE_STATUS_RUNNING) {
+    if (atomic_get(&g_module_gpio.status) != MODULE_STATUS_RUNNING) {
         return 0;
     }
 
     /* SIL-2: 先设置状态让线程自行退出，避免 k_thread_abort 强制终止 */
-    g_module_gpio.status = MODULE_STATUS_STOPPED;
+    atomic_set(&g_module_gpio.status, MODULE_STATUS_STOPPED);
 
-    /* 等待线程检测到状态变化并自然退出
-     * 线程循环中有 k_msleep(50)，等待 150ms 足够
-     */
-    k_msleep(150);
+    /* 有界汇合 GPIO 线程：线程循环 k_msleep(50)，正常应立即退出；超时说明线程异常滞留 */
+    int join_ret = k_thread_join(&g_module_gpio.thread, K_MSEC(GPIO_THREAD_JOIN_TIMEOUT_MS));
+    if (join_ret != 0) {
+        LOG_ERR("gpio thread join timeout/failed: %d", join_ret);
+    }
+
+    /* 注销按键中断与回调，保证 stop→start 重启周期不残留旧回调 */
+    (void) gpio_button_hw_teardown();
 
     LOG_INF("GPIO 模块已停止");
     return 0;
@@ -170,11 +216,13 @@ int example_module_gpio_stop(void) {
 
 int example_module_gpio_shutdown(void) {
     example_module_gpio_stop();
-    g_module_gpio.status = MODULE_STATUS_UNINITIALIZED;
+    atomic_set(&g_module_gpio.status, MODULE_STATUS_UNINITIALIZED);
     return 0;
 }
 
 void example_module_gpio_on_event(const event_t* event, void* user_data) {
+    ARG_UNUSED(user_data);
+
     if (event == NULL)
         return;
 
@@ -190,11 +238,15 @@ void example_module_gpio_on_event(const event_t* event, void* user_data) {
             example_module_gpio_set_led(led_state);
         }
         break;
+
+    default:
+        LOG_DBG("Unhandled event type: %d", event->type);
+        break;
     }
 }
 
 module_status_t example_module_gpio_get_status(void) {
-    return g_module_gpio.status;
+    return (module_status_t) atomic_get(&g_module_gpio.status);
 }
 
 int example_module_gpio_control(int cmd, void* arg) {
@@ -217,9 +269,8 @@ int example_module_gpio_control(int cmd, void* arg) {
     case GPIO_CMD_SET_BLINK:
         if (arg == NULL)
             return -1;
-        g_module_gpio.config.blink_interval_ms = *(uint32_t*) arg;
-        return 0;
-
+        /* 与 set_blink_interval 契约一致：0 会使 LED 退化成每循环翻转，拒绝 */
+        return example_module_gpio_set_blink_interval(*(uint32_t*) arg);
     default:
         return -1;
     }
@@ -256,6 +307,7 @@ bool example_module_gpio_get_button(void) {
 int example_module_gpio_set_blink_interval(uint32_t interval_ms) {
     if (interval_ms == 0)
         return -1;
+    /* 32 位对齐标量的单写者（调用方）多读者（GPIO 线程）场景，见 control 处说明 */
     g_module_gpio.config.blink_interval_ms = interval_ms;
     return 0;
 }
@@ -273,7 +325,7 @@ static void gpio_thread_func(void* p1, void* p2, void* p3) {
 
     uint32_t last_toggle = k_uptime_get_32();
 
-    while (g_module_gpio.status == MODULE_STATUS_RUNNING) {
+    while (atomic_get(&g_module_gpio.status) == MODULE_STATUS_RUNNING) {
         uint32_t now = k_uptime_get_32();
 
         /* LED 闪烁 */
@@ -288,12 +340,16 @@ static void gpio_thread_func(void* p1, void* p2, void* p3) {
             bool pressed = example_module_gpio_get_button();
             if (pressed && !g_module_gpio.button_pressed) {
                 /* 按键按下事件 */
-                event_publish_copy(EVENT_TYPE_GPIO_BUTTON_PRESSED, EVENT_PRIORITY_NORMAL, NULL, 0);
+                if (event_publish_copy(EVENT_TYPE_GPIO_BUTTON_PRESSED, EVENT_PRIORITY_NORMAL, NULL, 0) != EVENT_OK) {
+                    LOG_ERR("publish gpio_button_pressed failed");
+                }
                 g_module_gpio.event_count++;
                 LOG_INF("按键按下");
             } else if (!pressed && g_module_gpio.button_pressed) {
                 /* 按键释放事件 */
-                event_publish_copy(EVENT_TYPE_GPIO_BUTTON_RELEASED, EVENT_PRIORITY_NORMAL, NULL, 0);
+                if (event_publish_copy(EVENT_TYPE_GPIO_BUTTON_RELEASED, EVENT_PRIORITY_NORMAL, NULL, 0) != EVENT_OK) {
+                    LOG_ERR("publish gpio_button_released failed");
+                }
                 LOG_INF("按键释放");
             }
             g_module_gpio.button_pressed = pressed;
@@ -303,12 +359,49 @@ static void gpio_thread_func(void* p1, void* p2, void* p3) {
     }
 }
 
+/** ISR 边沿计数：仅 button_isr 单一上下文递增，用于演示 ISR 安全发布 */
+static uint8_t g_button_edge_count;
+
 static void button_isr(const struct device* dev, struct gpio_callback* cb, uint32_t pins) {
-    /* 占位空实现：当前未做任何处理，按键检测完全由 gpio_thread_func 以 50ms
-     * 周期轮询 example_module_gpio_get_button() 完成（见上方线程循环）。 */
     ARG_UNUSED(dev);
     ARG_UNUSED(cb);
     ARG_UNUSED(pins);
+
+    /*
+     * 演示 ISR 安全的事件发布：event_publish_from_isr 不加锁、无动态分配，
+     * 可在中断上下文调用。事件类型复用本模块已注册的 GPIO_BUTTON_PRESSED，
+     * 载荷为 1 字节边沿计数；发布失败（如队列满）在 ISR 内只能静默丢弃，属预期。
+     * 按下/释放的语义判定与防抖仍由 gpio_thread_func 轮询完成，此处仅提供
+     * 低延迟的边沿通知。
+     */
+    g_button_edge_count++;
+
+    event_t edge_event = {
+        .type = EVENT_TYPE_GPIO_BUTTON_PRESSED,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .flags = EVENT_FLAG_DATA_INLINE,
+        .timestamp = k_uptime_get_32(),
+        .data_len = sizeof(g_button_edge_count),
+    };
+    edge_event.data.inline_data[0] = g_button_edge_count;
+
+    (void) event_publish_from_isr(&edge_event);
+}
+
+static int gpio_button_hw_teardown(void) {
+    if (!g_module_gpio.config.enable_button || g_module_gpio.button == NULL) {
+        return 0;
+    }
+
+    int ret = gpio_pin_interrupt_configure_dt(g_module_gpio.button, GPIO_INT_DISABLE);
+    if (ret != 0) {
+        LOG_ERR("按键中断 disable failed: %d", ret);
+    }
+    ret = gpio_remove_callback(g_module_gpio.button->port, &g_module_gpio.button_cb);
+    if (ret != 0) {
+        LOG_ERR("gpio_remove_callback failed: %d", ret);
+    }
+    return ret;
 }
 
 /* =============================================================================
@@ -324,8 +417,6 @@ const module_interface_t* example_module_gpio_get_interface(void) {
 static int example_module_gpio_auto_register(void) {
     uint32_t                     module_id;
     example_module_gpio_config_t gpio_cfg = {
-        .led_pin = "LED0",
-        .button_pin = "SW0",
         .blink_interval_ms = 500,
         .enable_button = true,
     };

@@ -1,6 +1,14 @@
 /**
  * @file test_event_system_compat.c
  * @brief event_system_compat 应用适配层单元测试
+ * @author zeh (china_qzh@163.com)
+ * @version 1.1
+ * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补全文件头模板（author/version/date/修改日志）
  */
 
 #include <zephyr/sys/atomic.h>

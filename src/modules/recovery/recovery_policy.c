@@ -2,13 +2,17 @@
  * @file recovery_policy.c
  * @brief 恢复策略模块实现
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 2 初始版本
+ * 2026-09-18       1.1            zeh            修复 event->data 匿名联合体误用
+ * 2026-09-18       1.2            zeh            复审整改：OTA 钩子回调补事件类型校验，对齐 connectivity 防御模式
+ *                                                 （按 DATA_INLINE 标志取内联/指针并本地拷贝）；
+ *                                                 restart_count 改原子 CAS 读-改-写
  *
  */
 
@@ -17,6 +21,7 @@
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
 
 #include <errno.h>
@@ -45,8 +50,11 @@ LOG_MODULE_REGISTER(recovery_policy, CONFIG_SYS_LOG_LEVEL);
 
 typedef struct {
     module_status_t status;
-    uint32_t        restart_count[CONFIG_MAX_MODULES];
-    bool            callback_registered;
+    /* 重启计数会被模块错误回调与用户 API 并发读-改-写，用原子数组免加锁；
+       注意：计数无老化/衰减机制（只能经 RECOVERY_POLICY_CMD_RESET_COUNTS 或重启清零），
+       长期运行后可能过早升级为 RESTART_ALL/REBOOT——老化策略登记为技术债延期处理 */
+    atomic_t restart_count[CONFIG_MAX_MODULES];
+    bool     callback_registered;
 #if IS_ENABLED(CONFIG_RECOVERY_POLICY_OTA_HOOK) && IS_ENABLED(CONFIG_OTA_MODULE)
     uint32_t ota_event_subscriber_id;
     bool     ota_event_subscribed;
@@ -119,25 +127,34 @@ static int recovery_restart_all(void) {
 
 #if IS_ENABLED(CONFIG_RECOVERY_POLICY_OTA_HOOK) && IS_ENABLED(CONFIG_OTA_MODULE)
 static void recovery_ota_event_handler(const event_t* event, void* user_data) {
-    const ota_progress_t* prog;
-    uint32_t              ota_id;
+    ota_progress_t prog_copy;
+    uint32_t       ota_id;
 
     ARG_UNUSED(user_data);
 
     if (g_recovery.status != MODULE_STATUS_RUNNING || event == NULL) {
         return;
     }
-    if (event->data == NULL || event->data_len < sizeof(ota_progress_t)) {
+    if (event->type != EVENT_OTA_STATE_CHANGED || event->data_len < sizeof(ota_progress_t)) {
         return;
     }
 
-    prog = (const ota_progress_t*) event->data;
-    if (prog->state != OTA_STATE_ERROR) {
+    /* event->data 为匿名联合体（inline_data/ptr），不能与 NULL 比较或直接转型：
+       依 EVENT_FLAG_DATA_INLINE 选择来源后拷贝到本地使用（对齐 connectivity 模块手法） */
+    const ota_progress_t* prog = (event->flags & EVENT_FLAG_DATA_INLINE)
+                                     ? (const ota_progress_t*) event->data.inline_data
+                                     : (const ota_progress_t*) event->data.ptr;
+    if (prog == NULL) {
+        return;
+    }
+    prog_copy = *prog; /* event 仅在回调期间有效 */
+
+    if (prog_copy.state != OTA_STATE_ERROR) {
         return;
     }
 
 #if IS_ENABLED(CONFIG_SYS_FAULT_DUMP_ENABLE)
-    (void) sys_fault_dump_record(FAULT_DUMP_KIND_OTA_ERROR, prog, sizeof(*prog));
+    (void) sys_fault_dump_record(FAULT_DUMP_KIND_OTA_ERROR, &prog_copy, sizeof(prog_copy));
 #endif
 
     ota_id = module_manager_get_id_by_name("ota_module");
@@ -202,6 +219,8 @@ static void recovery_mgr_callback(uint32_t module_id, module_mgr_event_t event, 
 int recovery_policy_on_module_error(uint32_t module_id) {
     uint32_t          slot;
     recovery_action_t action;
+    atomic_t*         cell;
+    atomic_val_t      prev;
     int               ret;
 
     if (g_recovery.status != MODULE_STATUS_RUNNING) {
@@ -213,17 +232,24 @@ int recovery_policy_on_module_error(uint32_t module_id) {
         return -EINVAL;
     }
 
-    if (g_recovery.restart_count[slot] < (uint32_t) CONFIG_RECOVERY_POLICY_MAX_RESTARTS) {
-        g_recovery.restart_count[slot]++;
-        action = RECOVERY_ACTION_RESTART_MODULE;
-    } else {
-        action = recovery_default_action();
-        if (action == RECOVERY_ACTION_RESTART_MODULE) {
-            action = RECOVERY_ACTION_RESTART_ALL;
+    /* 读-改-写用 CAS 循环保证原子：并发错误上报同一模块时计数不丢失、不越过上限语义 */
+    cell = &g_recovery.restart_count[slot];
+    action = RECOVERY_ACTION_RESTART_MODULE;
+    for (;;) {
+        prev = atomic_get(cell);
+        if ((uint32_t) prev >= (uint32_t) CONFIG_RECOVERY_POLICY_MAX_RESTARTS) {
+            action = recovery_default_action();
+            if (action == RECOVERY_ACTION_RESTART_MODULE) {
+                action = RECOVERY_ACTION_RESTART_ALL;
+            }
+            break; /* 已达上限：不再递增，直接走升级动作 */
+        }
+        if (atomic_cas(cell, prev, prev + 1)) {
+            break;
         }
     }
 
-    LOG_INF("recovery module %u (attempt %u/%u) action=%d", module_id, g_recovery.restart_count[slot],
+    LOG_INF("recovery module %u (attempt %u/%u) action=%d", module_id, (uint32_t) atomic_get(cell),
             (uint32_t) CONFIG_RECOVERY_POLICY_MAX_RESTARTS, (int) action);
 
     ret = recovery_apply_action(module_id, action);
@@ -236,7 +262,7 @@ uint32_t recovery_policy_get_restart_count(uint32_t module_id) {
     if (slot == UINT32_MAX) {
         return 0U;
     }
-    return g_recovery.restart_count[slot];
+    return (uint32_t) atomic_get(&g_recovery.restart_count[slot]);
 }
 
 void recovery_policy_reset_restart_counts(void) {

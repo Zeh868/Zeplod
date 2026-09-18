@@ -2,7 +2,7 @@
  * @file test_ota_module.c
  * @brief OTA 模块与传输层单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -10,6 +10,9 @@
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            初始版本
  * 2026-06-13       1.1            zeh            补充幂等/溢出/恢复路径用例
+ * 2026-09-18       1.2            zeh            传输层 vtable 以非 const 局部指针承接
+ *                                                 （登记 API 设计矛盾）；补套件
+ *                                                 teardown 停分发器与事件系统
  *
  */
 
@@ -47,6 +50,16 @@ static void teardown_ota_module(void) {
  * 运行时会拒绝 re-init（返回 EVENT_ERR_INVALID_ARG），故不能每个用例重复初始化。
  * ============================================================================= */
 
+static void ota_suite_teardown(void* fixture) {
+    (void) fixture;
+
+    /* 套件收尾对称：setup 启动了分发器与事件系统，这里统一停掉，
+     * 避免分发线程泄漏影响同构建内的后续套件 */
+    (void) event_dispatcher_stop();
+
+    (void) event_system_stop();
+}
+
 static void* ota_suite_setup(void) {
     int ret;
 
@@ -62,34 +75,39 @@ static void* ota_suite_setup(void) {
     return NULL;
 }
 
-ZTEST_SUITE(ota_module, NULL, ota_suite_setup, NULL, NULL, NULL);
+ZTEST_SUITE(ota_module, NULL, ota_suite_setup, NULL, NULL, ota_suite_teardown);
 
 /* =============================================================================
  * 传输层
  * ============================================================================= */
 
+/*
+ * API 设计矛盾登记（根因在框架侧，不改 src）：ota_transport_null_get() 返回
+ * const ota_transport_ops_t*，而 vtable 各回调形参为非 const ota_transport_ops_t*。
+ * 测试以局部非 const 指针一次性承接并注明，避免在每个调用点重复去 const 强转。
+ */
 ZTEST(ota_module, test_null_transport_write_read) {
-    const ota_transport_ops_t* ops = ota_transport_null_get();
+    ota_transport_ops_t* ops = (ota_transport_ops_t*) ota_transport_null_get();
 
     zassert_not_null(ops, NULL);
     zassert_not_null(ops->open, NULL);
     zassert_not_null(ops->write_chunk, NULL);
     zassert_not_null(ops->verify, NULL);
 
-    zassert_equal(ops->open((ota_transport_ops_t*) ops), 0);
+    zassert_equal(ops->open(ops), 0);
 
     const uint8_t chunk[] = {0x01, 0x02, 0x03, 0x04};
-    zassert_equal(ops->write_chunk((ota_transport_ops_t*) ops, 0, chunk, sizeof(chunk)), 0);
-    zassert_equal(ops->verify((ota_transport_ops_t*) ops), 0);
-    zassert_equal(ops->close((ota_transport_ops_t*) ops), 0);
+    zassert_equal(ops->write_chunk(ops, 0, chunk, sizeof(chunk)), 0);
+    zassert_equal(ops->verify(ops), 0);
+    zassert_equal(ops->close(ops), 0);
 }
 
 ZTEST(ota_module, test_null_transport_write_overflow) {
-    const ota_transport_ops_t* ops = ota_transport_null_get();
+    ota_transport_ops_t* ops = (ota_transport_ops_t*) ota_transport_null_get();
 
-    zassert_equal(ops->open((ota_transport_ops_t*) ops), 0);
-    zassert_equal(ops->write_chunk((ota_transport_ops_t*) ops, SIZE_MAX, (const uint8_t*) "x", 1), -ENOMEM);
-    (void) ops->close((ota_transport_ops_t*) ops);
+    zassert_equal(ops->open(ops), 0);
+    zassert_equal(ops->write_chunk(ops, SIZE_MAX, (const uint8_t*) "x", 1), -ENOMEM);
+    (void) ops->close(ops);
 }
 
 /* =============================================================================

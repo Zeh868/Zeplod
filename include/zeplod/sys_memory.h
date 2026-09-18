@@ -5,13 +5,15 @@
  * 提供内存池管理、分配跟踪和统计功能。
  * 支持多个独立内存池，每个池可配置不同大小和用途。
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            补充 init 并发语义、realloc 独占要求、
+ *                                                get_min_free_size 语义澄清
  *
  */
 
@@ -124,9 +126,12 @@ typedef struct {
  * @return 返回值
  * @retval 0 成功
  * @retval -EINVAL 配置无效
- * @retval -ENOMEM 池初始化失败
+ * @retval -EBUSY 内存系统仍在使用中（存在活跃分配或并发内存操作进行中）
  *
  * @note 此函数会初始化互斥锁，确保线程安全
+ * @note 并发语义：重复初始化时逐池检查活跃分配数（active_count > 0 拒绝），并
+ *       以短超时试锁探测并发操作；检测到任一池/跟踪器仍有使用者时返回 -EBUSY，
+ *       不会破坏正在使用的内存池与互斥锁。无活跃分配时允许安全重初始化
  */
 int sys_mem_init(const sys_mem_config_t* config);
 
@@ -191,6 +196,9 @@ void sys_mem_free(sys_mem_pool_type_t type, void* ptr);
  * @note 如 ptr 为 NULL，行为同 sys_mem_alloc()
  * @note 如 size 为 0，行为同 sys_mem_free()
  * @note 新指针可能与原指针不同（数据会复制）
+ * @warning ptr 在调用期间必须由调用方独占（无并发 free/realloc 同一指针）：
+ *          实现为「读旧尺寸 → 解锁 → 分配新块 → 复制 → 释放旧块」的多步序列，
+ *          期间并发操作同一 ptr 会破坏其内容或产生未定义行为
  */
 void* sys_mem_realloc(sys_mem_pool_type_t type, void* ptr, size_t size);
 
@@ -334,12 +342,13 @@ size_t sys_mem_get_heap_size(void);
 size_t sys_mem_get_free_size(void);
 
 /**
- * @brief 获取历史最小可用堆大小
+ * @brief 获取各池最小剩余空间的较小值（峰值使用量指标）
  *
- * 返回观测到的最低可用内存水平（峰值使用量指标）。
- * 用于评估系统内存压力。
+ * 对每个池独立计算 total_size - max_used（该池各自峰值使用时刻的剩余量），
+ * 返回其中的最小值。注意这不是同一时刻的全局合计——各池的峰值可出现在
+ * 不同时刻，因此该值作为内存压力指标偏保守。
  *
- * @return 历史最小可用堆大小（字节）
+ * @return 各池"峰值时刻剩余量"的最小值（字节）；无已初始化池时返回 0
  */
 size_t sys_mem_get_min_free_size(void);
 

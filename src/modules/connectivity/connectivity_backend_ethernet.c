@@ -9,13 +9,16 @@
  * is_link_up() 的既有同步语义依旧成立。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-07-09
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-07-09       1.0            zeh            优先级注册表 + failover：新增以太网后端
+ * 2026-09-18       1.1            zeh            ip_sem 改在 net_if_up/DHCP 启动前 reset，
+ *                                                 消除"地址已就绪却被清掉信号"竞态；
+ *                                                 超时分支补 has_ipv4 兜底
  *
  */
 
@@ -140,6 +143,10 @@ static int eth_connect(connectivity_backend_ops_t* ops) {
         return 0; /* 已持有地址（如上次 connect 未断开），幂等直接成功 */
     }
 
+    /* reset 必须先于 net_if_up/DHCP start：若在启动后 reset，事件回调可能在
+       "启动完成 → reset"间隙已 give 信号，被清掉后只能白等满超时 */
+    k_sem_reset(&ctx->ip_sem);
+
     if (!ctx->iface_up) {
         ret = net_if_up(ctx->iface);
         if (ret != 0 && ret != -EALREADY) {
@@ -156,12 +163,14 @@ static int eth_connect(connectivity_backend_ops_t* ops) {
     }
 #endif
 
-    k_sem_reset(&ctx->ip_sem);
-
     ret = k_sem_take(&ctx->ip_sem, K_MSEC(CONFIG_CONNECTIVITY_BACKEND_ETHERNET_CONNECT_TIMEOUT_MS));
     if (ret != 0) {
         LOG_WRN("Ethernet IPv4 address wait timed out after %d ms",
                 CONFIG_CONNECTIVITY_BACKEND_ETHERNET_CONNECT_TIMEOUT_MS);
+        /* 兜底：地址可能在等待窗口外就绪（事件与本线程竞争错过 give），以缓存为准 */
+        if (ctx->has_ipv4) {
+            return 0;
+        }
         return -ETIMEDOUT;
     }
 

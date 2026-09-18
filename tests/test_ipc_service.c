@@ -2,10 +2,8 @@
  * @file test_ipc_service.c
  * @brief Thread IPC 服务单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.3
  * @date 2026-04-01
- *
- * Zehao Qian
  *
  * @par 修改日志:
  *
@@ -13,6 +11,7 @@
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-04-11       1.1            zeh            补充完整测试用例
  * 2026-05-28       1.2            zeh            异步等待改用 ztest_sync（P0）
+ * 2026-09-18       1.3            zeh            NULL callback 契约断言具体值；stop 超时时延由 join 超时常量推导；shm 句柄数组具名
  *
  */
 #include <zephyr/kernel.h>
@@ -25,9 +24,28 @@
 #include <zeplod/example_module_uart.h>
 #endif
 #include <zeplod/ipc_service.h>
+#include <zeplod/zepl_thread_service.h>
 #include "ztest_sync.h"
 
 LOG_MODULE_REGISTER(test_ipc_service);
+
+/*
+ * stop 超时用例的时延均由 IPC 服务线程 join 超时常量推导
+ * （ipc_service_lifecycle.c 的 stop 用 IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS =
+ * ZEPL_THREAD_SERVICE_JOIN_TIMEOUT_MS 做 k_thread_join，超时返回 -EIO）：
+ * - handler 停留 = join 超时 + 200ms —— 保证首次 stop 的 join 必然超时返回 -EIO；
+ * - 重试前等待 = join 超时 + 300ms —— 首次 stop 返回时 handler 至多剩 200ms，
+ *   再留 ≥100ms 裕量，重试 stop 时 worker 已退出。
+ */
+#define IPC_UT_STOP_HANDLER_DELAY_MS (ZEPL_THREAD_SERVICE_JOIN_TIMEOUT_MS + 200U)
+#define IPC_UT_STOP_RETRY_WAIT_MS    (ZEPL_THREAD_SERVICE_JOIN_TIMEOUT_MS + 300U)
+
+/*
+ * shm 耗尽用例的句柄数组上限：测试配置的池大小
+ * CONFIG_THREAD_IPC_SERVICE_SHARED_MEM_POOL_SIZE 必须不大于该值，
+ * 循环才能在数组范围内把池填满（用例内以 BUILD_ASSERT 前置校验）。
+ */
+#define IPC_UT_SHM_HANDLE_MAX 16U
 
 static ipc_service_t g_ipc;
 
@@ -89,7 +107,7 @@ static int ipc_stop_timeout_handler(ipc_request_id_t request_id, const void* dat
                                     size_t* out_data_size) {
     (void) request_id;
     atomic_set(&g_delayed_handler_in_handler, 1);
-    k_msleep(700);
+    k_msleep(IPC_UT_STOP_HANDLER_DELAY_MS);
     *out_data = (void*) data;
     *out_data_size = data_size;
     atomic_set(&g_delayed_handler_in_handler, 0);
@@ -737,7 +755,8 @@ ZTEST(ipc_service, test_stop_timeout_can_be_retried) {
     zassert_equal(r, -EIO, "first stop should report join timeout: %d", r);
     zassert_true(ipc_service_get_pending_count(&g_ipc) > 0U, "timed-out stop must preserve pending state");
 
-    k_msleep(300);
+    /* 等待时长由 join 超时推导（见 IPC_UT_STOP_RETRY_WAIT_MS 注释），不依赖裸魔数 */
+    k_msleep(IPC_UT_STOP_RETRY_WAIT_MS);
     r = ipc_service_stop(&g_ipc);
     zassert_equal(r, 0, "retry stop should join and clean up: %d", r);
 
@@ -758,18 +777,17 @@ ZTEST(ipc_service, test_async_null_callback) {
     r = ipc_service_start(&g_ipc);
     zassert_equal(r, 0, "ipc_service_start failed: %d", r);
 
-    /* NULL callback 应该被允许（fire-and-forget 模式） */
+    /* 契约（src/modules/ipc_service/ipc_service_call.c ipc_call_async）：
+     * callback == NULL 直接拒绝返回 -EINVAL，不存在 fire-and-forget 模式；
+     * 拒绝发生在入队之前，不产生 pending 请求，out_request_id 不被写出。 */
     r = ipc_call_async(&g_ipc, payload, sizeof(payload), NULL, NULL,
 #if IS_ENABLED(CONFIG_THREAD_IPC_SERVICE_SHARED_MEM)
                        0,
 #endif
                        &request_id);
-    /* 允许成功或失败，取决于实现 */
-    zassert_true(r == 0 || r != 0, "NULL callback 行为实现定义");
-
-    if (r == 0) {
-        zassert_true(ztest_wait_until(ipc_service_pending_zero, &g_ipc, 2000U), "fire-and-forget 请求应处理完毕");
-    }
+    zassert_equal(r, -EINVAL, "NULL callback 应被拒绝并返回 -EINVAL: %d", r);
+    zassert_equal(request_id, 0, "被拒绝的请求不得写出 request_id");
+    zassert_equal(ipc_service_get_pending_count(&g_ipc), 0U, "被拒绝的请求不得占用 pending 槽位");
 
     ipc_service_stop(&g_ipc);
 }
@@ -983,7 +1001,11 @@ ZTEST(ipc_service, test_shared_memory_stats) {
 ZTEST(ipc_service, test_shared_memory_exhaustion) {
     int              r;
     uint32_t         pool_size = CONFIG_THREAD_IPC_SERVICE_SHARED_MEM_POOL_SIZE;
-    ipc_shm_handle_t handles[16]; /* 假设池大小至少 8 */
+    ipc_shm_handle_t handles[IPC_UT_SHM_HANDLE_MAX];
+
+    /* 池必须能被句柄数组覆盖，否则"分配直到池满"循环无法触及耗尽边界 */
+    BUILD_ASSERT(CONFIG_THREAD_IPC_SERVICE_SHARED_MEM_POOL_SIZE <= IPC_UT_SHM_HANDLE_MAX,
+                 "shm pool size must fit IPC_UT_SHM_HANDLE_MAX");
 
     r = ipc_service_init(&g_ipc, "shm_exhaust", ipc_shm_alloc_handler, 5);
     zassert_equal(r, 0, "ipc_service_init failed: %d", r);

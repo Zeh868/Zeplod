@@ -2,25 +2,29 @@
  * @file test_module_manager.c
  * @brief 模块管理器单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
- *
- * Zehao Qian
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            嵌套函数提取为文件级 static；接口表加 static；手写等待改用 ztest_sync；补 STOPPING 窗口真实用例
  *
  */
 
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/ztest.h>
+#include <errno.h>
 #include <zeplod/event_system.h>
 #include <zeplod/module_manager.h>
+#include "ztest_sync.h"
 
 LOG_MODULE_REGISTER(test_module_manager);
+
+/** 并发交错用例中等待对端进入预期状态的单步超时（ms），超时即判失败 */
+#define MM_UT_INTERLOCK_WAIT_MS 500U
 
 static int stub_init(void* config) {
     (void) config;
@@ -87,7 +91,7 @@ DECLARE_MODULE_INTERFACE_MINIMAL(stub3);
 static const char* const version_dep_names[] = {"version_base", NULL};
 static const uint32_t    version_dep_min_high[] = {MODULE_VERSION(2, 0, 0)};
 
-const module_interface_t version_base_interface = {
+static const module_interface_t version_base_interface = {
     .name = "version_base",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_NORMAL,
@@ -102,7 +106,7 @@ const module_interface_t version_base_interface = {
     .control = NULL,
 };
 
-const module_interface_t version_needs_high_interface = {
+static const module_interface_t version_needs_high_interface = {
     .name = "version_needs_high",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_NORMAL,
@@ -154,7 +158,7 @@ static int counting_control(int cmd, void* arg) {
     return 0;
 }
 
-const module_interface_t counting_stub_interface = {
+static const module_interface_t counting_stub_interface = {
     .name = "counting_stub",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_NORMAL,
@@ -167,6 +171,31 @@ const module_interface_t counting_stub_interface = {
     .get_status = counting_get_status,
     .control = counting_control,
 };
+
+/* ---------- 文件级回调：替代嵌套函数（GCC 扩展，不可移植） ---------- */
+static int g_foreach_count;
+static int g_mgr_event_callback_count;
+
+static void foreach_count_callback(module_info_t* info, void* user_data) {
+    ARG_UNUSED(info);
+    ARG_UNUSED(user_data);
+    g_foreach_count++;
+}
+
+static void mgr_event_callback(uint32_t module_id, module_mgr_event_t event, void* user_data) {
+    ARG_UNUSED(module_id);
+    ARG_UNUSED(event);
+    ARG_UNUSED(user_data);
+    g_mgr_event_callback_count++;
+}
+
+/* 谓词：等待 slow_stub 注册后可通过名称查到 provisional id */
+static bool slow_stub_id_assigned_pred(void* ctx) {
+    uint32_t* found_id = ctx;
+
+    *found_id = module_manager_get_id_by_name("slow_stub");
+    return *found_id != 0U;
+}
 
 /* =============================================================================
  * 测试夹具 (Test Fixtures)
@@ -323,24 +352,15 @@ ZTEST(module_manager, test_get_id_by_name) {
 }
 
 ZTEST(module_manager, test_foreach) {
-    static int count = 0;
-
     /* 注册几个不同的模块 */
     uint32_t id1 = 0U, id2 = 0U, id3 = 0U;
     zassert_equal(module_manager_register(&stub_interface, NULL, &id1), 0, NULL);
     zassert_equal(module_manager_register(&stub2_interface, NULL, &id2), 0, NULL);
     zassert_equal(module_manager_register(&stub3_interface, NULL, &id3), 0, NULL);
 
-    /* 遍历回调 */
-    void count_callback(module_info_t * info, void* user_data) {
-        (void) info;
-        (void) user_data;
-        count++;
-    }
-
-    count = 0;
-    module_manager_foreach(count_callback, NULL);
-    zassert_equal(count, 3, "应遍历到 3 个模块");
+    g_foreach_count = 0;
+    module_manager_foreach(foreach_count_callback, NULL);
+    zassert_equal(g_foreach_count, 3, "应遍历到 3 个模块");
 
     zassert_equal(module_manager_unregister(id1), 0, NULL);
     zassert_equal(module_manager_unregister(id2), 0, NULL);
@@ -412,25 +432,20 @@ ZTEST(module_manager, test_unregister_skips_shutdown_during_manager_shutdown) {
 }
 
 ZTEST(module_manager, test_set_callback) {
-    static int callback_count = 0;
-
     /* 设置回调 */
-    void mgr_callback(uint32_t module_id, module_mgr_event_t event, void* user_data) {
-        (void) module_id;
-        (void) event;
-        (void) user_data;
-        callback_count++;
-    }
-
-    module_manager_set_callback(mgr_callback, NULL);
+    g_mgr_event_callback_count = 0;
+    module_manager_set_callback(mgr_event_callback, NULL);
 
     /* 注册模块应触发回调 */
     uint32_t id = 0U;
     zassert_equal(module_manager_register(&stub_interface, NULL, &id), 0, NULL);
 
-    zassert_true(callback_count > 0, "注册时回调应同步触发");
+    zassert_true(g_mgr_event_callback_count > 0, "注册时回调应同步触发");
 
     zassert_equal(module_manager_unregister(id), 0, NULL);
+
+    /* 尾态复位：避免回调残留影响后续用例的 manager 事件统计 */
+    module_manager_set_callback(NULL, NULL);
 }
 
 /* =============================================================================
@@ -447,9 +462,14 @@ static struct k_sem    g_slow_init_go;
 static atomic_t        g_slow_init_entered;
 static struct k_thread g_slow_register_thread;
 static K_THREAD_STACK_DEFINE(g_slow_register_stack, 1024);
-static atomic_t                 g_slow_register_result;
-static uint32_t                 g_slow_register_id;
-extern const module_interface_t slow_stub_interface;
+static atomic_t g_slow_register_result;
+static uint32_t g_slow_register_id;
+
+/* 谓词：等待 slow_init 已被管理器调用进入阻塞点 */
+static bool slow_init_entered_pred(void* ctx) {
+    ARG_UNUSED(ctx);
+    return atomic_get(&g_slow_init_entered) != 0;
+}
 
 static int slow_init(void* config) {
     (void) config;
@@ -466,15 +486,8 @@ static int slow_stop(void) {
     return 0;
 }
 
-static void slow_register_thread_entry(void* p1, void* p2, void* p3) {
-    (void) p1;
-    (void) p2;
-    (void) p3;
-    const int ret = module_manager_register(&slow_stub_interface, NULL, &g_slow_register_id);
-    atomic_set(&g_slow_register_result, ret);
-}
-
-const module_interface_t slow_stub_interface = {
+/* 定义置于 slow_register_thread_entry 之前，替代原先的 extern 前置声明（本文件私有，加 static） */
+static const module_interface_t slow_stub_interface = {
     .name = "slow_stub",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_NORMAL,
@@ -488,7 +501,16 @@ const module_interface_t slow_stub_interface = {
     .control = NULL,
 };
 
-/* ---------- 共享桩：用于依赖 start 失败的测试（#5） ---------- */
+static void slow_register_thread_entry(void* p1, void* p2, void* p3) {
+    (void) p1;
+    (void) p2;
+    (void) p3;
+    const int ret = module_manager_register(&slow_stub_interface, NULL, &g_slow_register_id);
+    atomic_set(&g_slow_register_result, ret);
+}
+
+/* ---------- 共享桩：用于依赖 start 失败的测试（#5，仅运行时依赖配置启用） ---------- */
+#if IS_ENABLED(CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES)
 static atomic_t g_dep_failing_start_calls;
 static atomic_t g_dep_dependent_start_calls;
 
@@ -504,7 +526,7 @@ static int dep_dependent_start(void) {
 
 static const char* const dep_fail_dep_names[] = {"dep_fail_base", NULL};
 
-const module_interface_t dep_fail_base_interface = {
+static const module_interface_t dep_fail_base_interface = {
     .name = "dep_fail_base",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_LOW,
@@ -518,7 +540,7 @@ const module_interface_t dep_fail_base_interface = {
     .control = NULL,
 };
 
-const module_interface_t dep_fail_dependent_interface = {
+static const module_interface_t dep_fail_dependent_interface = {
     .name = "dep_fail_dependent",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_NORMAL,
@@ -532,6 +554,7 @@ const module_interface_t dep_fail_dependent_interface = {
     .get_status = NULL,
     .control = NULL,
 };
+#endif /* CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES */
 
 /* ---------- 共享桩：验证 shutdown 等待在途事件回调 ---------- */
 static struct k_sem    g_block_event_entered;
@@ -558,7 +581,7 @@ static int blocking_shutdown(void) {
     return MODULE_OK;
 }
 
-const module_interface_t blocking_stub_interface = {
+static const module_interface_t blocking_stub_interface = {
     .name = "blocking_stub",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_NORMAL,
@@ -607,7 +630,7 @@ static int blocking_start(void) {
     return MODULE_OK;
 }
 
-const module_interface_t blocking_start_interface = {
+static const module_interface_t blocking_start_interface = {
     .name = "blocking_start",
     .version = MODULE_VERSION(1, 0, 0),
     .priority = MODULE_PRIORITY_NORMAL,
@@ -648,24 +671,13 @@ ZTEST(module_manager, test_unregister_during_init_returns_busy) {
         k_thread_create(&g_slow_register_thread, g_slow_register_stack, K_THREAD_STACK_SIZEOF(g_slow_register_stack),
                         slow_register_thread_entry, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
 
-    int      wait_ms = 0;
     uint32_t slow_id = 0U;
 
-    while (atomic_get(&g_slow_init_entered) == 0 && wait_ms < 500) {
-        k_msleep(1);
-        wait_ms++;
-    }
-    zassert_equal(atomic_get(&g_slow_init_entered), 1, "init 应已进入");
+    zassert_true(ztest_wait_until(slow_init_entered_pred, NULL, MM_UT_INTERLOCK_WAIT_MS), "init 应已进入");
 
     /* register() 仅在 init 成功后才写出 *module_id；init 期间用名称查询 */
-    wait_ms = 0;
-    while (slow_id == 0U && wait_ms < 500) {
-        slow_id = module_manager_get_id_by_name("slow_stub");
-        if (slow_id == 0U) {
-            k_msleep(1);
-            wait_ms++;
-        }
-    }
+    zassert_true(ztest_wait_until(slow_stub_id_assigned_pred, &slow_id, MM_UT_INTERLOCK_WAIT_MS),
+                 "init 期间应已分配 provisional id");
     zassert_not_equal(slow_id, 0U, "init 期间应已分配 provisional id");
 
     zassert_equal(module_manager_unregister(slow_id), MODULE_ERR_BUSY, "init 期间注销应返回 BUSY");
@@ -696,6 +708,9 @@ ZTEST(module_manager, test_manager_stop_waits_for_concurrent_start) {
     k_tid_t stop_tid =
         k_thread_create(&g_manager_stop_thread, g_manager_stop_stack, K_THREAD_STACK_SIZEOF(g_manager_stop_stack),
                         manager_stop_thread_entry, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+    /* 时间窗意图：给 stop 线程 20ms 调度余量越过 stop 前置检查、
+     * 阻塞在"等待在途 start"上；随后断言其尚未完成。仅作负向时序窗口，
+     * 不用于等待任何完成事件（完成走 k_thread_join）。 */
     k_msleep(20);
     zassert_equal(atomic_get(&g_manager_stop_done), 0, "manager stop 不得越过在途 start");
 
@@ -745,12 +760,81 @@ ZTEST(module_manager, test_dep_start_failure_skips_dependent) {
 #endif
 
 /* ---------- #6：manager 门控的语义性检查 ---------- */
-ZTEST(module_manager, test_register_rejected_during_stopping) {
-    /* 直接驱动 STOPPING 时序窗口在 ztest 中难以确定性触发；
-     * 验证门控所用的错误码定义存在且值正确。 */
+ZTEST(module_manager, test_error_code_values) {
+    /* 门控路径返回的错误码定义须与 errno 语义一致（register/unregister/start_all 均依赖） */
     zassert_equal(MODULE_ERR_INVALID_STATE, -EPERM, "错误码 INVALID_STATE 应等于 -EPERM");
     zassert_equal(MODULE_ERR_BUSY, -EBUSY, "错误码 BUSY 应等于 -EBUSY");
     zassert_equal(MODULE_ERR_IO, -EIO, "错误码 IO 应等于 -EIO");
+}
+
+/* ---------- #6 补充：STOPPING 窗口内 register 被门控拒绝（真实交错） ---------- */
+static struct k_sem    g_stopping_probe_entered;
+static struct k_sem    g_stopping_probe_release;
+static struct k_thread g_mgr_stop_probe_thread;
+static K_THREAD_STACK_DEFINE(g_mgr_stop_probe_stack, 1536);
+static atomic_t g_mgr_stop_probe_result;
+
+/* stop_fn 阻塞：让 manager 停在 STOPPING 排空阶段（lifecycle.c 的 stop 在
+ * RUNNING→STOPPING 迁移后即释放管理器锁进入排空循环，此时 register 可进入门控检查） */
+static int stopping_probe_stop(void) {
+    k_sem_give(&g_stopping_probe_entered);
+    (void) k_sem_take(&g_stopping_probe_release, K_SECONDS(2));
+    return MODULE_OK;
+}
+
+static const module_interface_t stopping_probe_interface = {
+    .name = "stopping_probe",
+    .version = MODULE_VERSION(1, 0, 0),
+    .priority = MODULE_PRIORITY_NORMAL,
+    .depends_on = NULL,
+    .depends_version_min = NULL,
+    .init = stub_init,
+    .start = stub_start,
+    .stop = stopping_probe_stop,
+    .shutdown = NULL,
+    .on_event = stub_on_event,
+    .get_status = NULL,
+    .control = NULL,
+};
+
+static void mgr_stop_probe_thread_entry(void* p1, void* p2, void* p3) {
+    (void) p1;
+    (void) p2;
+    (void) p3;
+    atomic_set(&g_mgr_stop_probe_result, module_manager_stop());
+}
+
+ZTEST(module_manager, test_register_rejected_in_stopping_window) {
+    uint32_t probe_id = 0U;
+    uint32_t late_id = 0U;
+
+    k_sem_init(&g_stopping_probe_entered, 0, 1);
+    k_sem_init(&g_stopping_probe_release, 0, 1);
+    atomic_set(&g_mgr_stop_probe_result, MODULE_ERR_BUSY);
+
+    /* 前置：manager 处于 RUNNING（套件 setup/teardown 保证），探测模块已启动 */
+    zassert_equal(module_manager_register(&stopping_probe_interface, NULL, &probe_id), MODULE_OK, NULL);
+    zassert_equal(module_manager_start_module(probe_id), MODULE_OK, NULL);
+
+    /* 后台线程发起 manager stop：先迁移到 STOPPING，随后在排空循环里阻塞于探测模块的 stop_fn */
+    k_tid_t stop_tid = k_thread_create(&g_mgr_stop_probe_thread, g_mgr_stop_probe_stack,
+                                       K_THREAD_STACK_SIZEOF(g_mgr_stop_probe_stack), mgr_stop_probe_thread_entry,
+                                       NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+    zassert_not_null(stop_tid, NULL);
+    zassert_equal(k_sem_take(&g_stopping_probe_entered, K_SECONDS(1)), 0, "stop 应已进入探测模块的 stop_fn");
+
+    /* 此刻 manager 生命周期状态为 STOPPING：register 应被门控拒绝 */
+    zassert_equal(module_manager_register(&stub_interface, NULL, &late_id), MODULE_ERR_INVALID_STATE,
+                  "STOPPING 窗口内 register 应返回 INVALID_STATE");
+
+    /* 放行 stop_fn，manager stop 正常收敛 */
+    k_sem_give(&g_stopping_probe_release);
+    zassert_equal(k_thread_join(stop_tid, K_SECONDS(2)), 0, "stop 线程应结束");
+    zassert_equal(atomic_get(&g_mgr_stop_probe_result), MODULE_OK, "manager stop 应正常完成");
+
+    /* STOPPED 可直接再次 start（manager 仍处于已初始化态，勿重复 init）；
+     * probe 模块残留由用例尾部 teardown 的 shutdown 统一回收 */
+    zassert_equal(module_manager_start(), MODULE_OK, NULL);
 }
 
 /* ---------- #7：unsubscribe 返回值与本地记录保持一致 ---------- */
@@ -816,6 +900,8 @@ ZTEST(module_manager, test_shutdown_waits_for_in_flight_event_callback) {
     k_tid_t shutdown_tid =
         k_thread_create(&g_block_shutdown_thread, g_block_shutdown_stack, K_THREAD_STACK_SIZEOF(g_block_shutdown_stack),
                         blocking_shutdown_thread_entry, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+    /* 时间窗意图：给 shutdown 线程 20ms 调度余量进入"等待在途事件回调"的阻塞点；
+     * 随后断言其尚未完成。仅作负向时序窗口，完成判定走 k_thread_join。 */
     k_msleep(20);
     zassert_equal(atomic_get(&g_block_shutdown_done), 0, "shutdown 不得越过在途事件回调");
     zassert_equal(atomic_get(&g_block_shutdown_calls), 0, "回调结束前不得调用模块 shutdown");

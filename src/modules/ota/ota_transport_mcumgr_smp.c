@@ -2,7 +2,7 @@
  * @file ota_transport_mcumgr_smp.c
  * @brief MCUmgr SMP 被动 OTA 接入（UART / BLE / UDP 由 Zephyr 多传输承载）
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -10,6 +10,10 @@
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 4 初始版本
  * 2026-06-13       1.1            zeh            DFU_STARTED 错误传播；取消上传与 disarm
+ * 2026-09-18       1.2            zeh            DFU_CHUNK 进度改读 req->off/img_data.len
+ *                                                 （upload_check 无 offset/size 字段，旧码
+ *                                                 无法编译）；进度终点防回卷校验；
+ *                                                 cancel_upload 注明锁序约束
  *
  */
 
@@ -24,6 +28,7 @@
 
 #include <errno.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "ota_module_mcumgr.h"
 
@@ -91,9 +96,24 @@ static enum mgmt_cb_return ota_mcumgr_mgmt_cb(uint32_t event, enum mgmt_cb_retur
         }
         if (data != NULL && data_size >= sizeof(struct img_mgmt_upload_check)) {
             const struct img_mgmt_upload_check* chk = (const struct img_mgmt_upload_check*) data;
-            size_t                              end = chk->offset + chk->size;
 
-            ota_module_mcumgr_on_chunk_progress(end);
+            /* upload_check 携带 action/req 指针：进度终点 = 本 chunk 偏移 + 数据长度。
+               off/len 来自外部 SMP 报文，先防回卷（off + len 溢出即报文非法），拒绝该 chunk */
+            if (chk->req != NULL) {
+                size_t off = chk->req->off;
+                size_t len = chk->req->img_data.len;
+
+                if (off > (SIZE_MAX - len)) {
+                    if (rc != NULL) {
+                        *rc = MGMT_ERR_EINVAL;
+                    }
+                    if (abort_more != NULL) {
+                        *abort_more = true;
+                    }
+                    return MGMT_CB_ERROR_RC;
+                }
+                ota_module_mcumgr_on_chunk_progress(off + len);
+            }
         }
         break;
 
@@ -173,6 +193,9 @@ static void mcumgr_smp_abort(ota_transport_ops_t* ops) {
 
 void ota_transport_mcumgr_smp_cancel_upload(void) {
 #if defined(CONFIG_MCUMGR_GRP_IMG_MUTEX)
+    /* img_mgmt_reset_upload 内部获取 img_mgmt mutex。锁序约束（见 ota_module.c 文件头）：
+       本函数不得在 ota 模块持有 g_ota.lock 时调用，否则与
+       "img_mgmt 持锁回调 → g_ota.lock" 构成 ABBA 死锁 */
     img_mgmt_reset_upload();
 #endif
 }

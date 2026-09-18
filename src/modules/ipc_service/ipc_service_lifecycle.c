@@ -2,14 +2,19 @@
  * @file ipc_service_lifecycle.c
  * @brief IPC 服务生命周期（init/start/stop）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            start 回滚不再持锁 join；stop 按阶段拆分；init 增加 pending 防御
  */
-
-#include "ipc_service_internal.h"
 
 #include <zephyr/logging/log.h>
 #include <string.h>
+
+#include "ipc_service_internal.h"
 
 LOG_MODULE_DECLARE(thread_ipc_svc, CONFIG_THREAD_IPC_SERVICE_LOG_LEVEL);
 
@@ -73,6 +78,14 @@ int ipc_service_init(ipc_service_t* service, const char* name, ipc_service_func_
 
         if (state == ZEP_STATE_RUNNING || state == ZEP_STATE_STARTING || state == ZEP_STATE_STOPPING ||
             state == ZEP_STATE_ERROR) {
+            return -EBUSY;
+        }
+
+        /* 防御：仍有未收尾的 pending 请求时拒绝 re-init，避免下方 memset 抹掉调用方
+         * 仍在等待的信号量。尽力检查（与后续 memset 间存在 TOCTOU 窗口），硬性前置
+         * 条件见 ipc_service_init 头文件 @note。 */
+        if (ipc_pending_table_count(service) != 0U) {
+            LOG_WRN("IPC service '%s' re-init rejected: pending requests outstanding", name);
             return -EBUSY;
         }
     }
@@ -172,24 +185,29 @@ int ipc_service_start(ipc_service_t* service) {
                                        service, NULL, NULL, service->priority, 0, K_NO_WAIT);
     if (disp_tid == NULL) {
         LOG_ERR("Failed to create IPC dispatcher thread for '%s'", service->name);
-        /* 回滚：置 shutdown 并唤醒已创建的 worker（其 msgq 轮询会看到标志后退出），
-         * 再回退生命周期状态，保持 start 失败后服务仍可重试。 */
+        /* 回滚决定（锁内）：置 shutdown 并投递空消息唤醒已创建的 worker
+         * （其 msgq 轮询会看到标志后退出）。join 会阻塞，不得持有 state_lock 执行，
+         * 因此先解锁再等待，之后重新拿锁提交最终状态。 */
         atomic_set(&service->shutdown, 1);
         ipc_request_msg_t dummy;
         memset(&dummy, 0, sizeof(dummy));
         (void) k_msgq_put(&service->request_queue, &dummy, K_NO_WAIT);
-        if (k_thread_join(&service->thread, K_MSEC(IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS)) != 0) {
+        ipc_service_state_unlock(service);
+
+        const bool worker_exited = (k_thread_join(&service->thread, K_MSEC(IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS)) == 0);
+
+        ipc_service_state_lock(service);
+        if (worker_exited) {
+            atomic_set(&service->shutdown, 0);
+            (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPING);
+            (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPED);
+        } else {
             /* worker 未能在超时内退出（异常）：保持 shutdown=1 让其稍后自行退出并置
              * ERROR 故障态；线程控制块仍被占用，不得再重试 start/init。 */
             LOG_ERR("IPC worker thread for '%s' failed to exit during rollback; service faulted", service->name);
             (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPING);
             (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_ERROR);
-            ipc_service_state_unlock(service);
-            return -ENOMEM;
         }
-        atomic_set(&service->shutdown, 0);
-        (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPING);
-        (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPED);
         ipc_service_state_unlock(service);
         return -ENOMEM;
     }
@@ -206,52 +224,47 @@ int ipc_service_start(ipc_service_t* service) {
     return 0;
 }
 
-int ipc_service_stop(ipc_service_t* service) {
-    if (service == NULL || !service->initialized) {
-        return -EINVAL;
-    }
-
-    if (!atomic_cas(&service->stop_in_progress, 0, 1)) {
-        return -EALREADY;
-    }
-
+/* stop 状态门控（持锁→解锁）。返回：
+ *  1  可以继续 stop 流程（已置 shutdown 并进入/保持 STOPPING，返回时已解锁）
+ *  0  服务本就未运行，stop 幂等成功（已解锁）
+ *  <0 失败错误码（已解锁） */
+static int ipc_stop_begin(ipc_service_t* service) {
     ipc_service_state_lock(service);
     zepl_state_t state = ipc_service_lifecycle_state_locked(service);
 
     if (state == ZEP_STATE_UNINIT) {
         ipc_service_state_unlock(service);
-        atomic_set(&service->stop_in_progress, 0);
         return -EINVAL;
     }
 
     if (!service->running || state == ZEP_STATE_INITED || state == ZEP_STATE_STOPPED) {
         ipc_service_state_unlock(service);
-        atomic_set(&service->stop_in_progress, 0);
         return 0;
     }
 
     if (state == ZEP_STATE_ERROR) {
         ipc_service_state_unlock(service);
-        atomic_set(&service->stop_in_progress, 0);
         return -EINVAL;
     }
 
     if (k_current_get() == &service->thread || k_current_get() == &service->response_thread) {
         ipc_service_state_unlock(service);
-        atomic_set(&service->stop_in_progress, 0);
         return -EDEADLK;
     }
 
     if (state != ZEP_STATE_STOPPING &&
         zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPING) != 0) {
         ipc_service_state_unlock(service);
-        atomic_set(&service->stop_in_progress, 0);
         return -EINVAL;
     }
 
     atomic_set(&service->shutdown, 1);
     ipc_service_state_unlock(service);
+    return 1;
+}
 
+/* 向请求/响应队列各投递一条空消息，唤醒可能在 msgq 轮询中阻塞的两个线程。 */
+static void ipc_stop_wake_threads(ipc_service_t* service) {
     ipc_request_msg_t dummy_request;
     memset(&dummy_request, 0, sizeof(dummy_request));
     (void) k_msgq_put(&service->request_queue, &dummy_request, K_NO_WAIT);
@@ -259,33 +272,31 @@ int ipc_service_stop(ipc_service_t* service) {
     ipc_response_msg_t dummy_response;
     memset(&dummy_response, 0, sizeof(dummy_response));
     (void) k_msgq_put(&service->response_queue, &dummy_response, K_NO_WAIT);
+}
 
-    int ret1 = k_thread_join(&service->thread, K_MSEC(IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS));
+/* 等待两个服务线程退出。全部退出返回 0；任一超时返回 -EIO（实例保持 STOPPING，
+ * 调用方稍后重试 stop）。 */
+static int ipc_stop_join_threads(ipc_service_t* service) {
+    const int ret1 = k_thread_join(&service->thread, K_MSEC(IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS));
     if (ret1 != 0) {
         LOG_ERR("Worker thread join failed: %d", ret1);
     }
 
-    int ret2 = k_thread_join(&service->response_thread, K_MSEC(IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS));
+    const int ret2 = k_thread_join(&service->response_thread, K_MSEC(IPC_SERVICE_THREAD_JOIN_TIMEOUT_MS));
     if (ret2 != 0) {
         LOG_ERR("Dispatcher thread join failed: %d", ret2);
     }
 
     if (ret1 != 0 || ret2 != 0) {
         LOG_ERR("IPC service '%s': thread join timed out (worker_ret=%d, disp_ret=%d)", service->name, ret1, ret2);
-        atomic_set(&service->stop_in_progress, 0);
         return -EIO;
     }
+    return 0;
+}
 
-    ipc_drain_queued_messages(service);
-    k_msgq_purge(&service->request_queue);
-    k_msgq_purge(&service->response_queue);
-
-    ipc_service_state_lock(service);
-    service->running = false;
-    atomic_set(&service->shutdown, 0);
-    (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPED);
-    ipc_service_state_unlock(service);
-
+/* 清理全部 pending 请求（持 pending_lock）：按 future / callback / 同步三种形态
+ * 分别投递 -ECANCELED 并释放槽位，唤醒仍阻塞的调用方。 */
+static void ipc_stop_cancel_pending(ipc_service_t* service) {
     ipc_service_pending_lock(service);
     for (int i = 0; i < CONFIG_THREAD_IPC_SERVICE_MAX_PENDING_REQUESTS; i++) {
         ipc_pending_request_t* entry = &service->pending_requests[i];
@@ -319,10 +330,52 @@ int ipc_service_stop(ipc_service_t* service) {
         }
     }
     ipc_service_pending_unlock(service);
+}
+
+/* 线程全部退出后的收尾：排空队列、复位状态到 STOPPED、取消 pending 并回收 shm 池。 */
+static void ipc_stop_cleanup(ipc_service_t* service) {
+    ipc_drain_queued_messages(service);
+    k_msgq_purge(&service->request_queue);
+    k_msgq_purge(&service->response_queue);
+
+    ipc_service_state_lock(service);
+    service->running = false;
+    atomic_set(&service->shutdown, 0);
+    (void) zepl_state_machine_try_transition(&service->lifecycle, ZEP_STATE_STOPPED);
+    ipc_service_state_unlock(service);
+
+    ipc_stop_cancel_pending(service);
 
 #if IS_ENABLED(CONFIG_THREAD_IPC_SERVICE_SHARED_MEM)
     ipc_shm_deinit(service);
 #endif
+}
+
+int ipc_service_stop(ipc_service_t* service) {
+    if (service == NULL || !service->initialized) {
+        return -EINVAL;
+    }
+
+    if (!atomic_cas(&service->stop_in_progress, 0, 1)) {
+        return -EALREADY;
+    }
+
+    const int begin_ret = ipc_stop_begin(service);
+    if (begin_ret <= 0) {
+        /* 0 = 本就未运行（幂等成功）；<0 = 门控失败。两者都不进入停止流程。 */
+        atomic_set(&service->stop_in_progress, 0);
+        return (begin_ret < 0) ? begin_ret : 0;
+    }
+
+    ipc_stop_wake_threads(service);
+
+    const int join_ret = ipc_stop_join_threads(service);
+    if (join_ret != 0) {
+        atomic_set(&service->stop_in_progress, 0);
+        return join_ret;
+    }
+
+    ipc_stop_cleanup(service);
 
     atomic_set(&service->stop_in_progress, 0);
 

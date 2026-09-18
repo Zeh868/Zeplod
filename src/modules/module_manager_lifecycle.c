@@ -2,8 +2,13 @@
  * @file module_manager_lifecycle.c
  * @brief 模块管理器与单模块生命周期
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            拆分 shutdown 阶段辅助函数；删除冗余 initialized/running 字段写入
  */
 
 #include <zephyr/logging/log.h>
@@ -35,7 +40,6 @@ int module_manager_init(void) {
     }
 
     (void) zepl_state_machine_try_transition(&g_module_mgr.lifecycle, ZEP_STATE_INITED);
-    g_module_mgr.initialized = true;
     atomic_set(&g_module_mgr_initialized, 1);
 
     LOG_DBG("Module manager initialized");
@@ -70,7 +74,6 @@ int module_manager_start(void) {
         return MODULE_ERR_INVALID_ARG;
     }
 
-    g_module_mgr.running = true;
     module_manager_unlock();
 
     LOG_DBG("Module manager started");
@@ -93,7 +96,6 @@ int module_manager_stop(void) {
     }
 
     if (state == ZEP_STATE_STOPPED) {
-        g_module_mgr.running = false;
         module_manager_unlock();
         return MODULE_OK;
     }
@@ -112,7 +114,6 @@ int module_manager_stop(void) {
         }
     }
 
-    g_module_mgr.running = false;
     module_manager_unlock();
 
     const uint32_t wait_start = k_uptime_get_32();
@@ -149,21 +150,9 @@ int module_manager_stop(void) {
     return MODULE_OK;
 }
 
-int module_manager_shutdown(void) {
-    start_order_entry_t entries[CONFIG_MAX_MODULES];
-    int                 n = 0;
-    int                 result = MODULE_OK;
-
-    LOG_DBG("Shutting down module manager...");
-
-    if (!atomic_get(&g_module_mgr_initialized)) {
-        LOG_ERR("Module manager not initialized");
-        return MODULE_ERR_NOT_INITIALIZED;
-    }
-
-    if (!atomic_cas(&g_module_mgr_shutting_down, 0, 1)) {
-        return MODULE_ERR_BUSY;
-    }
+/* shutdown 阶段一（持锁→解锁）：快照全部已注册模块条目，供注销排序使用。返回条目数。 */
+static int mm_shutdown_collect_entries(start_order_entry_t* entries) {
+    int n = 0;
 
     module_manager_lock();
 
@@ -182,27 +171,12 @@ int module_manager_shutdown(void) {
     }
 
     module_manager_unlock();
+    return n;
+}
 
-#if IS_ENABLED(CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES)
-    (void) mm_dep_planner_build_stop_order(entries, n);
-#else
-    mm_dep_planner_sort_priority_asc(entries, n);
-    for (int i = 0; i < n / 2; i++) {
-        const int           j = n - 1 - i;
-        start_order_entry_t t = entries[i];
-
-        entries[i] = entries[j];
-        entries[j] = t;
-    }
-#endif
-
-    const int stop_ret = module_manager_stop();
-    if (stop_ret != MODULE_OK) {
-        atomic_set(&g_module_mgr_shutting_down, 0);
-        return stop_ret;
-    }
-
-    /* 等待在 shutdown 开始前已进入的 init/start/stop/unregister 完成。 */
+/* shutdown 阶段三：等待 shutdown 开始前已进入的 init/start/stop/unregister 完成。
+ * 超时返回 MODULE_ERR_TIMEOUT。 */
+static int mm_shutdown_wait_inflight_idle(void) {
     const uint32_t wait_start = k_uptime_get_32();
     for (;;) {
         bool busy = false;
@@ -221,26 +195,83 @@ int module_manager_shutdown(void) {
             break;
         }
         if ((uint32_t) (k_uptime_get_32() - wait_start) >= MM_DRAIN_TIMEOUT_MS) {
-            atomic_set(&g_module_mgr_shutting_down, 0);
             return MODULE_ERR_TIMEOUT;
         }
         k_msleep(1);
     }
+    return MODULE_OK;
+}
 
+/* shutdown 阶段四：按序注销全部模块。TIMEOUT/BUSY 立即中止并原样返回；
+ * 其余失败记入 *out_result 但继续注销后续模块（尽力关停）。 */
+static int mm_shutdown_unregister_all(const start_order_entry_t* entries, int n, int* out_result) {
     for (int i = 0; i < n; i++) {
         const int ret = module_manager_unregister(entries[i].id);
         if (ret == MODULE_ERR_NOT_FOUND) {
             continue;
         }
         if (ret != MODULE_OK) {
-            result = ret;
+            *out_result = ret;
             if (ret == MODULE_ERR_TIMEOUT || ret == MODULE_ERR_BUSY) {
-                atomic_set(&g_module_mgr_shutting_down, 0);
                 return ret;
             }
         }
     }
+    return MODULE_OK;
+}
 
+int module_manager_shutdown(void) {
+    start_order_entry_t entries[CONFIG_MAX_MODULES];
+    int                 result = MODULE_OK;
+
+    LOG_DBG("Shutting down module manager...");
+
+    if (!atomic_get(&g_module_mgr_initialized)) {
+        LOG_ERR("Module manager not initialized");
+        return MODULE_ERR_NOT_INITIALIZED;
+    }
+
+    if (!atomic_cas(&g_module_mgr_shutting_down, 0, 1)) {
+        return MODULE_ERR_BUSY;
+    }
+
+    const int n = mm_shutdown_collect_entries(entries);
+
+#if IS_ENABLED(CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES)
+    (void) mm_dep_planner_build_stop_order(entries, n);
+#else
+    /* 与 mm_dep_planner_sort_priority_desc 作用等价（升序 + 原地反转 = 降序），
+     * 但后者仅在 CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES 下编译，两者由条件
+     * 编译隔离，不强行统一入口。 */
+    mm_dep_planner_sort_priority_asc(entries, n);
+    for (int i = 0; i < n / 2; i++) {
+        const int           j = n - 1 - i;
+        start_order_entry_t t = entries[i];
+
+        entries[i] = entries[j];
+        entries[j] = t;
+    }
+#endif
+
+    const int stop_ret = module_manager_stop();
+    if (stop_ret != MODULE_OK) {
+        atomic_set(&g_module_mgr_shutting_down, 0);
+        return stop_ret;
+    }
+
+    int ret = mm_shutdown_wait_inflight_idle();
+    if (ret != MODULE_OK) {
+        atomic_set(&g_module_mgr_shutting_down, 0);
+        return ret;
+    }
+
+    ret = mm_shutdown_unregister_all(entries, n, &result);
+    if (ret != MODULE_OK) {
+        atomic_set(&g_module_mgr_shutting_down, 0);
+        return ret;
+    }
+
+    /* 阶段五（提交）：仍有残留槽位视为 BUSY；否则清统计并回退到 UNINIT。 */
     module_manager_lock();
 
     if (g_module_mgr.module_count != 0U) {
@@ -251,9 +282,7 @@ int module_manager_shutdown(void) {
 
     (void) memset(&g_module_mgr.stats, 0, sizeof(g_module_mgr.stats));
     (void) zepl_state_machine_try_transition(&g_module_mgr.lifecycle, ZEP_STATE_UNINIT);
-    g_module_mgr.initialized = false;
     atomic_set(&g_module_mgr_initialized, 0);
-    g_module_mgr.running = false;
 
     module_manager_unlock();
 

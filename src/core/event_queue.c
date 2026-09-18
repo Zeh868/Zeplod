@@ -9,26 +9,26 @@
  * - 支持多种溢出策略
  * - 提供详细的统计信息
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            拆分 enqueue/drop_lowest 超长函数；msgq 最后写发布；裸 extern 移入 internal 头
  *
  */
 
-#include "event_queue.h"
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 #include <errno.h>
 
-LOG_MODULE_REGISTER(event_queue, CONFIG_SYS_LOG_LEVEL);
+#include "event_queue.h"
+#include "event_system_internal.h"
 
-/* 外部声明：来自 event_system.c 的全局丢弃计数器递增函数 */
-extern void event_system_inc_dropped_count(void);
+LOG_MODULE_REGISTER(event_queue, CONFIG_SYS_LOG_LEVEL);
 
 /* =============================================================================
  * 内部数据结构
@@ -140,17 +140,6 @@ static event_status_t event_queue_ensure_drop_lowest_scratch(event_queue_cb_t* c
     return EVENT_OK;
 }
 
-/**
- * @brief 验证事件有效性
- */
-static bool event_is_valid(const event_t* event) {
-    if (event == NULL) {
-        return false;
-    }
-    /* event->type 是 uint8_t，值域天然为 0-255，无需额外范围检查 */
-    return true;
-}
-
 static void event_free_queued_payload(event_t* ev) {
     /* SIL-2: 使用统一接口释放动态数据，正确处理 slab 来源 */
     event_free_data(ev);
@@ -221,22 +210,27 @@ static inline void update_high_watermark(atomic_t* hw, uint32_t depth) {
 }
 
 /**
- * 队列已满时：丢弃队列中优先级最低的一条（priority 数值最大；相等则 FIFO 最旧），再入队 event。
- * 若 event 比队列中最差的一条还差，则丢弃 event（不入队）。
- *
- * @pre 调用方已持有 cb->reorder_lock；cb->drop_lowest_scratch 已分配
+ * @brief 记录一次成功入队：计数 +1 并刷新水位线（ISR 安全，仅原子操作）
  */
-static event_status_t enqueue_drop_lowest_locked(struct k_msgq* queue, const event_t* event, k_timeout_t timeout,
-                                                 event_queue_cb_t* cb) {
-    /* SIL-2: 验证输入事件有效性 */
-    if (!event_is_valid(event)) {
+static void event_queue_record_enqueue(event_queue_cb_t* cb, struct k_msgq* queue) {
+    atomic_inc(&cb->enqueue_count);
+    update_high_watermark(&cb->high_watermark, k_msgq_num_used_get(queue));
+}
+
+/**
+ * @brief DROP_LOWEST 满队列替换路径的前置校验
+ *
+ * @param event 待入队事件（防御性 NULL 检查，正常路径已由 event_queue_enqueue 保证非 NULL）
+ * @param cb 队列控制块
+ * @param attrs 队列属性快照（调用方读取一次，保证排空前后的容量判定一致）
+ * @return EVENT_OK 校验通过，EVENT_ERR_INVALID_ARG 校验失败
+ */
+static event_status_t event_queue_drop_lowest_check(const event_t* event, const event_queue_cb_t* cb,
+                                                    const struct k_msgq_attrs* attrs) {
+    if (event == NULL) {
         LOG_ERR("Invalid event in enqueue_drop_lowest");
         return EVENT_ERR_INVALID_ARG;
     }
-
-    struct k_msgq_attrs attrs;
-
-    k_msgq_get_attrs(queue, &attrs);
 
     /* SIL-2: 检查 scratch 缓冲区是否已分配 */
     if (cb->drop_lowest_scratch == NULL || cb->drop_lowest_restore_failed == NULL) {
@@ -244,14 +238,138 @@ static event_status_t enqueue_drop_lowest_locked(struct k_msgq* queue, const eve
         return EVENT_ERR_INVALID_ARG;
     }
 
-    if (attrs.max_msgs > cb->capacity) {
+    if (attrs->max_msgs > cb->capacity) {
         LOG_ERR("Queue capacity exceeds DROP_LOWEST scratch capacity");
         return EVENT_ERR_INVALID_ARG;
     }
 
-    uint32_t n = attrs.used_msgs;
+    return EVENT_OK;
+}
 
-    if (n < attrs.max_msgs) {
+/**
+ * @brief 排空队列到 scratch；中途取出失败时回灌已取出的部分
+ *
+ * @param[out] restore_failed_count 回灌失败、待释放负载的条目数（写入 cb->drop_lowest_restore_failed）
+ * @return true 全部取出；false 排空失败（已尽力回灌，待释放条目由调用方在 reorder_end 后释放）
+ */
+static bool event_queue_drop_lowest_drain(struct k_msgq* queue, event_queue_cb_t* cb, uint32_t n,
+                                          uint32_t* restore_failed_count) {
+    *restore_failed_count = 0U;
+
+    for (uint32_t i = 0; i < n; i++) {
+        if (k_msgq_get(queue, &cb->drop_lowest_scratch[i], K_NO_WAIT) != 0) {
+            LOG_ERR("DROP_LOWEST drain failed at %u, restoring %u events", i, i);
+            for (uint32_t j = 0; j < i; j++) {
+                if (k_msgq_put(queue, &cb->drop_lowest_scratch[j], K_NO_WAIT) != 0) {
+                    LOG_ERR("DROP_LOWEST restore failed at %u during drain recovery", j);
+                    cb->drop_lowest_restore_failed[(*restore_failed_count)++] = cb->drop_lowest_scratch[j];
+                    atomic_inc(&cb->drop_count);
+                    event_system_inc_dropped_count();
+                }
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief 将 scratch 中的事件回灌进队列（回灌失败静默，与原实现一致）
+ *
+ * @param skip_index 跳过不下回灌的下标；传 n（越界值）表示全量回灌
+ */
+static void event_queue_drop_lowest_requeue(struct k_msgq* queue, event_queue_cb_t* cb, uint32_t n,
+                                            uint32_t skip_index) {
+    for (uint32_t i = 0; i < n; i++) {
+        if (i != skip_index) {
+            (void) k_msgq_put(queue, &cb->drop_lowest_scratch[i], K_NO_WAIT);
+        }
+    }
+}
+
+/**
+ * @brief 满队列替换路径：排空→选最差→丢弃→回灌→入队
+ *
+ * @pre 已持 cb->reorder_lock；本函数内 reorder_begin/end 屏蔽 ISR 入队
+ */
+static event_status_t event_queue_drop_lowest_replace_locked(struct k_msgq* queue, const event_t* event,
+                                                             event_queue_cb_t* cb, uint32_t n) {
+    /* 排空/回灌期间屏蔽 ISR 入队，避免与 scratch 算法并发修改 k_msgq */
+    event_queue_reorder_begin(cb);
+
+    uint32_t restore_failed_count = 0U;
+
+    if (!event_queue_drop_lowest_drain(queue, cb, n, &restore_failed_count)) {
+        event_queue_reorder_end(cb);
+        for (uint32_t k = 0U; k < restore_failed_count; k++) {
+            event_free_queued_payload(&cb->drop_lowest_restore_failed[k]);
+        }
+        return EVENT_ERR_QUEUE_FULL;
+    }
+
+    /* priority 数值最大者为最差；相等时取扫描到的第一个（FIFO 最旧） */
+    uint32_t worst = 0U;
+
+    for (uint32_t i = 1U; i < n; i++) {
+        if (cb->drop_lowest_scratch[i].priority > cb->drop_lowest_scratch[worst].priority) {
+            worst = i;
+        }
+    }
+
+    if (event->priority > cb->drop_lowest_scratch[worst].priority) {
+        event_queue_drop_lowest_requeue(queue, cb, n, n);
+        event_queue_reorder_end(cb);
+        atomic_inc(&cb->drop_count);
+        event_system_inc_dropped_count();
+        LOG_DBG("Queue full, incoming lower than worst queued; drop newest");
+        return EVENT_ERR_QUEUE_FULL;
+    }
+
+    event_t worst_ev = cb->drop_lowest_scratch[worst];
+
+    /* 统计先行：被顶替块自 scratch 摘除即视为已丢弃 */
+    atomic_inc(&cb->drop_count);
+    event_system_inc_dropped_count();
+
+    event_queue_drop_lowest_requeue(queue, cb, n, worst);
+
+    int ret = k_msgq_put(queue, event, K_NO_WAIT);
+
+    event_queue_reorder_end(cb);
+    /* 被顶替块已脱离队列且 ref_count==1，无人可再访问，解除 ISR 屏蔽后释放 */
+    event_free_queued_payload(&worst_ev);
+
+    if (ret != 0) {
+        if (ret == -ENOMSG) {
+            return EVENT_ERR_QUEUE_FULL;
+        }
+        return EVENT_ERR_TIMEOUT;
+    }
+
+    event_queue_record_enqueue(cb, queue);
+
+    return EVENT_OK;
+}
+
+/**
+ * 队列已满时：丢弃队列中优先级最低的一条（priority 数值最大；相等则 FIFO 最旧），再入队 event。
+ * 若 event 比队列中最差的一条还差，则丢弃 event（不入队）。
+ *
+ * @pre 调用方已持有 cb->reorder_lock；cb->drop_lowest_scratch 已分配
+ */
+static event_status_t enqueue_drop_lowest_locked(struct k_msgq* queue, const event_t* event, k_timeout_t timeout,
+                                                 event_queue_cb_t* cb) {
+    /* 属性仅读取一次：满/未满判定与替换路径使用同一快照 */
+    struct k_msgq_attrs attrs;
+
+    k_msgq_get_attrs(queue, &attrs);
+
+    event_status_t vret = event_queue_drop_lowest_check(event, cb, &attrs);
+    if (vret != EVENT_OK) {
+        return vret;
+    }
+
+    if (attrs.used_msgs < attrs.max_msgs) {
         int pret = event_msgq_put(queue, event, timeout);
 
         if (pret != 0) {
@@ -264,83 +382,12 @@ static event_status_t enqueue_drop_lowest_locked(struct k_msgq* queue, const eve
             return EVENT_ERR_TIMEOUT;
         }
 
-        atomic_inc(&cb->enqueue_count);
-        update_high_watermark(&cb->high_watermark, k_msgq_num_used_get(queue));
+        event_queue_record_enqueue(cb, queue);
 
         return EVENT_OK;
     }
 
-    /* 排空/回灌期间屏蔽 ISR 入队，避免与 scratch 算法并发修改 k_msgq */
-    event_queue_reorder_begin(cb);
-    uint32_t restore_free_count = 0U;
-    event_t  worst_ev = {0};
-
-    for (uint32_t i = 0; i < n; i++) {
-        if (k_msgq_get(queue, &cb->drop_lowest_scratch[i], K_NO_WAIT) != 0) {
-            LOG_ERR("DROP_LOWEST drain failed at %u, restoring %u events", i, i);
-            for (uint32_t j = 0; j < i; j++) {
-                if (k_msgq_put(queue, &cb->drop_lowest_scratch[j], K_NO_WAIT) != 0) {
-                    LOG_ERR("DROP_LOWEST restore failed at %u during drain recovery", j);
-                    cb->drop_lowest_restore_failed[restore_free_count++] = cb->drop_lowest_scratch[j];
-                    atomic_inc(&cb->drop_count);
-                    event_system_inc_dropped_count();
-                }
-            }
-            event_queue_reorder_end(cb);
-            for (uint32_t k = 0U; k < restore_free_count; k++) {
-                event_free_queued_payload(&cb->drop_lowest_restore_failed[k]);
-            }
-            return EVENT_ERR_QUEUE_FULL;
-        }
-    }
-
-    uint32_t worst = 0U;
-
-    for (uint32_t i = 1U; i < n; i++) {
-        if (cb->drop_lowest_scratch[i].priority > cb->drop_lowest_scratch[worst].priority) {
-            worst = i;
-        }
-    }
-
-    if (event->priority > cb->drop_lowest_scratch[worst].priority) {
-        for (uint32_t i = 0; i < n; i++) {
-            (void) k_msgq_put(queue, &cb->drop_lowest_scratch[i], K_NO_WAIT);
-        }
-        event_queue_reorder_end(cb);
-        atomic_inc(&cb->drop_count);
-        event_system_inc_dropped_count();
-        LOG_DBG("Queue full, incoming lower than worst queued; drop newest");
-        return EVENT_ERR_QUEUE_FULL;
-    }
-
-    worst_ev = cb->drop_lowest_scratch[worst];
-
-    atomic_inc(&cb->drop_count);
-    event_system_inc_dropped_count();
-
-    for (uint32_t i = 0; i < n; i++) {
-        if (i != worst) {
-            (void) k_msgq_put(queue, &cb->drop_lowest_scratch[i], K_NO_WAIT);
-        }
-    }
-
-    int ret = k_msgq_put(queue, event, K_NO_WAIT);
-
-    event_queue_reorder_end(cb);
-    /* 被顶替块已脱离队列且 ref_count==1，无人可再访问，解锁后释放 */
-    event_free_queued_payload(&worst_ev);
-
-    if (ret != 0) {
-        if (ret == -ENOMSG) {
-            return EVENT_ERR_QUEUE_FULL;
-        }
-        return EVENT_ERR_TIMEOUT;
-    }
-
-    atomic_inc(&cb->enqueue_count);
-    update_high_watermark(&cb->high_watermark, k_msgq_num_used_get(queue));
-
-    return EVENT_OK;
+    return event_queue_drop_lowest_replace_locked(queue, event, cb, attrs.used_msgs);
 }
 
 /**
@@ -469,7 +516,8 @@ event_status_t event_queue_init(struct k_msgq* queue, void* buffer, size_t capac
 
     k_msgq_init(queue, buffer, sizeof(event_t), capacity);
 
-    cb->msgq = queue;
+    /* 无锁借用方以 cb->msgq != NULL 判定控制块可用：capacity、计数器与 reorder_lock
+     * 必须先于 msgq 就绪，msgq 最后写作为发布点，避免借用方读到半初始化控制块 */
     cb->capacity = capacity;
     atomic_set(&cb->enqueue_count, 0);
     atomic_set(&cb->dequeue_count, 0);
@@ -479,6 +527,7 @@ event_status_t event_queue_init(struct k_msgq* queue, void* buffer, size_t capac
     atomic_set(&cb->reordering, 0);
     atomic_set(&cb->isr_ops_in_flight, 0);
     k_mutex_init(&cb->reorder_lock);
+    cb->msgq = queue;
 
     k_mutex_unlock(&g_queue_cb_lock);
 
@@ -487,66 +536,83 @@ event_status_t event_queue_init(struct k_msgq* queue, void* buffer, size_t capac
 }
 
 /**
- * @brief 入队操作
+ * @brief ISR 入队路径：无锁借用控制块，reorder 期间经准入门控拒收
  *
- * @param queue 队列指针
- * @param event 要入队的事件
- * @param policy 溢出处理策略
- * @param timeout 等待超时时间
- * @return EVENT_OK 成功，其他错误码见 event_status_t
+ * CRIT-NEW-2: ISR 路径无锁扫描注册表（与线程路径一致），
+ * 统计经 atomic 更新；reorder 期间经 isr_op_enter 关闭准入。
  */
-event_status_t event_queue_enqueue(struct k_msgq* queue, const event_t* event, queue_overflow_policy_t policy,
-                                   k_timeout_t timeout) {
-    if (queue == NULL || event == NULL) {
-        return EVENT_ERR_INVALID_ARG;
-    }
-
-    /* CRIT-NEW-2: ISR 路径无锁扫描注册表（与线程路径一致），
-     * 统计经 atomic 更新；reorder 期间经 isr_op_enter 关闭准入。 */
-    if (k_is_in_isr()) {
-        event_queue_cb_t* cb = event_queue_cb_borrow_isr(queue);
-        event_status_t    st;
-
-        if (cb == NULL) {
-            return EVENT_ERR_INVALID_ARG;
-        }
-
-        if (!event_queue_isr_op_enter(cb)) {
-            atomic_inc(&cb->overflow_count);
-            event_system_inc_dropped_count();
-            return EVENT_ERR_QUEUE_FULL;
-        }
-
-        int ret = k_msgq_put(queue, event, K_NO_WAIT);
-        if (ret == 0) {
-            atomic_inc(&cb->enqueue_count);
-            update_high_watermark(&cb->high_watermark, k_msgq_num_used_get(queue));
-            st = EVENT_OK;
-        } else if (ret == -ENOMSG) {
-            atomic_inc(&cb->overflow_count);
-            event_system_inc_dropped_count();
-            st = EVENT_ERR_QUEUE_FULL;
-        } else {
-            st = EVENT_ERR_TIMEOUT;
-        }
-
-        event_queue_isr_op_exit(cb);
-        event_queue_cb_release(cb);
-        return st;
-    }
-
-    event_queue_cb_t* cb = event_queue_cb_borrow(queue);
+static event_status_t event_queue_enqueue_isr(struct k_msgq* queue, const event_t* event) {
+    event_queue_cb_t* cb = event_queue_cb_borrow_isr(queue);
+    event_status_t    st;
 
     if (cb == NULL) {
         return EVENT_ERR_INVALID_ARG;
     }
 
+    if (!event_queue_isr_op_enter(cb)) {
+        atomic_inc(&cb->overflow_count);
+        event_system_inc_dropped_count();
+        return EVENT_ERR_QUEUE_FULL;
+    }
+
+    int ret = k_msgq_put(queue, event, K_NO_WAIT);
+    if (ret == 0) {
+        event_queue_record_enqueue(cb, queue);
+        st = EVENT_OK;
+    } else if (ret == -ENOMSG) {
+        atomic_inc(&cb->overflow_count);
+        event_system_inc_dropped_count();
+        st = EVENT_ERR_QUEUE_FULL;
+    } else {
+        st = EVENT_ERR_TIMEOUT;
+    }
+
+    event_queue_isr_op_exit(cb);
+    event_queue_cb_release(cb);
+    return st;
+}
+
+/**
+ * @brief 满队列（-ENOMSG）时按溢出策略处置
+ *
+ * @pre 调用方已持有 cb->reorder_lock（若启用）
+ */
+static event_status_t event_queue_enqueue_full_policy(struct k_msgq* queue, const event_t* event,
+                                                      queue_overflow_policy_t policy, event_queue_cb_t* cb) {
+    switch (policy) {
+    case QUEUE_OVERFLOW_DROP_NEWEST:
+        event_queue_record_drop(cb);
+        LOG_DBG("Queue full, dropping newest event");
+        return EVENT_ERR_QUEUE_FULL;
+
+    case QUEUE_OVERFLOW_DROP_LOWEST:
+        return enqueue_drop_lowest_locked(queue, event, K_NO_WAIT, cb);
+
+    case QUEUE_OVERFLOW_BLOCK:
+        event_queue_record_drop(cb);
+        LOG_DBG("Queue full under BLOCK policy (non-blocking timeout)");
+        return EVENT_ERR_QUEUE_FULL;
+
+    default:
+        LOG_ERR("Unknown overflow policy: %d", policy);
+        return EVENT_ERR_INVALID_ARG;
+    }
+}
+
+/**
+ * @brief 线程入队路径：按需取 reorder_lock，一次 put 后按返回值分流
+ *
+ * @note 加解锁边界与拆分前一致：持锁覆盖 put 与错误处置，分支内不再单独解锁
+ */
+static event_status_t event_queue_enqueue_thread(struct k_msgq* queue, const event_t* event,
+                                                 queue_overflow_policy_t policy, k_timeout_t timeout,
+                                                 event_queue_cb_t* cb) {
     event_status_t st = EVENT_OK;
 
     if (policy == QUEUE_OVERFLOW_DROP_LOWEST) {
         st = event_queue_ensure_drop_lowest_scratch(cb);
         if (st != EVENT_OK) {
-            goto out;
+            return st;
         }
     }
 
@@ -565,66 +631,51 @@ event_status_t event_queue_enqueue(struct k_msgq* queue, const event_t* event, q
     int ret = event_msgq_put(queue, event, put_timeout);
 
     if (ret == 0) {
-        atomic_inc(&cb->enqueue_count);
-        update_high_watermark(&cb->high_watermark, k_msgq_num_used_get(queue));
-        if (use_op_lock) {
-            k_mutex_unlock(&cb->reorder_lock);
-        }
-        goto out;
-    }
-
-    if (ret == -ECANCELED) {
-        if (use_op_lock) {
-            k_mutex_unlock(&cb->reorder_lock);
-        }
+        event_queue_record_enqueue(cb, queue);
+    } else if (ret == -ECANCELED) {
         st = EVENT_ERR_NOT_RUNNING;
-        goto out;
-    }
-
-    if (ret == -EAGAIN) {
-        if (use_op_lock) {
-            k_mutex_unlock(&cb->reorder_lock);
-        }
+    } else if (ret == -EAGAIN) {
         st = EVENT_ERR_TIMEOUT;
-        goto out;
-    }
-
-    if (ret == -ENOMSG) {
-        switch (policy) {
-        case QUEUE_OVERFLOW_DROP_NEWEST:
-            event_queue_record_drop(cb);
-            LOG_DBG("Queue full, dropping newest event");
-            st = EVENT_ERR_QUEUE_FULL;
-            break;
-
-        case QUEUE_OVERFLOW_DROP_LOWEST:
-            st = enqueue_drop_lowest_locked(queue, event, K_NO_WAIT, cb);
-            break;
-
-        case QUEUE_OVERFLOW_BLOCK:
-            event_queue_record_drop(cb);
-            LOG_DBG("Queue full under BLOCK policy (non-blocking timeout)");
-            st = EVENT_ERR_QUEUE_FULL;
-            break;
-
-        default:
-            LOG_ERR("Unknown overflow policy: %d", policy);
-            st = EVENT_ERR_INVALID_ARG;
-            break;
-        }
-
-        if (use_op_lock) {
-            k_mutex_unlock(&cb->reorder_lock);
-        }
-        goto out;
+    } else if (ret == -ENOMSG) {
+        st = event_queue_enqueue_full_policy(queue, event, policy, cb);
+    } else {
+        st = EVENT_ERR_INVALID_ARG;
     }
 
     if (use_op_lock) {
         k_mutex_unlock(&cb->reorder_lock);
     }
-    st = EVENT_ERR_INVALID_ARG;
 
-out:
+    return st;
+}
+
+/**
+ * @brief 入队操作
+ *
+ * @param queue 队列指针
+ * @param event 要入队的事件
+ * @param policy 溢出处理策略
+ * @param timeout 等待超时时间
+ * @return EVENT_OK 成功，其他错误码见 event_status_t
+ */
+event_status_t event_queue_enqueue(struct k_msgq* queue, const event_t* event, queue_overflow_policy_t policy,
+                                   k_timeout_t timeout) {
+    if (queue == NULL || event == NULL) {
+        return EVENT_ERR_INVALID_ARG;
+    }
+
+    if (k_is_in_isr()) {
+        return event_queue_enqueue_isr(queue, event);
+    }
+
+    event_queue_cb_t* cb = event_queue_cb_borrow(queue);
+
+    if (cb == NULL) {
+        return EVENT_ERR_INVALID_ARG;
+    }
+
+    event_status_t st = event_queue_enqueue_thread(queue, event, policy, timeout, cb);
+
     event_queue_cb_release(cb);
     return st;
 }

@@ -1,6 +1,16 @@
 /**
  * @file test_state_machine.c
- * @brief Unit tests for state machine helper.
+ * @brief 状态机辅助器单元测试（默认/自定义后端、合法与非法迁移）
+ * @author zeh (china_qzh@163.com)
+ * @version 1.1
+ * @date 2026-05-23
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-23       1.0            zeh             初始版本
+ * 2026-09-18       1.1            zeh             补全文件头模板
+ *
  */
 
 #include <zephyr/ztest.h>

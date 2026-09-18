@@ -2,13 +2,18 @@
  * @file test_example_module_uart.c
  * @brief UART 通信示例模块单元测试
  * @author OpenClaw Agent
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-10
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-10       1.0            agent          为 example_module_uart 编写完整测试用例
+ * 2026-09-18       1.1            zeh            同步删除 src 侧已移除的 baudrate 字段
+ *                                                 与 TX_COMPLETE/ERROR 事件宏断言；补
+ *                                                 init 缓冲区校验用例（新契约）；接收
+ *                                                 计数/清缓冲/统计用例补强断言；无效命令
+ *                                                 魔数具名；teardown 补 event_dispatcher_stop
  *
  */
 
@@ -16,11 +21,15 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/ztest.h>
 #include <string.h>
+#include <zeplod/event_dispatcher.h>
 #include <zeplod/event_system.h>
 #include <zeplod/example_module_uart.h>
 #include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(test_example_module_uart);
+
+/* 无效控制命令探针：落在 UART_CMD_* 合法命令集合之外 */
+#define CMD_INVALID 9999U
 
 /* =============================================================================
  * 测试夹具
@@ -45,6 +54,8 @@ static void* test_suite_setup(void) {
 static void test_suite_teardown(void* fixture) {
     (void) fixture;
     module_manager_shutdown();
+    /* 与其他套件对齐：分发器未初始化时 stop 幂等返回 EVENT_OK，不产生副作用 */
+    (void) event_dispatcher_stop();
     event_system_stop();
 }
 
@@ -70,7 +81,6 @@ ZTEST(example_module_uart, test_init_null_config) {
  */
 ZTEST(example_module_uart, test_init_valid_config) {
     example_module_uart_config_t config = {.device_name = "UART_0",
-                                           .baudrate = 115200,
                                            .rx_buffer_size = 256,
                                            .tx_buffer_size = 256,
                                            .enable_interrupt = true};
@@ -87,13 +97,42 @@ ZTEST(example_module_uart, test_init_valid_config) {
  */
 ZTEST(example_module_uart, test_init_no_interrupt) {
     example_module_uart_config_t config = {.device_name = "UART_1",
-                                           .baudrate = 9600,
                                            .rx_buffer_size = 128,
                                            .tx_buffer_size = 128,
                                            .enable_interrupt = false};
 
     int ret = example_module_uart_init(&config);
     zassert_equal(ret, 0, "禁用中断模式初始化应返回 0");
+
+    example_module_uart_shutdown();
+}
+
+/**
+ * @brief 测试模块初始化 - rx_buffer_size = 0（新契约：越界返回 -EINVAL）
+ */
+ZTEST(example_module_uart, test_init_rx_buffer_zero_rejected) {
+    example_module_uart_config_t config = {.device_name = "UART_0",
+                                           .rx_buffer_size = 0U,
+                                           .tx_buffer_size = 128U,
+                                           .enable_interrupt = false};
+
+    int ret = example_module_uart_init(&config);
+    zassert_equal(ret, -EINVAL, "rx_buffer_size=0 应返回 -EINVAL");
+
+    example_module_uart_shutdown();
+}
+
+/**
+ * @brief 测试模块初始化 - rx_buffer_size = 257 超过内部静态缓冲（新契约：-EINVAL）
+ */
+ZTEST(example_module_uart, test_init_rx_buffer_too_large_rejected) {
+    example_module_uart_config_t config = {.device_name = "UART_0",
+                                           .rx_buffer_size = 257U,
+                                           .tx_buffer_size = 128U,
+                                           .enable_interrupt = false};
+
+    int ret = example_module_uart_init(&config);
+    zassert_equal(ret, -EINVAL, "rx_buffer_size=257 应返回 -EINVAL");
 
     example_module_uart_shutdown();
 }
@@ -245,10 +284,11 @@ ZTEST(example_module_uart, test_receive_null) {
  */
 ZTEST(example_module_uart, test_get_rx_count) {
     example_module_uart_init(NULL);
-    example_module_uart_start();
+    zassert_equal(example_module_uart_start(), 0, "模块启动应返回 0");
 
+    /* 刚启动无任何接收，计数有确定契约值：0 */
     size_t count = example_module_uart_get_rx_count();
-    /* 初始应为 0 或某个确定值 */
+    zassert_equal(count, 0U, "启动后接收计数应为 0");
 
     example_module_uart_stop();
     example_module_uart_shutdown();
@@ -259,13 +299,17 @@ ZTEST(example_module_uart, test_get_rx_count) {
  */
 ZTEST(example_module_uart, test_clear_rx_buffer) {
     example_module_uart_init(NULL);
-    example_module_uart_start();
+    zassert_equal(example_module_uart_start(), 0, "模块启动应返回 0");
 
     /* 清空操作应不崩溃 */
     example_module_uart_clear_rx_buffer();
 
-    /* 再次清空确认安全 */
+    /* 清空后计数有确定契约值：0 */
+    zassert_equal(example_module_uart_get_rx_count(), 0U, "清空后接收计数应为 0");
+
+    /* 再次清空确认安全（幂等） */
     example_module_uart_clear_rx_buffer();
+    zassert_equal(example_module_uart_get_rx_count(), 0U, "重复清空后接收计数仍应为 0");
 
     example_module_uart_stop();
     example_module_uart_shutdown();
@@ -277,23 +321,28 @@ ZTEST(example_module_uart, test_clear_rx_buffer) {
 
 /**
  * @brief 测试获取统计信息
+ *
+ * tx_count 由 send 持锁精确累加发送字节数：发送前后差值必须严格等于
+ * 本次发送长度（rx_thread 只动 rx_count/error_count，不参与 tx 计数）。
  */
 ZTEST(example_module_uart, test_get_stats) {
     example_module_uart_init(NULL);
-    example_module_uart_start();
+    zassert_equal(example_module_uart_start(), 0, "模块启动应返回 0");
 
     uint32_t tx_count = 0, rx_count = 0, errors = 0;
     example_module_uart_get_stats(&tx_count, &rx_count, &errors);
 
     /* 发送一些数据 */
     const char* test_data = "stats test";
-    example_module_uart_send(test_data, strlen(test_data));
+    int         sent = example_module_uart_send(test_data, strlen(test_data));
+    zassert_equal(sent, (int) strlen(test_data), "发送应返回全部字节数");
 
     /* 再次获取统计 */
     uint32_t tx_after = 0, rx_after = 0, errors_after = 0;
     example_module_uart_get_stats(&tx_after, &rx_after, &errors_after);
 
-    zassert_true(tx_after >= tx_count, "发送计数应增加");
+    zassert_equal(tx_after, tx_count + (uint32_t) strlen(test_data), "tx 计数增量应恰等于发送字节数");
+    zassert_equal(errors_after, errors, "正常发送不应产生错误计数");
 
     example_module_uart_stop();
     example_module_uart_shutdown();
@@ -354,7 +403,7 @@ ZTEST(example_module_uart, test_control_clear_rx) {
 ZTEST(example_module_uart, test_control_invalid) {
     example_module_uart_init(NULL);
 
-    int ret = example_module_uart_control(9999, NULL);
+    int ret = example_module_uart_control(CMD_INVALID, NULL);
     zassert_true(ret != 0, "无效命令应返回错误");
 
     example_module_uart_shutdown();
@@ -381,15 +430,12 @@ ZTEST(example_module_uart, test_event_null) {
 
 /**
  * @brief 测试事件类型定义
+ *
+ * 仅剩 RX_DATA 一个事件类型：TX_COMPLETE/ERROR 宏因全工程无发布方已删除
+ * （2026-09-18 src 侧整改），此处不得再引用。
  */
 ZTEST(example_module_uart, test_event_types) {
     zassert_true(EVENT_TYPE_UART_RX_DATA > 0, "RX 事件类型应 > 0");
-    zassert_true(EVENT_TYPE_UART_TX_COMPLETE > 0, "TX 完成事件类型应 > 0");
-    zassert_true(EVENT_TYPE_UART_ERROR > 0, "错误事件类型应 > 0");
-
-    /* 事件类型应互不相同 */
-    zassert_true(EVENT_TYPE_UART_RX_DATA != EVENT_TYPE_UART_TX_COMPLETE, "RX 和 TX 事件类型应不同");
-    zassert_true(EVENT_TYPE_UART_RX_DATA != EVENT_TYPE_UART_ERROR, "RX 和 ERROR 事件类型应不同");
 }
 
 /* =============================================================================

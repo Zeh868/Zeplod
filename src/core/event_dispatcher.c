@@ -10,7 +10,7 @@
  * - 处理延迟统计
  * - 批处理支持
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.2
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -19,6 +19,7 @@
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.0            zeh            文档注释修订
  * 2026-05-28       1.1            zeh            热路径：state 原子化，config 快照无锁读（P3.3）
+ * 2026-09-18       1.2            zeh            拆分 init/stop/process_one 超长函数；EMA 种子读取纳入锁内防撕裂
  *
  */
 
@@ -100,8 +101,9 @@ static K_SEM_DEFINE(g_dispatcher_lifecycle_gate, 1, 1);
  *
  * 每事件无锁折叠到本结构，批处理结束时（process_all 一轮 / process_one 一次）
  * 持锁提交一次，将热路径的每事件锁往返降为每批一次。
- * 全局 stats 的唯一写者是分发线程或持 lifecycle gate 的手动消费者，
- * 种子读取无需加锁。
+ * 仅 EMA 种子读取（每批首个事件）纳入 g_dispatcher.lock 短临界区：
+ * event_dispatcher_reset_stats 可并发 memset 全局统计，无锁读取在 32 位 MCU
+ * 上可能撕裂 64 位 events_processed；其余折叠路径仍保持无锁。
  */
 typedef struct {
     bool     enable_stats;   /**< init 快照：本批是否累计统计 */
@@ -121,6 +123,24 @@ static void batch_stats_init(batch_stats_t* b) {
     b->avg_latency_us = 0;
 }
 
+/**
+ * @brief 从全局统计播种 EMA（短临界区持 g_dispatcher.lock）
+ *
+ * 与 event_dispatcher_reset_stats 的 memset 同锁互斥，避免 32 位 MCU 上
+ * 64 位 events_processed 的撕裂读；每批仅首个事件付出一次锁往返。
+ */
+static void batch_stats_seed(batch_stats_t* b, uint32_t latency_us) {
+    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
+
+    if (g_dispatcher.stats.events_processed == 0U) {
+        b->avg_latency_us = latency_us; /* 全局首个事件：直接种子（v1 语义） */
+    } else {
+        b->avg_latency_us = (uint32_t) (((uint64_t) g_dispatcher.stats.avg_latency_us * 7 + latency_us) / 8);
+    }
+
+    k_mutex_unlock(&g_dispatcher.lock);
+}
+
 static void batch_stats_fold(batch_stats_t* b, uint32_t latency_us, bool error) {
     b->count++;
     if (error) {
@@ -131,11 +151,7 @@ static void batch_stats_fold(batch_stats_t* b, uint32_t latency_us, bool error) 
     }
 
     if (!b->stats_seeded) {
-        if (g_dispatcher.stats.events_processed == 0U) {
-            b->avg_latency_us = latency_us; /* 全局首个事件：直接种子（v1 语义） */
-        } else {
-            b->avg_latency_us = (uint32_t) (((uint64_t) g_dispatcher.stats.avg_latency_us * 7 + latency_us) / 8);
-        }
+        batch_stats_seed(b, latency_us);
         b->stats_seeded = true;
     } else {
         b->avg_latency_us = (uint32_t) (((uint64_t) b->avg_latency_us * 7 + latency_us) / 8);
@@ -301,6 +317,50 @@ static bool dispatcher_can_process_locked(dispatcher_state_t state, bool thread_
  * 分发器控制 API
  * ============================================================================= */
 
+/** init 失败路径统一释放两层锁（api_lock 先于 lifecycle gate，与获取顺序相反） */
+static void dispatcher_init_unlock(void) {
+    k_mutex_unlock(&g_dispatcher_api_lock);
+    dispatcher_lifecycle_unlock();
+}
+
+/**
+ * @brief 重置控制块但保留 filter/user_data（LOW-5）
+ *
+ * memset 会清除已设置的 filter 与 user_data，导致 stop->init 序列后
+ * 用户先前注册的过滤器静默失效。在重置前保存，重置后恢复以保持幂等性；
+ * 如需主动清除过滤器，调用方应显式 event_dispatcher_clear_filter()。
+ */
+static void dispatcher_init_reset_preserve_filter(void) {
+    event_filter_t saved_filter = g_dispatcher.filter;
+    void*          saved_filter_ud = g_dispatcher.filter_user_data;
+
+    atomic_set(&g_dispatcher_initialized, 0);
+    memset(&g_dispatcher, 0, sizeof(g_dispatcher));
+
+    g_dispatcher.filter = saved_filter;
+    g_dispatcher.filter_user_data = saved_filter_ud;
+}
+
+/**
+ * @brief 应用分发器配置；config 为 NULL 时整套回退 Kconfig 默认值
+ */
+static void dispatcher_init_apply_config(const dispatcher_config_t* config) {
+    if (config != NULL) {
+        g_dispatcher.config = *config;
+        if (config->thread_name == NULL) {
+            g_dispatcher.config.thread_name = "event_disp";
+            LOG_WRN("Thread name is NULL, using default 'event_disp'");
+        }
+        return;
+    }
+
+    g_dispatcher.config.stack_size = DEFAULT_STACK_SIZE;
+    g_dispatcher.config.priority = DEFAULT_PRIORITY;
+    g_dispatcher.config.thread_name = "event_disp";
+    g_dispatcher.config.enable_stats = true;
+    g_dispatcher.config.max_events_per_cycle = DEFAULT_MAX_EVENTS_CYCLE;
+}
+
 /**
  * @brief 初始化事件分发器
  *
@@ -321,46 +381,20 @@ event_status_t event_dispatcher_init(const dispatcher_config_t* config) {
      * thread_started 在 stop 后会被清零，因此正常重启序列不受限制。 */
     if (dispatcher_thread_is_started()) {
         LOG_WRN("Dispatcher thread already running, refusing re-init");
-        k_mutex_unlock(&g_dispatcher_api_lock);
-        dispatcher_lifecycle_unlock();
+        dispatcher_init_unlock();
         return EVENT_ERR_INVALID_ARG;
     }
 
     if (config != NULL) {
         event_status_t vret = event_dispatcher_validate_config(config);
         if (vret != EVENT_OK) {
-            k_mutex_unlock(&g_dispatcher_api_lock);
-            dispatcher_lifecycle_unlock();
+            dispatcher_init_unlock();
             return vret;
         }
     }
 
-    /* LOW-5: memset 会清除已设置的 filter 与 user_data，导致 stop->init 序列后
-     * 用户先前注册的过滤器静默失效。在重置前保存，重置后恢复以保持幂等性；
-     * 如需主动清除过滤器，调用方应显式 event_dispatcher_clear_filter()。 */
-    event_filter_t saved_filter = g_dispatcher.filter;
-    void*          saved_filter_ud = g_dispatcher.filter_user_data;
-
-    atomic_set(&g_dispatcher_initialized, 0);
-    memset(&g_dispatcher, 0, sizeof(g_dispatcher));
-
-    g_dispatcher.filter = saved_filter;
-    g_dispatcher.filter_user_data = saved_filter_ud;
-
-    /* 设置默认配置或用户提供的配置 */
-    if (config != NULL) {
-        g_dispatcher.config = *config;
-        if (config->thread_name == NULL) {
-            g_dispatcher.config.thread_name = "event_disp";
-            LOG_WRN("Thread name is NULL, using default 'event_disp'");
-        }
-    } else {
-        g_dispatcher.config.stack_size = DEFAULT_STACK_SIZE;
-        g_dispatcher.config.priority = DEFAULT_PRIORITY;
-        g_dispatcher.config.thread_name = "event_disp";
-        g_dispatcher.config.enable_stats = true;
-        g_dispatcher.config.max_events_per_cycle = DEFAULT_MAX_EVENTS_CYCLE;
-    }
+    dispatcher_init_reset_preserve_filter();
+    dispatcher_init_apply_config(config);
 
     /* 初始化同步原语 */
     k_mutex_init(&g_dispatcher.lock);
@@ -374,16 +408,14 @@ event_status_t event_dispatcher_init(const dispatcher_config_t* config) {
     g_event_queue = event_system_get_queue();
     if (g_event_queue == NULL) {
         LOG_ERR("Call event_system_init() before event_dispatcher_init()");
-        k_mutex_unlock(&g_dispatcher_api_lock);
-        dispatcher_lifecycle_unlock();
+        dispatcher_init_unlock();
         return EVENT_ERR_INVALID_ARG;
     }
 
     atomic_set(&g_dispatcher_events_dropped, 0);
     atomic_set(&g_dispatcher_initialized, 1);
 
-    k_mutex_unlock(&g_dispatcher_api_lock);
-    dispatcher_lifecycle_unlock();
+    dispatcher_init_unlock();
 
     LOG_DBG("Event dispatcher initialized");
     return EVENT_OK;
@@ -465,6 +497,35 @@ event_status_t event_dispatcher_start(void) {
 }
 
 /**
+ * @brief join 分发线程并在成功后清理 thread_started
+ *
+ * join 失败时保持 thread_started=true：后续 stop/deinit 可重试 join，
+ * start() 也无法在原线程可能仍持有事件负载时创建第二个消费者。
+ *
+ * @return EVENT_OK join 成功（或无需 join），EVENT_ERR_TIMEOUT join 超时/失败
+ */
+static event_status_t dispatcher_stop_join_thread(uint32_t join_gen, bool should_join) {
+    if (should_join) {
+        int jret = k_thread_join(&g_dispatcher.thread, K_MSEC(EVENT_DISPATCHER_THREAD_JOIN_TIMEOUT_MS));
+
+        if (jret != 0) {
+            LOG_ERR("Dispatcher thread join timeout/failed: %d (timeout=%u ms)", jret,
+                    EVENT_DISPATCHER_THREAD_JOIN_TIMEOUT_MS);
+            return EVENT_ERR_TIMEOUT;
+        }
+        LOG_DBG("Dispatcher thread joined successfully");
+    }
+
+    /* SIL-2: join 成功后清理状态；若 stop 期间另有 start 创建新线程则保留 thread_started */
+    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
+    dispatcher_apply_thread_stopped_locked(join_gen);
+    k_mutex_unlock(&g_dispatcher.lock);
+
+    LOG_DBG("Event dispatcher stopped");
+    return EVENT_OK;
+}
+
+/**
  * @brief 停止分发器
  *
  * @return EVENT_OK 成功
@@ -486,46 +547,24 @@ static event_status_t event_dispatcher_stop_locked(void) {
 
     if (dispatcher_state_load() == DISPATCHER_STOPPED) {
         if (dispatcher_thread_is_started()) {
+            /* stop/join 已在别处进行：本次仅补 join，不重复置状态 */
             should_join = true;
             join_gen = g_dispatcher.thread_gen;
             k_mutex_unlock(&g_dispatcher.lock);
             LOG_WRN("Dispatcher stop/join already in progress, retrying join");
-            goto join_thread;
+            return dispatcher_stop_join_thread(join_gen, should_join);
         }
         k_mutex_unlock(&g_dispatcher.lock);
         return EVENT_OK;
     }
 
-    /* SIL-2: 设置停止状态，线程会在下次循环检查时退出 */
+    /* SIL-2: 设置停止状态，线程会在下次循环检查时退出；join 在锁外执行 */
     dispatcher_set_state_locked(DISPATCHER_STOPPED);
     should_join = dispatcher_thread_is_started();
     join_gen = g_dispatcher.thread_gen;
     k_mutex_unlock(&g_dispatcher.lock);
 
-    /* SIL-2: 等待线程退出，使用有限超时 */
-join_thread:
-    if (should_join) {
-        int jret = k_thread_join(&g_dispatcher.thread, K_MSEC(EVENT_DISPATCHER_THREAD_JOIN_TIMEOUT_MS));
-
-        if (jret != 0) {
-            LOG_ERR("Dispatcher thread join timeout/failed: %d (timeout=%u ms)", jret,
-                    EVENT_DISPATCHER_THREAD_JOIN_TIMEOUT_MS);
-            /* Keep thread_started=true so later stop/deinit can retry join and start() cannot create
-             * a second consumer while the original thread may still own an event payload.
-             */
-            return EVENT_ERR_TIMEOUT;
-        } else {
-            LOG_DBG("Dispatcher thread joined successfully");
-        }
-    }
-
-    /* SIL-2: join 成功后清理状态；若 stop 期间另有 start 创建新线程则保留 thread_started */
-    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
-    dispatcher_apply_thread_stopped_locked(join_gen);
-    k_mutex_unlock(&g_dispatcher.lock);
-
-    LOG_DBG("Event dispatcher stopped");
-    return EVENT_OK;
+    return dispatcher_stop_join_thread(join_gen, should_join);
 }
 
 event_status_t event_dispatcher_stop(void) {
@@ -721,6 +760,73 @@ void event_dispatcher_clear_filter(void) {
 }
 
 /**
+ * @brief 持锁快照分发器状态与过滤器，并判定当前上下文是否允许手动消费
+ *
+ * 出队前后各调用一次：dequeue 可能阻塞，期间 stop() 可能已改变状态。
+ * 临界区边界与拆分前一致（仅快照与判定，不含出队与回调）。
+ *
+ * @param state_out 状态快照
+ * @param thread_started_out 分发线程存活快照
+ * @param ever_started_out 本轮 init 后是否曾启动的快照
+ * @param filter_out 过滤器快照
+ * @param filter_user_data_out 过滤器用户数据快照
+ * @return true 允许消费，false 拒绝（状态/上下文不满足）
+ */
+static bool process_one_state_check(dispatcher_state_t* state_out, bool* thread_started_out, bool* ever_started_out,
+                                    event_filter_t* filter_out, void** filter_user_data_out) {
+    bool allowed;
+
+    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
+    *state_out = dispatcher_state_load();
+    *thread_started_out = dispatcher_thread_is_started();
+    *ever_started_out = g_dispatcher.ever_started;
+    allowed = dispatcher_can_process_locked(*state_out, *thread_started_out, *ever_started_out);
+    *filter_out = g_dispatcher.filter;
+    *filter_user_data_out = g_dispatcher.filter_user_data;
+    k_mutex_unlock(&g_dispatcher.lock);
+
+    return allowed;
+}
+
+/** 出队前被拒绝时的差异化日志：区分「曾启动已停止」与「分发线程独占消费」两类误用 */
+static void process_one_log_reject(dispatcher_state_t state, bool thread_started, bool ever_started) {
+    if (ever_started && state == DISPATCHER_STOPPED) {
+        LOG_WRN("process_one rejected: dispatcher was started and is now stopped");
+    } else if (thread_started && state == DISPATCHER_RUNNING) {
+        LOG_WRN("process_one rejected: dispatcher thread is consuming the queue");
+    }
+}
+
+/**
+ * @brief 应用过滤器并分发事件（锁外执行，统计折叠进 batch）
+ *
+ * 被过滤的事件计入 events_filtered（短临界区）；过滤与分发都视为消费成功。
+ *
+ * @return EVENT_OK 事件已消费（含被过滤）
+ */
+static event_status_t process_one_dispatch(event_t* event, event_filter_t filter, void* filter_user_data,
+                                           batch_stats_t* batch) {
+    /* 应用过滤器（如果已设置） */
+    if (filter != NULL && !filter(event, filter_user_data)) {
+        /* SIL-2: 使用统一接口释放动态数据，正确处理 slab 来源 */
+        event_free_data(event);
+        if (batch->enable_stats) {
+            k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
+            g_dispatcher.stats.events_filtered++;
+            k_mutex_unlock(&g_dispatcher.lock);
+        }
+        return EVENT_OK;
+    }
+
+    process_event(event, batch);
+
+    /* SIL-2: 使用统一接口释放动态数据，正确处理 slab 来源 */
+    event_free_data(event);
+
+    return EVENT_OK;
+}
+
+/**
  * @brief 处理单个事件
  *
  * @param timeout 等待超时时间
@@ -729,19 +835,22 @@ void event_dispatcher_clear_filter(void) {
  */
 static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, bool manage_lifecycle,
                                                         batch_stats_t* batch) {
+    batch_stats_t      local_batch;
     dispatcher_state_t state;
     bool               thread_started;
     bool               ever_started;
     event_filter_t     filter;
     void*              filter_user_data;
     bool               lifecycle_locked = false;
-    batch_stats_t      local_batch;
+    event_status_t     st;
+    event_t            event;
 
     if (batch == NULL) {
         batch = &local_batch;
         batch_stats_init(batch);
     }
 
+    /* 外部线程手动消费须持有生命周期门闩，避免与 init/stop 并发重置控制块 */
     if (manage_lifecycle && !event_dispatcher_is_current_thread()) {
         if (!dispatcher_lifecycle_try_lock()) {
             return EVENT_ERR_TIMEOUT;
@@ -755,89 +864,41 @@ static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, boo
     }
 
     if (!dispatcher_is_initialized()) {
-        if (lifecycle_locked) {
-            dispatcher_lifecycle_unlock();
-        }
-        return EVENT_ERR_INVALID_ARG;
+        st = EVENT_ERR_INVALID_ARG;
+        goto out;
     }
 
-    /* SIL-2: 在持有锁的情况下读取所有需要的状态并检查 */
-    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
-    state = dispatcher_state_load();
-    thread_started = dispatcher_thread_is_started();
-    ever_started = g_dispatcher.ever_started;
-
-    if (!dispatcher_can_process_locked(state, thread_started, ever_started)) {
-        k_mutex_unlock(&g_dispatcher.lock);
-        if (ever_started && state == DISPATCHER_STOPPED) {
-            LOG_WRN("process_one rejected: dispatcher was started and is now stopped");
-        } else if (thread_started && state == DISPATCHER_RUNNING) {
-            LOG_WRN("process_one rejected: dispatcher thread is consuming the queue");
-        }
-        if (lifecycle_locked) {
-            dispatcher_lifecycle_unlock();
-        }
-        return EVENT_ERR_INVALID_ARG;
+    /* SIL-2: 出队前在持有锁的情况下快照状态并检查 */
+    if (!process_one_state_check(&state, &thread_started, &ever_started, &filter, &filter_user_data)) {
+        process_one_log_reject(state, thread_started, ever_started);
+        st = EVENT_ERR_INVALID_ARG;
+        goto out;
     }
 
-    k_mutex_unlock(&g_dispatcher.lock);
-
-    event_t        event;
-    event_status_t dq_st = event_queue_dequeue(g_event_queue, &event, timeout);
-    if (dq_st != EVENT_OK) {
-        if (lifecycle_locked) {
-            dispatcher_lifecycle_unlock();
-        }
-        return dq_st;
+    st = event_queue_dequeue(g_event_queue, &event, timeout);
+    if (st != EVENT_OK) {
+        goto out;
     }
 
-    /* SIL-2: 阻塞期间状态可能已改变（如 stop() 被调用），重新检查 */
-    k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
-    state = dispatcher_state_load();
-    thread_started = dispatcher_thread_is_started();
-    ever_started = g_dispatcher.ever_started;
-    if (!dispatcher_can_process_locked(state, thread_started, ever_started)) {
-        k_mutex_unlock(&g_dispatcher.lock);
+    /* SIL-2: 阻塞期间状态可能已改变（如 stop() 被调用），出队后复核 */
+    if (!process_one_state_check(&state, &thread_started, &ever_started, &filter, &filter_user_data)) {
         event_free_data(&event);
-        if (lifecycle_locked) {
-            dispatcher_lifecycle_unlock();
-        }
-        return EVENT_ERR_INVALID_ARG;
-    }
-    filter = g_dispatcher.filter;
-    filter_user_data = g_dispatcher.filter_user_data;
-    k_mutex_unlock(&g_dispatcher.lock);
-
-    /* 应用过滤器（如果已设置） */
-    if (filter != NULL) {
-        if (!filter(&event, filter_user_data)) {
-            /* SIL-2: 使用统一接口释放动态数据，正确处理 slab 来源 */
-            event_free_data(&event);
-            if (batch->enable_stats) {
-                k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
-                g_dispatcher.stats.events_filtered++;
-                k_mutex_unlock(&g_dispatcher.lock);
-            }
-            if (lifecycle_locked) {
-                dispatcher_lifecycle_unlock();
-            }
-            return EVENT_OK;
-        }
+        st = EVENT_ERR_INVALID_ARG;
+        goto out;
     }
 
-    process_event(&event, batch);
-
-    /* SIL-2: 使用统一接口释放动态数据，正确处理 slab 来源 */
-    event_free_data(&event);
+    (void) process_one_dispatch(&event, filter, filter_user_data, batch);
+    st = EVENT_OK;
 
     if (batch == &local_batch) {
         dispatcher_commit_batch(batch, 1U);
     }
 
+out:
     if (lifecycle_locked) {
         dispatcher_lifecycle_unlock();
     }
-    return EVENT_OK;
+    return st;
 }
 
 event_status_t event_dispatcher_process_one(k_timeout_t timeout) {

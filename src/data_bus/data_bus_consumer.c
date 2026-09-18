@@ -8,7 +8,7 @@
  * 3. 逐个调用消费者回调
  * 4. 非 manual_release 模式下，回调后框架自动 release
  * @author zeh (china_qzh@163.com)
- * @version 2.0
+ * @version 2.3
  * @date 2026-05-15
  *
  * @par 修改日志:
@@ -16,6 +16,10 @@
  *    Date         Version        Author          Description
  * 2026-05-15       2.0            zeh            重构：删除 COPY 模式，实现 +N 引用拆分
  * 2026-05-20       2.1            zeh            消费者固定槽位：注销不压缩数组，保证 out_consumer 地址稳定
+ * 2026-09-18       2.2            zeh            审查整改：注销等待 callback_hold 改有界超时
+ * 2026-09-18       2.3            zeh            复审返工：注册路径名字格式化真正移出自旋锁临界区（锁前格式化、锁内 memcpy）
+ *                                                 （超时 -EBUSY）；spinlock 内日志拼接改锁内
+ *                                                 memcpy 快照、锁外输出
  *
  */
 
@@ -28,6 +32,9 @@
 #include "data_bus_memory.h"
 
 LOG_MODULE_REGISTER(data_bus_consumer, CONFIG_DATA_BUS_LOG_LEVEL);
+
+/** 注销时等待回调退出的上限（毫秒）；超时说明回调异常滞留，放弃注销避免挂死调用方 */
+#define DATA_BUS_UNREGISTER_TIMEOUT_MS 1000U
 
 typedef struct {
     data_bus_consumer_t*  consumer; /* 消费者对象指针（固定槽位地址） */
@@ -76,6 +83,21 @@ int data_bus_consumer_register(data_bus_channel_t* ch, const data_bus_consumer_c
         return -ESHUTDOWN;
     }
 
+    /* 名字格式化在自旋锁临界区外完成（cfg 为调用方数据，g_channels_lock 下可读），
+     * 锁内只做定长 memcpy，缩短关中断时间 */
+    char name_scratch[CONFIG_DATA_BUS_CHANNEL_NAME_MAX]; /* 与 consumer->name_storage 同尺寸 */
+    bool name_valid = false;
+    int  name_len = 0;
+    if (cfg->name != NULL) {
+        int name_ret = snprintf(name_scratch, sizeof(name_scratch), "%s", cfg->name);
+        name_valid = (name_ret >= 0) && ((size_t) name_ret < sizeof(name_scratch));
+        if (!name_valid) {
+            k_mutex_unlock(&g_channels_lock);
+            return -EINVAL;
+        }
+        name_len = name_ret;
+    }
+
     k_spinlock_key_t key = k_spin_lock(&ch->lock);
 
     if (!atomic_get(&ch->active)) {
@@ -85,9 +107,13 @@ int data_bus_consumer_register(data_bus_channel_t* ch, const data_bus_consumer_c
     }
 
     if (ch->consumer_count >= CONFIG_DATA_BUS_MAX_CONSUMERS_PER_CHANNEL) {
-        LOG_ERR("Channel '%s' consumer table full (max=%u)", ch->name, CONFIG_DATA_BUS_MAX_CONSUMERS_PER_CHANNEL);
+        /* 通道名先快照，日志输出留到解锁后（ch 在放锁后可能被并发销毁） */
+        char full_log_name[CONFIG_DATA_BUS_CHANNEL_NAME_MAX];
+        memcpy(full_log_name, ch->name_storage, sizeof(full_log_name));
         k_spin_unlock(&ch->lock, key);
         k_mutex_unlock(&g_channels_lock);
+        LOG_ERR("Channel '%s' consumer table full (max=%u)", full_log_name,
+                CONFIG_DATA_BUS_MAX_CONSUMERS_PER_CHANNEL);
         return -ENOMEM;
     }
 
@@ -106,18 +132,10 @@ int data_bus_consumer_register(data_bus_channel_t* ch, const data_bus_consumer_c
 
     data_bus_consumer_t* consumer = &ch->consumers[slot];
 
+    /* memset 已清零（无名即空串）；按精确长度拷贝避免带入栈上未初始化尾部字节 */
     memset(consumer, 0, sizeof(*consumer));
-
-    if (cfg->name != NULL) {
-        int name_ret = snprintf(consumer->name_storage, sizeof(consumer->name_storage), "%s", cfg->name);
-
-        if (name_ret < 0 || (size_t) name_ret >= sizeof(consumer->name_storage)) {
-            k_spin_unlock(&ch->lock, key);
-            k_mutex_unlock(&g_channels_lock);
-            return -EINVAL;
-        }
-    } else {
-        consumer->name_storage[0] = '\0';
+    if (name_valid) {
+        memcpy(consumer->name_storage, name_scratch, (size_t) name_len + 1U);
     }
     consumer->name = consumer->name_storage;
     consumer->channel = ch;
@@ -136,8 +154,9 @@ int data_bus_consumer_register(data_bus_channel_t* ch, const data_bus_consumer_c
     char     log_consumer[sizeof(consumer->name_storage)];
     char     log_channel[CONFIG_DATA_BUS_CHANNEL_NAME_MAX];
 
-    (void) snprintf(log_consumer, sizeof(log_consumer), "%s", consumer->name);
-    (void) snprintf(log_channel, sizeof(log_channel), "%s", ch->name);
+    /* 锁内仅 memcpy 快照字符串（均为 NUL 结尾的内部存储），日志输出留到锁外，缩短临界区 */
+    memcpy(log_consumer, consumer->name_storage, sizeof(log_consumer));
+    memcpy(log_channel, ch->name_storage, sizeof(log_channel));
 
     k_spin_unlock(&ch->lock, key);
 
@@ -186,7 +205,8 @@ int data_bus_consumer_unregister(data_bus_consumer_t* consumer) {
     k_spinlock_key_t key = k_spin_lock(&found_ch->lock);
     char             log_channel[CONFIG_DATA_BUS_CHANNEL_NAME_MAX];
 
-    (void) snprintf(log_channel, sizeof(log_channel), "%s", found_ch->name);
+    /* 锁内仅 memcpy 快照，避免 spinlock 临界区内执行格式化 */
+    memcpy(log_channel, found_ch->name_storage, sizeof(log_channel));
 
     uint32_t found_idx = CONFIG_DATA_BUS_MAX_CONSUMERS_PER_CHANNEL;
     for (uint32_t j = 0; j < CONFIG_DATA_BUS_MAX_CONSUMERS_PER_CHANNEL; j++) {
@@ -204,7 +224,9 @@ int data_bus_consumer_unregister(data_bus_consumer_t* consumer) {
     }
 
     char log_name[sizeof(consumer->name_storage)];
-    (void) snprintf(log_name, sizeof(log_name), "%s", consumer->name_storage);
+
+    /* 锁内仅 memcpy 快照，避免 spinlock 临界区内执行格式化 */
+    memcpy(log_name, consumer->name_storage, sizeof(log_name));
 
     uint32_t recorded_generation = consumer->generation;
     atomic_set(&consumer->active, 0);
@@ -214,8 +236,22 @@ int data_bus_consumer_unregister(data_bus_consumer_t* consumer) {
     /* 释放全局锁后再等待 callback_hold，避免与回调内调用 data_bus_publish() 死锁 */
     k_mutex_unlock(&g_channels_lock);
 
+    /*
+     * 有界等待回调退出：无界自旋会在回调长期不返回（回调缺陷）时挂死注销方。
+     * 超时放弃本次注销并返回 -EBUSY；消费者已置 active=0，后续派发不再命中，
+     * 槽位保持占用，待通道销毁时统一回收（不可对同一 consumer 重试注销）。
+     */
+    uint32_t waited_ms = 0U;
     while (atomic_get(&consumer->callback_hold) != 0) {
+        if (waited_ms >= DATA_BUS_UNREGISTER_TIMEOUT_MS) {
+            /* 超时路径无锁递减 lifecycle_hold（原子量），避免与滞留回调争抢通道锁；
+             * 递减保证 destroy 等待 lifecycle_hold 归零的路径不被永久阻塞 */
+            (void) atomic_dec(&found_ch->lifecycle_hold);
+            LOG_WRN("Consumer '%s' unregister timeout: callback busy after %u ms", log_name, waited_ms);
+            return -EBUSY;
+        }
         k_sleep(K_MSEC(1));
+        waited_ms++;
     }
 
     k_mutex_lock(&g_channels_lock, K_FOREVER);

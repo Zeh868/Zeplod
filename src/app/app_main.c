@@ -2,7 +2,7 @@
  * @file app_main.c
  * @brief 应用主入口实现
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.2
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -10,9 +10,20 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-28       1.1            zeh            Shell 命令迁至 app_shell.c（P4.3）
+ * 2026-09-18       1.2            zeh            审查整改：include 顺序对齐规范并删除未
+ *                                                 使用的 stdlib.h；模块批量启动 0 告警；
+ *                                                 心跳/主循环周期具名；banner printk 注明
+ *                                                 日志后端就绪前输出的例外理由
  *
  */
 
+#include <zephyr/init.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/sys/util.h>
+#include <errno.h>
+#include <string.h>
 #include <zeplod/app_banner.h>
 #include <zeplod/app_kv.h>
 #include <zeplod/app_main.h>
@@ -24,17 +35,17 @@
 #include <zeplod/sys_timer.h>
 #include <zeplod/sys_watchdog.h>
 
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include <zephyr/init.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/sys/printk.h>
-#include <zephyr/sys/util.h>
-
 LOG_MODULE_REGISTER(app_main, CONFIG_SYS_LOG_LEVEL);
+
+/* =============================================================================
+ * 内部定义
+ * ============================================================================= */
+
+/** 心跳状态日志的输出周期：每 N 次心跳打印一次（避免日志刷屏） */
+#define APP_HEARTBEAT_LOG_EVERY_N 10U
+
+/** 主循环空闲睡眠时长（毫秒）：事件驱动设计下主循环无任务，仅让出 CPU */
+#define APP_MAIN_LOOP_SLEEP_MS 1000
 
 /* =============================================================================
  * 内部数据结构
@@ -242,7 +253,20 @@ int app_start(void) {
 #if IS_ENABLED(CONFIG_MODULE_MANAGER)
     started = module_compat_start_all();
     started_modules = true;
-    LOG_DBG("Started %d modules", started);
+    if (started < 0) {
+        LOG_ERR("module start_all rejected: %d", started);
+    } else if (started == 0) {
+        /* 返回 0 可能是"无模块可启动"（正常），也可能是全部启动失败；对照注册数区分 */
+        module_compat_stats_t stats;
+        module_compat_get_stats(&stats);
+        if (stats.total_modules > 0) {
+            LOG_ERR("module start_all started 0/%u modules", (unsigned int) stats.total_modules);
+        } else {
+            LOG_DBG("No modules registered");
+        }
+    } else {
+        LOG_DBG("Started %d modules", started);
+    }
 #endif
 
 #if APP_CONFIG_ENABLE_WATCHDOG
@@ -412,13 +436,15 @@ static void app_heartbeat_timer_callback(sys_timer_handle_t timer, void* user_da
 #endif
 
     /* 记录周期性状态 */
-    if (count % 10U == 0U) {
+    if (count % APP_HEARTBEAT_LOG_EVERY_N == 0U) {
         LOG_DBG("Heartbeat: %u, Uptime: %ums", count, app_get_uptime());
     }
 }
 
 static void app_print_banner(void) {
 #if APP_CONFIG_ENABLE_BANNER
+    /* Banner 须在日志后端就绪前输出（启动最早期可见），故使用 printk 而非
+     * LOG_*，属项目声明的例外（裸输出仅限此处）。 */
     printk(APP_BANNER_LOGO);
     printk(APP_BANNER_INFO, "Version:", APP_VERSION_STRING, "Target:", BUILD_TARGET, "Git:", GIT_BRANCH,
            GIT_COMMIT_HASH, "Build:", BUILD_TIMESTAMP, "Ver code:", (unsigned int) APP_VERSION_CODE,
@@ -448,7 +474,7 @@ int main(void) {
     /* 主循环 - 事件驱动设计中，此处大部分时间空闲 */
     while (1) {
         /* 睡眠以节省功耗 */
-        k_msleep(1000);
+        k_msleep(APP_MAIN_LOOP_SLEEP_MS);
 
         /* 如需可在此处添加主循环任务 */
     }

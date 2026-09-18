@@ -2,10 +2,23 @@
  * @file app_shell.c
  * @brief 应用层 Zephyr Shell 命令（app status/kv/...）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：include 顺序对齐规范；补文件头
+ *                                                 修改日志；kv 命令栈缓冲注明 shell 栈依赖
+ *                                                 并加编译期断言；top 刷新次数上限具名
+ *
  */
 
+#include <zephyr/shell/shell.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <zeplod/app_config.h>
 #include <zeplod/app_kv.h>
 #include <zeplod/app_main.h>
@@ -25,14 +38,21 @@
 #include <zeplod/ota_module.h>
 #endif
 
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include <zephyr/shell/shell.h>
-
 /* 受 CONFIG_APP_ENABLE_SHELL 控制（该选项 depends on SHELL）；关闭时不注册任何 app 命令。 */
 #ifdef CONFIG_APP_ENABLE_SHELL
+
+/*
+ * cmd_app_kv_set/cmd_app_kv_get 各自在 shell 线程栈上使用 APP_KV_VALUE_MAX_LEN
+ * （默认 512）字节的值缓冲，叠加 shell 子系统自身及 shell_print 格式化的栈开销，
+ * 要求 shell 栈不小于 2KB。Zephyr 默认 CONFIG_SHELL_STACK_SIZE=4096 满足；
+ * 裁剪栈前须在真机核查栈水位（登记：真机栈核查延期项）。
+ */
+#define APP_SHELL_MIN_STACK_SIZE 2048
+BUILD_ASSERT(CONFIG_SHELL_STACK_SIZE >= APP_SHELL_MIN_STACK_SIZE,
+             "CONFIG_SHELL_STACK_SIZE too small for app kv command buffers (need >= 2048)");
+
+/** app top 命令单次允许的最大刷新次数（每次间隔 1s，防止占用 shell 线程过久） */
+#define APP_TOP_MAX_COUNT 60
 
 #if APP_CONFIG_ENABLE_APP_KV
 static int kv_join_argv(char* out, size_t out_sz, size_t argc, char** argv, size_t first_idx) {
@@ -359,8 +379,8 @@ static int cmd_app_top(const struct shell* shell, size_t argc, char** argv) {
             shell_print(shell, "Usage: app top [count]");
             return -EINVAL;
         }
-        if (count > 60) {
-            count = 60;
+        if (count > APP_TOP_MAX_COUNT) {
+            count = APP_TOP_MAX_COUNT;
         }
     }
 

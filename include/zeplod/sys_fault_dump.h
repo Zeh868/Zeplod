@@ -6,14 +6,18 @@
  * 供 recovery / 诊断在复位后读取。Phase 2 使用 .noinit RAM，量产可换 retained_mem。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 2 初始版本
+ * 2026-09-18       1.1            zeh            补充线程安全契约说明（k_spinlock）
  *
+ * @note 线程安全契约：record/export/clear 均以 k_spinlock 保护 head/count 与字段
+ *       写入（fault 上下文可能从 ISR 调用，不使用 k_mutex）。并发 record 同一
+ *       槽位时整条记录"最后写入者胜"，head/count 推进保持一致；export 为持锁快照。
  */
 
 #ifndef SYS_FAULT_DUMP_H

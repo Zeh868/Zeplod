@@ -6,7 +6,7 @@
  * retain 异步持有、队列溢出、消费者注销、publish_block、
  * manual_release、ISR 发布、统计重置。
  * @author zeh (china_qzh@163.com)
- * @version 2.0
+ * @version 2.4
  * @date 2026-05-15
  *
  * @par 修改日志:
@@ -16,6 +16,7 @@
  * 2026-05-15       2.1            zeh            无消费者时队列排空回归测试
  * 2026-05-20       2.2            zeh            消费者固定槽位：交错注销不使 out_consumer 指针错位
  * 2026-05-28       2.3            zeh            deinit 分发线程拒绝路径（P2 契约）
+ * 2026-09-18       2.4            zeh            超时/容量魔数具名；裸调用返回值检查
  *
  */
 
@@ -33,6 +34,21 @@ LOG_MODULE_REGISTER(test_data_bus);
 
 BUILD_ASSERT(sizeof(((data_bus_event_notification_t*) 0)->channel_name) == CONFIG_DATA_BUS_CHANNEL_NAME_MAX);
 BUILD_ASSERT(sizeof(((data_bus_memory_warning_event_t*) 0)->channel_name) == CONFIG_DATA_BUS_CHANNEL_NAME_MAX);
+
+/* ============================================================================
+ * 超时/容量参数（集中定义，避免散落魔数）
+ * ============================================================================ */
+
+/** 强制复位循环：至多重试次数（每次间隔 RESET_RETRY_INTERVAL_MS，总窗约 1.5s） */
+#define RESET_MAX_ATTEMPTS 30
+/** 强制复位循环：单次重试间隔（等待在途回调退出） */
+#define RESET_RETRY_INTERVAL_MS 50
+/** 通道静默（分发空闲）判定超时 */
+#define CHANNEL_QUIESCENT_TIMEOUT_MS 2000U
+/** OVERWRITE 连发用例：连发次数（数倍于队列深度，充分触发覆盖旧块路径） */
+#define OVERWRITE_BURST_PUBLISH_COUNT 100
+/** IMU 基准用例：OVERWRITE 高频发布轮数 */
+#define IMU_BENCH_ROUND_COUNT 200
 
 /* ============================================================================
  * 测试夹具
@@ -100,7 +116,8 @@ static bool data_bus_channel_quiescent(void* ctx) {
 }
 
 static void data_bus_test_wait_channel_quiescent(data_bus_channel_t* ch) {
-    zassert_true(ztest_wait_until(data_bus_channel_quiescent, ch, 2000U), "channel dispatch should become idle");
+    zassert_true(ztest_wait_until(data_bus_channel_quiescent, ch, CHANNEL_QUIESCENT_TIMEOUT_MS),
+                 "channel dispatch should become idle");
 }
 
 static void data_bus_test_destroy_channel(data_bus_channel_t* ch) {
@@ -180,7 +197,7 @@ static void isr_timer_handler(struct k_timer* timer) {
  * ============================================================================ */
 
 static void data_bus_test_force_reset(void) {
-    for (int attempt = 0; attempt < 30; attempt++) {
+    for (int attempt = 0; attempt < RESET_MAX_ATTEMPTS; attempt++) {
         int ret = data_bus_deinit();
 
         if (ret == 0) {
@@ -189,7 +206,7 @@ static void data_bus_test_force_reset(void) {
         if (ret == -ENODEV) {
             return;
         }
-        k_sleep(K_MSEC(50));
+        k_sleep(K_MSEC(RESET_RETRY_INTERVAL_MS));
     }
     zassert_unreachable("data_bus_deinit 无法在超时内完成清理");
 }
@@ -318,7 +335,7 @@ ZTEST(test_data_bus, test_deinit_drain_timeout_keeps_bus_closed) {
  */
 ZTEST(test_data_bus, test_channel_create_destroy) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
 
@@ -344,7 +361,7 @@ ZTEST(test_data_bus, test_channel_create_destroy) {
     found = data_bus_channel_find("test_ch");
     zassert_is_null(found, "销毁后查找应返回 NULL");
 
-    data_bus_deinit();
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -374,7 +391,7 @@ ZTEST(test_data_bus, test_stats_reject_destroyed_channel) {
  */
 ZTEST(test_data_bus, test_publish_auto_release) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("auto_ch", &ch);
@@ -401,8 +418,8 @@ ZTEST(test_data_bus, test_publish_auto_release) {
     zassert_equal(atomic_get(&g_call_count), 1, "消费者应被调用一次");
     zassert_equal(g_recv_seq, 0, "第一个 seq 应为 0");
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -410,7 +427,7 @@ ZTEST(test_data_bus, test_publish_auto_release) {
  */
 ZTEST(test_data_bus, test_multi_consumer) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("multi_ch", &ch);
@@ -448,8 +465,8 @@ ZTEST(test_data_bus, test_multi_consumer) {
 
     zassert_equal(atomic_get(&g_call_count), 2, "两个消费者都应被调用");
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -457,7 +474,7 @@ ZTEST(test_data_bus, test_multi_consumer) {
  */
 ZTEST(test_data_bus, test_retain) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("retain_ch", &ch);
@@ -493,8 +510,8 @@ ZTEST(test_data_bus, test_retain) {
     data_bus_block_release(g_retained_block);
     g_retained_block = NULL;
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -502,7 +519,7 @@ ZTEST(test_data_bus, test_retain) {
  */
 ZTEST(test_data_bus, test_manual_release) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("manual_ch", &ch);
@@ -529,8 +546,8 @@ ZTEST(test_data_bus, test_manual_release) {
     zassert_equal(atomic_get(&g_manual_release_count), 1, "消费者应被调用一次");
     zassert_equal(g_recv_seq, 0, "seq 应为 0");
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -538,7 +555,7 @@ ZTEST(test_data_bus, test_manual_release) {
  */
 ZTEST(test_data_bus, test_queue_overflow) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("overflow_ch", &ch);
@@ -569,7 +586,7 @@ ZTEST(test_data_bus, test_queue_overflow) {
     ret = data_bus_channel_destroy(ch);
     zassert_equal(ret, -EAGAIN, "队列非空时应返回 -EAGAIN");
 
-    data_bus_deinit();
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -577,7 +594,7 @@ ZTEST(test_data_bus, test_queue_overflow) {
  */
 ZTEST(test_data_bus, test_deinit_cleanup) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("cleanup_ch", &ch);
@@ -607,8 +624,8 @@ ZTEST(test_data_bus, test_deinit_cleanup) {
     ret = data_bus_channel_create("new_ch", &ch2);
     zassert_equal(ret, 0, "重新初始化后通道创建失败");
 
-    data_bus_channel_destroy(ch2);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch2), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -682,7 +699,7 @@ ZTEST(test_data_bus, test_channel_destroy_retries_after_publish) {
  */
 ZTEST(test_data_bus, test_consumer_unregister) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("unregister_ch", &ch);
@@ -711,8 +728,8 @@ ZTEST(test_data_bus, test_consumer_unregister) {
     data_bus_test_wait_channel_quiescent(ch);
     zassert_equal(atomic_get(&g_call_count), 0, "注销后回调不应触发");
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 ZTEST(test_data_bus, test_unregister_allows_callback_publish_to_finish) {
@@ -816,7 +833,7 @@ ZTEST(test_data_bus, test_unregister_rejected_from_dispatcher_callback) {
  */
 ZTEST(test_data_bus, test_consumer_slot_stable) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("slot_stable_ch", &ch);
@@ -857,8 +874,8 @@ ZTEST(test_data_bus, test_consumer_slot_stable) {
     ret = data_bus_consumer_unregister(cons_a);
     zassert_equal(ret, -EINVAL, NULL);
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -866,7 +883,7 @@ ZTEST(test_data_bus, test_consumer_slot_stable) {
  */
 ZTEST(test_data_bus, test_publish_block) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("block_ch", &ch);
@@ -900,8 +917,8 @@ ZTEST(test_data_bus, test_publish_block) {
     zassert_equal(ret, 0, "消费者回调超时");
     zassert_equal(atomic_get(&g_call_count), 1, "消费者应被调用一次");
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -909,7 +926,7 @@ ZTEST(test_data_bus, test_publish_block) {
  */
 ZTEST(test_data_bus, test_publish_from_isr) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("isr_ch", &ch);
@@ -938,8 +955,8 @@ ZTEST(test_data_bus, test_publish_from_isr) {
     k_timer_stop(&g_isr_timer);
     g_isr_ch = NULL;
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -947,7 +964,7 @@ ZTEST(test_data_bus, test_publish_from_isr) {
  */
 ZTEST(test_data_bus, test_reset_stats) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("stats_ch", &ch);
@@ -989,8 +1006,8 @@ ZTEST(test_data_bus, test_reset_stats) {
     zassert_equal(stats.consumer_count, 1, "consumer_count 应保持 1");
     zassert_equal(stats.peak_queue_usage, 0, "peak_queue_usage 应为 0");
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 #if !IS_ENABLED(CONFIG_DATA_BUS_NO_MALLOC)
@@ -1076,7 +1093,7 @@ ZTEST(test_data_bus, test_publish_block_retry_counts_memory_once) {
  */
 ZTEST(test_data_bus, test_publish_block_rejects_nonzero_ref) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("ref_ch", &ch);
@@ -1091,8 +1108,8 @@ ZTEST(test_data_bus, test_publish_block_rejects_nonzero_ref) {
 
     atomic_set(&block->ref_count, 0);
     data_bus_mem_free(block);
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -1102,7 +1119,7 @@ ZTEST(test_data_bus, test_publish_block_rejects_nonzero_ref) {
  */
 ZTEST(test_data_bus, test_dispatch_burst_drain) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("burst_ch", &ch);
@@ -1136,8 +1153,8 @@ ZTEST(test_data_bus, test_dispatch_burst_drain) {
         zassert_equal(atomic_get(&g_call_count), burst_count, "第 %d 轮应投递全部 %d 块", round, burst_count);
     }
 
-    data_bus_channel_destroy(ch);
-    data_bus_deinit();
+    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -1145,7 +1162,7 @@ ZTEST(test_data_bus, test_dispatch_burst_drain) {
  */
 ZTEST(test_data_bus, test_inactive_channel_rejects_publish) {
     data_bus_test_setup();
-    data_bus_init();
+    zassert_equal(data_bus_init(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("inactive_ch", &ch);
@@ -1161,7 +1178,7 @@ ZTEST(test_data_bus, test_inactive_channel_rejects_publish) {
     ret = data_bus_channel_destroy(ch);
     zassert_equal(ret, 0, "通道销毁失败");
 
-    data_bus_deinit();
+    zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
 /**
@@ -1170,7 +1187,7 @@ ZTEST(test_data_bus, test_inactive_channel_rejects_publish) {
 ZTEST(test_data_bus, test_requires_init) {
     data_bus_test_setup();
 
-    data_bus_deinit();
+    zassert_equal(data_bus_deinit(), 0, NULL);
 
     data_bus_channel_t* ch = NULL;
     int                 ret = data_bus_channel_create("no_init_ch", &ch);
@@ -1241,7 +1258,7 @@ ZTEST(test_data_bus, test_overwrite_latest_seq) {
     zassert_equal(data_bus_channel_create_ex("ow_ch", &ch_cfg, &ch), 0, NULL);
 
     const uint8_t payload[] = {0x01};
-    const int     publish_count = 100;
+    const int     publish_count = OVERWRITE_BURST_PUBLISH_COUNT;
 
     for (int i = 0; i < publish_count; i++) {
         zassert_equal(data_bus_publish(ch, payload, sizeof(payload)), 0, "publish %d", i);
@@ -1534,7 +1551,7 @@ ZTEST(test_data_bus, test_benchmark_imu_overwrite) {
     zassert_equal(data_bus_consumer_register(ch, &cfg, &cons), 0, NULL);
 
     uint8_t imu_payload[64];
-    for (int round = 0; round < 200; round++) {
+    for (int round = 0; round < IMU_BENCH_ROUND_COUNT; round++) {
         imu_payload[0] = (uint8_t) round;
         zassert_equal(data_bus_publish_inplace(ch, sizeof(imu_payload), inplace_fill_imu, imu_payload), 0, NULL);
     }

@@ -2,8 +2,13 @@
  * @file module_manager_internal.h
  * @brief 模块管理器内部共享（不对外公开）
  * @author zeh (china_qzh@163.com)
- * @version 1.2
+ * @version 1.3
  * @date 2026-06-06
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-06-06       1.2            zeh            增加 planner 快照与 in_flight 排空协议
+ * 2026-09-18       1.3            zeh            删除全工程只写不读的 initialized/running 冗余字段；快照栈上限具名
  */
 
 #ifndef MODULE_MANAGER_INTERNAL_H
@@ -18,6 +23,14 @@
 #define MM_MODULE_NAME_MAX  32
 #define MM_DRAIN_TIMEOUT_MS 1000U
 
+/**
+ * @brief 模块快照栈占用上限（字节）。
+ *
+ * foreach/dump/shutdown 等路径会按 CONFIG_MAX_MODULES 在栈上拷贝模块条目，
+ * 由 module_manager.c 的 BUILD_ASSERT 强制执行。
+ */
+#define MM_MAX_SNAPSHOT_BYTES 3072U
+
 #if IS_ENABLED(CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES)
 #define MM_ADJ_ROW_WORDS ((CONFIG_MAX_MODULES + 31) / 32)
 #endif
@@ -30,8 +43,6 @@ typedef struct {
     void*                 callback_user_data;
     struct k_mutex        lock;
     zepl_state_machine_t  lifecycle;
-    bool                  initialized;
-    bool                  running;
 #if IS_ENABLED(CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES)
     uint32_t topo_adj_scratch[CONFIG_MAX_MODULES][MM_ADJ_ROW_WORDS];
 #endif

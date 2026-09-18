@@ -2,13 +2,15 @@
  * @file sys_fault_dump.c
  * @brief 故障事件环实现（.noinit retained RAM）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 2 初始版本
+ * 2026-09-18       1.1            zeh            record/export/clear 增加 k_spinlock
+ *                                                并发保护（fault 上下文可能从 ISR 调用）
  *
  */
 
@@ -51,12 +53,17 @@ typedef struct {
  * ============================================================================= */
 
 static fault_dump_ring_t g_fault_ring __noinit;
-static bool                           g_fault_ready;
+
+/* spinlock 无需初始化（Zephyr 静态自举）；fault 上下文可能从 ISR 调用，
+ * 故用 k_spinlock 而非 k_mutex */
+static struct k_spinlock g_fault_lock;
+static bool              g_fault_ready;
 
 /* =============================================================================
  * 内部辅助
  * ============================================================================= */
 
+/** 调用方须已持有 g_fault_lock */
 static void fault_dump_reset_ring(void) {
     memset(&g_fault_ring, 0, sizeof(g_fault_ring));
     g_fault_ring.magic = FAULT_DUMP_MAGIC;
@@ -73,9 +80,11 @@ int sys_fault_dump_init(void) {
         return 0;
     }
 
+    k_spinlock_key_t key = k_spin_lock(&g_fault_lock);
     if (g_fault_ring.magic != FAULT_DUMP_MAGIC) {
         fault_dump_reset_ring();
     }
+    k_spin_unlock(&g_fault_lock, key);
 
     g_fault_ready = true;
     LOG_INF("sys_fault_dump ready (ring=%u)", (unsigned int) CONFIG_SYS_FAULT_DUMP_RING_SIZE);
@@ -83,9 +92,6 @@ int sys_fault_dump_init(void) {
 }
 
 int sys_fault_dump_record(fault_dump_kind_t kind, const void* data, size_t len) {
-    fault_dump_entry_t* entry;
-    uint16_t            idx;
-
     if (!g_fault_ready) {
         (void) sys_fault_dump_init();
     }
@@ -98,8 +104,11 @@ int sys_fault_dump_record(fault_dump_kind_t kind, const void* data, size_t len) 
         len = FAULT_DUMP_PAYLOAD;
     }
 
-    idx = g_fault_ring.head;
-    entry = &g_fault_ring.entries[idx];
+    /* 临界区内含 payload 拷贝：并发记录同一槽位时整条"最后写入者胜"，
+     * head/count 推进保持一致，诊断数据可接受（否则需二次加锁，故障路径代价更高） */
+    k_spinlock_key_t    key = k_spin_lock(&g_fault_lock);
+    uint16_t            idx = g_fault_ring.head;
+    fault_dump_entry_t* entry = &g_fault_ring.entries[idx];
 
     entry->kind = (uint32_t) kind;
     entry->ts_ms = k_uptime_get_32();
@@ -113,6 +122,8 @@ int sys_fault_dump_record(fault_dump_kind_t kind, const void* data, size_t len) 
     if (g_fault_ring.count < (uint16_t) CONFIG_SYS_FAULT_DUMP_RING_SIZE) {
         g_fault_ring.count++;
     }
+
+    k_spin_unlock(&g_fault_lock, key);
 
     LOG_DBG("fault dump kind=%u len=%u", (unsigned int) kind, (unsigned int) len);
     return 0;
@@ -130,7 +141,11 @@ int sys_fault_dump_export(uint8_t* out, size_t out_len, size_t* out_written) {
         return -ENOMEM;
     }
 
+    /* 快照持锁：导出与并发记录不撕裂（整环 memcpy 在临界区内，诊断路径可接受） */
+    k_spinlock_key_t key = k_spin_lock(&g_fault_lock);
     memcpy(out, &g_fault_ring, need);
+    k_spin_unlock(&g_fault_lock, key);
+
     if (out_written != NULL) {
         *out_written = need;
     }
@@ -138,7 +153,9 @@ int sys_fault_dump_export(uint8_t* out, size_t out_len, size_t* out_written) {
 }
 
 void sys_fault_dump_clear(void) {
+    k_spinlock_key_t key = k_spin_lock(&g_fault_lock);
     fault_dump_reset_ring();
+    k_spin_unlock(&g_fault_lock, key);
 }
 
 /* =============================================================================

@@ -260,6 +260,36 @@ jobs:
             -- -DCONF_FILE="prj.conf;prj_factory_no_kv.conf"
           west build -t run --build-dir build_tests_factory_no_kv
 
+      - name: Run example modules tests (CI examples)
+        run: |
+          west build -b native_sim tests/ --build-dir build_tests_ci_examples -p always \
+            -- -DCONF_FILE="prj.conf;prj_ci_examples.conf"
+          west build -t run --build-dir build_tests_ci_examples
+
+      - name: Run remote_ops module tests
+        run: |
+          west build -b native_sim tests/ --build-dir build_tests_remote_ops -p always \
+            -- -DCONF_FILE="prj.conf;prj_remote_ops.conf"
+          west build -t run --build-dir build_tests_remote_ops
+
+      - name: Run feature_gate module tests
+        run: |
+          west build -b native_sim tests/ --build-dir build_tests_feature_gate -p always \
+            -- -DCONF_FILE="prj.conf;prj_feature_gate.conf"
+          west build -t run --build-dir build_tests_feature_gate
+
+      - name: Run provisioning module tests
+        run: |
+          west build -b native_sim tests/ --build-dir build_tests_provisioning -p always \
+            -- -DCONF_FILE="prj.conf;prj_provisioning.conf"
+          west build -t run --build-dir build_tests_provisioning
+
+      - name: Build OTA + recovery combo (compile check)
+        run: |
+          west build -b native_sim . --build-dir build_ota_recovery -p always \
+            -- -DEXTRA_CONF_FILE="conf/features/ota.conf;conf/features/recovery.conf"
+          echo "ota + recovery combo build succeeded."
+
       - name: Build scale config (compile check)
         run: |
           west build -b native_sim . --build-dir build_scale -p always \

@@ -2,8 +2,15 @@
  * @file data_bus_ready.h
  * @brief Data Bus 就绪通道队列（dispatcher 仅处理有数据的 channel）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：补全文件头修改日志段
+ *
  */
 
 #ifndef DATA_BUS_READY_H

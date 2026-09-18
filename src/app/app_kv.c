@@ -2,7 +2,7 @@
  * @file app_kv.c
  * @brief 应用键值表实现
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.3
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -12,22 +12,23 @@
  * 2026-07-10       1.1            zeh            修复持久化：flash 加载从 app_kv_init(优先级 11，
  *                                                 早于 flash 驱动)推迟到独立 SYS_INIT(flash 之后)，
  *                                                 避免开机 load 必然失败导致重启后已保存 KV 丢失
+ * 2026-09-18       1.2            zeh            审查整改：迁移链恰好走满步数上限时误报失败，
+ *                                                 改为链走完即返回 APP_OK；include 顺序对齐规范
+ * 2026-09-18       1.3            zeh            复审整改：新增 UNIT_TEST 专用迁移表重置钩子，修复测试套件注册表跨用例污染
  *
  */
 
-#include <zeplod/app_kv.h>
-
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/util.h>
+#include <zeplod/app_kv.h>
 
 LOG_MODULE_REGISTER(app_kv, CONFIG_SYS_LOG_LEVEL);
 
@@ -262,6 +263,15 @@ static int app_kv_restore_from_flash(void) {
 SYS_INIT(app_kv_restore_from_flash, POST_KERNEL, APP_INIT_PRIO_APP_KV_RESTORE);
 #endif /* CONFIG_APP_KV_PERSIST */
 
+#if defined(UNIT_TEST)
+void app_kv_test_reset_migrations(void) {
+    /* 仅供 ztest 用例间隔离：迁移表为进程级静态状态，无产品侧注销接口 */
+    k_mutex_lock(&g_kv_lock, K_FOREVER);
+    memset(g_kv_migrations, 0, sizeof(g_kv_migrations));
+    k_mutex_unlock(&g_kv_lock);
+}
+#endif /* UNIT_TEST */
+
 int app_kv_register_migrate(uint32_t from_ver, uint32_t to_ver, app_kv_migrate_fn fn, void* user_data) {
     if (!g_kv_ready || fn == NULL || from_ver >= to_ver) {
         return APP_ERR_INVALID_PARAM;
@@ -324,6 +334,8 @@ int app_kv_run_migrations(void) {
         return APP_ERR_INIT;
     }
 
+    /* 循环上限仅防御异常注册（环/无界链）：链在找到可执行步骤前自然耗尽即成功，
+     * 走满上限意味着链长等于注册步数上限，同样视为迁移完成而非失败。 */
     for (unsigned pass = 0U; pass < APP_KV_MIGRATE_MAX_STEPS; pass++) {
         app_kv_migrate_step_t step;
         bool                  found = false;
@@ -363,7 +375,8 @@ int app_kv_run_migrations(void) {
         k_mutex_unlock(&g_kv_lock);
     }
 
-    return APP_ERR_INVALID_PARAM;
+    /* 恰好用满 APP_KV_MIGRATE_MAX_STEPS 步的链到此结束：迁移全部成功 */
+    return APP_OK;
 }
 
 int app_kv_set(const char* key, const char* value) {

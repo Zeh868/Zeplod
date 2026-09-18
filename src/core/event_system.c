@@ -10,8 +10,14 @@
  * - event_system_stats.c      统计
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-04-01       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补充文件头修改日志段（审查整改）
  */
 
 #include <zephyr/logging/log.h>

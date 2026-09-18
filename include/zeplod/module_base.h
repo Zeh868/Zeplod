@@ -13,13 +13,14 @@
  * 模块生命周期：
  * UNINITIALIZED -> INITIALIZING -> INITIALIZED -> RUNNING -> STOPPED
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            internal_data 标注拟移除；depends_version_min 登记防御计划
  *
  */
 
@@ -103,6 +104,7 @@ typedef struct {
      * NULL 表示不检查依赖版本；非 NULL 时必须与 depends_on 的非 NULL 项等长。
      * @warning 该数组无独立长度，仅靠与 depends_on 等长的契约约束。若长度短于
      *          depends_on，规划器按 depends_on 下标访问本数组将越界读取（未定义行为）。
+     *          已登记：未来改为哨兵值终止并加运行时防御（属 API 变更，随版本演进处理）。
      * 无版本约束的依赖项填 MODULE_DEP_VERSION_ANY。
      * 版本值使用 MODULE_VERSION(major, minor, patch) 打包，不解析 semver 字符串。
      * 仅在 CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES 启用且 depends_on 非 NULL 时生效。
@@ -158,13 +160,14 @@ typedef enum {
  *
  * @note 指针字段（interface / config / internal_data）在锁外可能失效。
  *       跨锁使用时请结合 generation 字段校验，或在持锁期间复制所需数据。
+ *       internal_data 由框架恒置 NULL（业务模块不应读写），计划后续版本移除。
  * @note generation 在每次清槽时自增，生命周期快照重入时用它检测
  *       「槽位已被回收并复用」。事件订阅使用独立且不复用的 cookie。
  */
 typedef struct {
     const module_interface_t*   interface;     /**< 模块接口指针 */
     void*                       config;        /**< 模块配置数据 */
-    void*                       internal_data; /**< 模块内部数据 */
+    void*                       internal_data; /**< 预留：框架内恒为 NULL，计划后续版本移除（勿使用） */
     module_status_t             status;        /**< 当前模块状态 */
     uint32_t                    id;            /**< 模块唯一 ID */
     module_event_subscription_t event_subscriptions[CONFIG_MODULE_MAX_EVENT_SUBSCRIPTIONS];

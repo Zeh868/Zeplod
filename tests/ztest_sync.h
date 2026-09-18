@@ -2,8 +2,13 @@
  * @file ztest_sync.h
  * @brief 单元测试用有界异步等待 helper（避免裸 k_msleep 判断完成）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补全文件头修改日志段
  */
 
 #ifndef ZTEST_SYNC_H

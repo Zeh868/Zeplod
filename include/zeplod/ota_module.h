@@ -9,7 +9,7 @@
  * 配置要求：CONFIG_OTA_MODULE=y，且 CONFIG_EVENT_MAX_TYPES > 51（事件 ID 50–51）。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.3
+ * @version 1.4
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -19,6 +19,7 @@
  * 2026-06-13       1.1            zeh            统一注释风格；同步发布 PROGRESS 事件
  * 2026-06-13       1.2            zeh            主动传输；ota_module_request_reboot
  * 2026-06-13       1.3            zeh            MCUmgr SMP 默认；双 ingest 互斥
+ * 2026-09-18       1.4            zeh            模块接口 7 件套补全 Doxygen 注释
  *
  */
 
@@ -80,16 +81,55 @@ int         ota_sm_on_verify_ok(ota_sm_t* sm);
 int         ota_sm_on_error(ota_sm_t* sm, int error_code);
 
 /* =============================================================================
- * 模块接口（module_interface_t）
+ * 模块接口（module_interface_t，由 module_manager 生命周期驱动）
  * ============================================================================= */
 
-int             ota_module_init(void* config);
-int             ota_module_start(void);
-int             ota_module_stop(void);
-int             ota_module_shutdown(void);
-void            ota_module_on_event(const event_t* event, void* user_data);
+/**
+ * @brief 初始化 OTA 模块（选定编译期传输后端并复位状态机）
+ * @param config 模块配置指针；本模块未使用，允许为 NULL
+ * @return 0 成功；-EIO 事件类型注册失败；重复初始化幂等返回 0
+ */
+int ota_module_init(void* config);
+
+/**
+ * @brief 启动 OTA 模块（MCUmgr SMP 使能时 arm 被动接入钩子）
+ * @return 0 成功；APP_ERR_INIT 未初始化；APP_ERR_OTA_TRANSPORT SMP 钩子 arm 失败；
+ *         重复启动幂等返回 0
+ */
+int ota_module_start(void);
+
+/**
+ * @brief 停止 OTA 模块（中止进行中的会话并 disarm SMP 钩子）
+ * @return 0 成功；未运行时亦返回 0（幂等）
+ */
+int ota_module_stop(void);
+
+/**
+ * @brief 关闭 OTA 模块（状态回落 UNINITIALIZED）
+ * @return 0 成功
+ */
+int ota_module_shutdown(void);
+
+/**
+ * @brief 事件回调占位（OTA 状态经事件发布对外，本模块不消费外部事件）
+ * @param event 事件指针（非 NULL，由事件分发器保证）
+ * @param user_data 订阅时传入的用户数据（本模块未使用）
+ */
+void ota_module_on_event(const event_t* event, void* user_data);
+
+/**
+ * @brief 查询模块生命周期状态
+ * @return MODULE_STATUS_*（UNINITIALIZED/INITIALIZED/RUNNING/STOPPED）
+ */
 module_status_t ota_module_get_status(void);
-int             ota_module_control(int cmd, void* arg);
+
+/**
+ * @brief 模块控制命令入口
+ * @param cmd 命令字（本模块未实现任何命令）
+ * @param arg 命令参数（未使用）
+ * @return -ENOTSUP 始终返回
+ */
+int ota_module_control(int cmd, void* arg);
 
 /* =============================================================================
  * 模块专用 API

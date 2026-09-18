@@ -2,7 +2,7 @@
  * @file connectivity_module.c
  * @brief 连接管理模块实现
  * @author zeh (china_qzh@163.com)
- * @version 2.0
+ * @version 2.2
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -16,6 +16,10 @@
  *                                                 实现配网即连；start() 时立即触发一次连接尝试实现开机
  *                                                 自连；failover_work（或 FAILOVER 关闭时的独立 connect_work）
  *                                                 在活动后端为空且存在可用后端时也会自动尝试 connect_auto()
+ * 2026-09-18       2.2            zeh            抢占路径后端 vtable 空指针防护；connect()/connect_auto/
+ *                                                 抢占成功后重锁复核 module_status，非 RUNNING 释放链路；
+ *                                                 配网事件订阅/退订纳入模块锁；删除冗余 UNINITIALIZED
+ *                                                 分支；注册表满补告警日志
  *
  */
 
@@ -274,12 +278,16 @@ static const connectivity_backend_desc_t* conn_find_wildcard(void) {
     return NULL;
 }
 
-/** 向注册表追加一个已启用的后端（ops 为 NULL 或注册表已满时忽略） */
+/** 向注册表追加一个已启用的后端（ops 为 NULL 时忽略；注册表已满时告警并丢弃） */
 static void conn_add_backend(const connectivity_backend_ops_t* ops, connectivity_link_type_t link_type,
                              const char* name, int priority, bool wildcard) {
     connectivity_backend_desc_t* d;
 
-    if (ops == NULL || g_conn.backend_count >= CONN_BACKEND_MAX) {
+    if (ops == NULL) {
+        return;
+    }
+    if (g_conn.backend_count >= CONN_BACKEND_MAX) {
+        LOG_WRN("backend registry full (%d), dropping backend '%s'", CONN_BACKEND_MAX, name);
         return;
     }
     d = &g_conn.backends[g_conn.backend_count++];
@@ -461,26 +469,50 @@ static void conn_failover_work_handler(struct k_work* work) {
     /* 简单去抖：候选须连续 CONN_PREEMPT_STREAK_THRESHOLD 次轮询均可用才实际尝试抢占，
        避免硬件在可用/不可用之间抖动时每个轮询周期都触发一次 connect 尝试 */
     if (candidate != NULL && g_conn.preempt_streak >= CONN_PREEMPT_STREAK_THRESHOLD) {
-        int ret = candidate->ops->connect((connectivity_backend_ops_t*) candidate->ops);
+        int ret;
+
+        /* vtable 防护：connect 缺失的后端无法抢占（注册表构建已过滤 NULL ops，此处兜底） */
+        if (candidate->ops == NULL || candidate->ops->connect == NULL) {
+            g_conn.preempt_candidate = NULL;
+            g_conn.preempt_streak = 0;
+            goto reschedule;
+        }
+
+        ret = candidate->ops->connect((connectivity_backend_ops_t*) candidate->ops);
 
         if (ret == 0 && conn_desc_link_up(candidate)) {
             connectivity_status_t              snap;
             const connectivity_backend_desc_t* old;
+            bool                               preempted = false;
 
             conn_lock();
-            old = g_conn.active;
-            g_conn.active = candidate;
-            g_conn.status.link_type = candidate->link_type;
-            conn_set_state_locked(CONNECTIVITY_STATE_UP, 0);
-            snap = g_conn.status;
-            conn_unlock();
-            (void) conn_publish_state(&snap);
+            /* 抢占 connect 可能阻塞数秒，期间模块可能已被 stop：非 RUNNING 时不得
+               切换活动后端，释放刚建立的新链路（旧链路由 stop→disconnect 收尾） */
+            if (g_conn.module_status != MODULE_STATUS_RUNNING) {
+                conn_unlock();
+            } else {
+                old = g_conn.active;
+                g_conn.active = candidate;
+                g_conn.status.link_type = candidate->link_type;
+                conn_set_state_locked(CONNECTIVITY_STATE_UP, 0);
+                snap = g_conn.status;
+                conn_unlock();
+                (void) conn_publish_state(&snap);
+                preempted = true;
 
-            /* 新链路已确认 up，再断开旧的低优先级链路（make-before-break，避免中断） */
-            if (old != NULL && old->ops->disconnect != NULL) {
-                (void) old->ops->disconnect((connectivity_backend_ops_t*) old->ops);
+                /* 新链路已确认 up，再断开旧的低优先级链路（make-before-break，避免中断） */
+                if (old != NULL && old != candidate && old->ops != NULL && old->ops->disconnect != NULL) {
+                    (void) old->ops->disconnect((connectivity_backend_ops_t*) old->ops);
+                }
+                LOG_INF("failover: preempted to higher-priority backend '%s'", candidate->name);
             }
-            LOG_INF("failover: preempted to higher-priority backend '%s'", candidate->name);
+
+            if (!preempted) {
+                LOG_WRN("failover: module stopped during preempt, releasing new link of '%s'", candidate->name);
+                if (candidate->ops->disconnect != NULL) {
+                    (void) candidate->ops->disconnect((connectivity_backend_ops_t*) candidate->ops);
+                }
+            }
         } else {
             LOG_WRN("failover: preempt attempt on '%s' failed (ret=%d)", candidate->name, ret);
             if (candidate->ops->disconnect != NULL) {
@@ -541,10 +573,7 @@ int connectivity_module_connect(connectivity_link_type_t link_type) {
 
     conn_lock();
 
-    if (g_conn.module_status == MODULE_STATUS_UNINITIALIZED) {
-        conn_unlock();
-        return APP_ERR_INIT;
-    }
+    /* UNINITIALIZED 已被非 RUNNING 判定覆盖，无需单列 */
     if (g_conn.module_status != MODULE_STATUS_RUNNING) {
         conn_unlock();
         return APP_ERR_INIT;
@@ -556,7 +585,7 @@ int connectivity_module_connect(connectivity_link_type_t link_type) {
     if (target == NULL) {
         target = conn_find_wildcard();
     }
-    if (target == NULL || target->ops->connect == NULL) {
+    if (target == NULL || target->ops == NULL || target->ops->connect == NULL) {
         conn_unlock();
         return APP_ERR_CONNECTIVITY;
     }
@@ -577,6 +606,16 @@ int connectivity_module_connect(connectivity_link_type_t link_type) {
     ret = target->ops->connect((connectivity_backend_ops_t*) target->ops);
 
     conn_lock();
+    /* connect 阻塞期间模块可能已被 stop：非 RUNNING 时释放刚建立的链路并返回错误，
+       避免留下活动后端已清空/状态已复位但物理链路仍在的悬挂连接 */
+    if (g_conn.module_status != MODULE_STATUS_RUNNING) {
+        conn_unlock();
+        LOG_WRN("connect: module stopped during connect, releasing link");
+        if (target->ops->disconnect != NULL) {
+            (void) target->ops->disconnect((connectivity_backend_ops_t*) target->ops);
+        }
+        return APP_ERR_INIT;
+    }
     if (ret != 0 || !conn_desc_link_up(target)) {
         if (g_conn.active == target) {
             g_conn.active = NULL;
@@ -635,6 +674,16 @@ int connectivity_module_connect_auto(void) {
     }
 
     conn_lock();
+    /* 连接尝试期间模块可能已被 stop：非 RUNNING 时释放尝试建立的链路并直接返回，
+       不再更新状态（stop 流程随后会统一断链与复位状态） */
+    if (g_conn.module_status != MODULE_STATUS_RUNNING) {
+        conn_unlock();
+        LOG_WRN("connect_auto: module stopped during connect, releasing link");
+        if (chosen != NULL && chosen->ops != NULL && chosen->ops->disconnect != NULL) {
+            (void) chosen->ops->disconnect((connectivity_backend_ops_t*) chosen->ops);
+        }
+        return APP_ERR_INIT;
+    }
     if (chosen != NULL) {
         g_conn.active = chosen;
         g_conn.status.link_type = chosen->link_type;
@@ -772,11 +821,13 @@ int connectivity_module_start(void) {
     /* 订阅配网状态变化事件，实现"配网即连"：prov set-wifi 落盘成功推进到 PROVISIONED 后，
        事件回调会投递一次 conn_trigger_connect()。订阅失败（如未编译 PROVISIONING_MODULE，
        事件类型未注册）仅记警告，不影响 connectivity 模块继续运行——开机自连/手动 `conn up`
-       仍可用 */
+       仍可用。订阅簿记置于模块锁内，与 stop() 的退订判定互斥 */
+    conn_lock();
     if (!g_conn.prov_event_subscribed) {
         uint32_t       sub_id;
         event_status_t est;
 
+        /* event_subscribe 不执行回调（仅登记），持模块锁调用无死锁风险 */
         est = event_subscribe(EVENT_PROVISIONING_STATE_CHANGED, conn_provisioning_event_handler, NULL, &sub_id);
         if (est == EVENT_OK) {
             g_conn.prov_event_subscriber_id = sub_id;
@@ -786,6 +837,7 @@ int connectivity_module_start(void) {
                     est);
         }
     }
+    conn_unlock();
 
     /* 开机自连：立即触发一次连接尝试。若持久化凭据已使 provisioning 初始化时便进入
        PROVISIONED（见 provisioning_module_init()），无需等待第一次周期轮询。
@@ -803,11 +855,18 @@ int connectivity_module_stop(void) {
        避免其在本函数取消之后又自行重新调度出一个新的悬挂定时器 */
     conn_lock();
     g_conn.module_status = MODULE_STATUS_STOPPED;
-    conn_unlock();
 
+    /* 订阅簿记与 start() 的订阅判定在模块锁内互斥；退订动作本身不执行回调，
+       移到锁外调用避免与事件系统内部锁产生不必要嵌套 */
     if (g_conn.prov_event_subscribed) {
-        (void) event_unsubscribe(EVENT_PROVISIONING_STATE_CHANGED, g_conn.prov_event_subscriber_id);
+        uint32_t sub_id = g_conn.prov_event_subscriber_id;
+
         g_conn.prov_event_subscribed = false;
+        g_conn.prov_event_subscriber_id = 0U;
+        conn_unlock();
+        (void) event_unsubscribe(EVENT_PROVISIONING_STATE_CHANGED, sub_id);
+    } else {
+        conn_unlock();
     }
 
 #if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)

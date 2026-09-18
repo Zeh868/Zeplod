@@ -6,13 +6,15 @@
  * 配置要求：CONFIG_EVENT_MAX_TYPES > 61。
  *
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 3 初始版本
+ * 2026-09-18       1.1            zeh            reset() 更新为同时删除持久化凭据；
+ *                                                 模块接口 7 件套补全 Doxygen 注释
  *
  */
 
@@ -68,16 +70,54 @@ typedef struct {
 #define PROVISIONING_WIFI_PSK_MAX_LEN 65U
 
 /* =============================================================================
- * 模块接口
+ * 模块接口（module_interface_t，由 module_manager 生命周期驱动）
  * ============================================================================= */
 
-int             provisioning_module_init(void* config);
-int             provisioning_module_start(void);
-int             provisioning_module_stop(void);
-int             provisioning_module_shutdown(void);
-void            provisioning_module_on_event(const event_t* event, void* user_data);
+/**
+ * @brief 初始化配网模块（探测已持久化凭据，存在则直接进入 PROVISIONED）
+ * @param config 模块配置指针；本模块未使用，允许为 NULL
+ * @return 0 成功；重复初始化幂等返回 0
+ */
+int provisioning_module_init(void* config);
+
+/**
+ * @brief 启动配网模块
+ * @return 0 成功；APP_ERR_INIT 未初始化；重复启动幂等返回 0
+ */
+int provisioning_module_start(void);
+
+/**
+ * @brief 停止配网模块
+ * @return 0 成功；未运行时亦返回 0（幂等）
+ */
+int provisioning_module_stop(void);
+
+/**
+ * @brief 关闭配网模块（状态回落 UNINITIALIZED）
+ * @return 0 成功
+ */
+int provisioning_module_shutdown(void);
+
+/**
+ * @brief 事件回调占位（本模块不消费外部事件，预留供 connectivity 等联动）
+ * @param event 事件指针（非 NULL，由事件分发器保证）
+ * @param user_data 订阅时传入的用户数据（本模块未使用）
+ */
+void provisioning_module_on_event(const event_t* event, void* user_data);
+
+/**
+ * @brief 查询模块生命周期状态
+ * @return MODULE_STATUS_*（UNINITIALIZED/INITIALIZED/RUNNING/STOPPED）
+ */
 module_status_t provisioning_module_get_status(void);
-int             provisioning_module_control(int cmd, void* arg);
+
+/**
+ * @brief 模块控制命令入口
+ * @param cmd 命令字（本模块未实现任何命令）
+ * @param arg 命令参数（未使用）
+ * @return -ENOTSUP 始终返回
+ */
+int provisioning_module_control(int cmd, void* arg);
 
 /* =============================================================================
  * 模块专用 API
@@ -90,24 +130,34 @@ int             provisioning_module_control(int cmd, void* arg);
  * 成功后状态机才推进 IN_PROGRESS → PROVISIONED；落盘失败则置 ERROR 并返回错误码。
  *
  * @param creds 凭据（可为 NULL，仅推进状态机，不写入凭据）
- * @return 0 成功；APP_ERR_PROVISIONING / APP_ERR_INVALID_PARAM / APP_ERR_INIT
+ * @return 0 成功；APP_ERR_PROVISIONING 已配网拒绝重复；APP_ERR_INIT 模块未运行；
+ *         其余为 set_credentials 落盘失败的错误码
  */
 int provisioning_module_begin(const provisioning_credentials_t* creds);
 
 /**
- * @brief 重置为未配网
- * @return 0
+ * @brief 重置为未配网并删除已持久化的 Wi-Fi 凭据
+ *
+ * 状态机回到 UNPROVISIONED，同时删除 app_kv 中的 wifi.ssid / wifi.psk 两键；
+ * 编译 CONFIG_APP_KV_PERSIST 时再调用 app_kv_save() 落盘，确保重启后不会
+ * 因 flash 残留凭据而被重新判定为 PROVISIONED。
+ *
+ * @return 0（凭据删除/落盘失败仅记日志，不改变返回值）
  */
 int provisioning_module_reset(void);
 
 /**
  * @brief 查询配网状态
+ * @param out_state 输出状态指针，须非 NULL
+ * @return 0 成功；APP_ERR_INVALID_PARAM out_state 为 NULL
  */
 int provisioning_module_get_state(provisioning_state_t* out_state);
 
 /**
  * @brief 读取设备 ID 字符串（来自 Kconfig 或测试默认值）
- * @return 0 成功；-EINVAL / -ENOMEM
+ * @param out 输出缓冲区，须非 NULL
+ * @param out_len 缓冲区长度（须 > 0，含结尾 NUL）
+ * @return 0 成功；APP_ERR_INVALID_PARAM 参数非法；-ENOMEM 缓冲不足
  */
 int provisioning_module_get_device_id(char* out, size_t out_len);
 

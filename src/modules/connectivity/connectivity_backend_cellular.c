@@ -27,7 +27,7 @@
  * 无 modem 硬件时本后端仅保证编译通过，未经真实设备端到端验证。
  *
  * @author zeh (china_qzh@163.com)
- * @version 2.0
+ * @version 2.1
  * @date 2026-07-09
  *
  * @par 修改日志:
@@ -35,6 +35,9 @@
  *    Date         Version        Author          Description
  * 2026-07-09       1.0            zeh            优先级注册表 + failover：新增蜂窝后端骨架
  * 2026-07-09       2.0            zeh            做实：驱动 modem_cellular PPP 网口生命周期，去除默认口兜底
+ * 2026-09-18       2.1            zeh            connect_sem 改在 net_if_up 前 reset，消除
+ *                                                 "L4 已连上却被清掉信号"竞态；超时分支补
+ *                                                 l4_connected 兜底
  *
  */
 
@@ -211,6 +214,10 @@ static int cellular_connect(connectivity_backend_ops_t* ops) {
     /* 启用 PM_DEVICE 且有 modem 别名时先唤醒 modem，否则为空操作（驱动在 init 时自启） */
     cellular_modem_resume();
 
+    /* reset 必须先于 net_if_up：若在启动后 reset，事件回调可能在
+       "启动完成 → reset"间隙已 give 信号，被清掉后只能白等满超时 */
+    k_sem_reset(&ctx->connect_sem);
+
     if (!net_if_is_up(ctx->iface)) {
         ret = net_if_up(ctx->iface);
         if (ret != 0 && ret != -EALREADY) {
@@ -219,12 +226,14 @@ static int cellular_connect(connectivity_backend_ops_t* ops) {
         }
     }
 
-    k_sem_reset(&ctx->connect_sem);
-
     ret = k_sem_take(&ctx->connect_sem, K_MSEC(CONFIG_CONNECTIVITY_BACKEND_CELLULAR_CONNECT_TIMEOUT_MS));
     if (ret != 0) {
         LOG_WRN("Cellular L4 connect wait timed out after %d ms",
                 CONFIG_CONNECTIVITY_BACKEND_CELLULAR_CONNECT_TIMEOUT_MS);
+        /* 兜底：L4 可能已在等待窗口外连上（事件与本线程竞争错过 give），以缓存为准 */
+        if (ctx->l4_connected) {
+            return 0;
+        }
         return -ETIMEDOUT;
     }
 

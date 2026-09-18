@@ -2,15 +2,14 @@
  * @file test_sys_watchdog.c
  * @brief sys_watchdog 单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
- *
- * Zehao Qian
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            喂狗时间窗魔数具名（WDT_*_MS）
  *
  */
 
@@ -22,9 +21,14 @@
 
 LOG_MODULE_REGISTER(test_sys_watchdog);
 
+/* 喂狗后时间窗参数：立即读取的上界、最小等待时长与等待轮询上限（毫秒） */
+#define WDT_FEED_FRESH_MS   100U
+#define WDT_MIN_ELAPSED_MS  50U
+#define WDT_ELAPSED_WAIT_MS 500U
+
 static bool wdt_at_least_50ms_since_feed(void* ctx) {
     ARG_UNUSED(ctx);
-    return sys_wdt_get_time_since_feed() >= 50U;
+    return sys_wdt_get_time_since_feed() >= WDT_MIN_ELAPSED_MS;
 }
 
 ZTEST(sys_watchdog, test_init_start_feed_stop) {
@@ -115,11 +119,11 @@ ZTEST(sys_watchdog, test_get_time_since_feed) {
 
     /* 立即获取 */
     time_since_feed = sys_wdt_get_time_since_feed();
-    zassert_true(time_since_feed < 100, "应在喂狗后短时间内");
+    zassert_true(time_since_feed < WDT_FEED_FRESH_MS, "应在喂狗后短时间内");
 
-    zassert_true(ztest_wait_until(wdt_at_least_50ms_since_feed, NULL, 500U), "应至少过了 50ms");
+    zassert_true(ztest_wait_until(wdt_at_least_50ms_since_feed, NULL, WDT_ELAPSED_WAIT_MS), "应至少过了 50ms");
     time_since_feed = sys_wdt_get_time_since_feed();
-    zassert_true(time_since_feed >= 50, "应至少过了 50ms");
+    zassert_true(time_since_feed >= WDT_MIN_ELAPSED_MS, "应至少过了 50ms");
 
     sys_wdt_stop();
 }

@@ -2,23 +2,25 @@
  * @file ipc_service.c
  * @brief IPC 服务核心：请求 ID、锁、构建期校验
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-05-28
  *
  * @par 修改日志:
  * Date       Version Author Description
  * 2026-04-01 1.0     zeh    初始版本
  * 2026-05-28 1.1     zeh    按职责拆分到多源文件
+ * 2026-09-18 1.2     zeh    修正 include 顺序（zephyr → 标准库 → zeplod → 私有头）
  */
-
-#include <zeplod/ipc_service.h>
-#include "ipc_service_internal.h"
-
-#include <zeplod/lock_order.h>
 
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
+
 #include <errno.h>
+
+#include <zeplod/ipc_service.h>
+#include <zeplod/lock_order.h>
+
+#include "ipc_service_internal.h"
 
 LOG_MODULE_REGISTER(thread_ipc_svc, CONFIG_THREAD_IPC_SERVICE_LOG_LEVEL);
 

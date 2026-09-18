@@ -2,13 +2,17 @@
  * @file test_example_module_b.c
  * @brief 示例模块 B 单元测试
  * @author OpenClaw Agent
- * @version 1.0
+ * @version 1.2
  * @date 2026-04-10
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-10       1.0            agent          为 example_module_b 编写完整测试用例
+ * 2026-09-18       1.1            zeh            发送/接收/统计用例按桩实现契约补强
+ * 2026-09-18       1.2            zeh            复审整改：配置结构体删除后 init 用例改传 NULL
+ *                                                 断言；无效命令魔数具名；teardown 补
+ *                                                 event_dispatcher_stop 对齐 A 套件
  *
  */
 
@@ -16,11 +20,15 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/ztest.h>
 #include <string.h>
+#include <zeplod/event_dispatcher.h>
 #include <zeplod/event_system.h>
 #include <zeplod/example_module_b.h>
 #include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(test_example_module_b);
+
+/* 无效控制命令探针：落在 example_module_b_control 合法命令集合之外 */
+#define CMD_INVALID 9999U
 
 /* =============================================================================
  * 测试夹具 (Test Fixtures)
@@ -48,6 +56,8 @@ static void* test_suite_setup(void) {
 static void test_suite_teardown(void* fixture) {
     (void) fixture;
     module_manager_shutdown();
+    /* 与其他套件对齐：分发器未初始化时 stop 幂等返回 EVENT_OK，不产生副作用 */
+    (void) event_dispatcher_stop();
     event_system_stop();
 }
 
@@ -70,12 +80,10 @@ ZTEST(example_module_b, test_init_null_config) {
 }
 
 /**
- * @brief 测试模块初始化 - 有效配置
+ * @brief 测试模块初始化（模块无运行参数，config 传 NULL 或任意指针均被忽略）
  */
 ZTEST(example_module_b, test_init_valid_config) {
-    example_module_b_config_t config = {.tx_buffer_size = 512, .rx_buffer_size = 1024, .timeout_ms = 1000};
-
-    example_module_b_init(&config);
+    example_module_b_init(NULL);
 
     module_status_t status = example_module_b_get_status();
     zassert_equal(status, MODULE_STATUS_INITIALIZED, "初始化后状态应为 INITIALIZED");
@@ -171,20 +179,28 @@ ZTEST(example_module_b, test_receive_null) {
 
 /**
  * @brief 测试发送接收流程
+ *
+ * 按当前桩实现契约断言：send 原样返回入参长度；receive 固定返回 0 字节
+ * 并清零缓冲。实现尚无真实回环通道，无法做内容回环比对——若后续接入真实
+ * 通道，应同步把本用例升级为「发送内容 == 接收内容」。
  */
 ZTEST(example_module_b, test_send_receive) {
     example_module_b_init(NULL);
     example_module_b_start();
 
-    /* 发送测试数据 */
+    /* 发送测试数据：返回值即实际发送字节数 */
     const char test_data[] = "Hello, Module B!";
     int        sent = example_module_b_send(test_data, sizeof(test_data));
-    zassert_true(sent >= 0, "发送应成功");
+    zassert_equal(sent, (int) sizeof(test_data), "发送应返回全部字节数");
 
-    /* 接收数据 */
+    /* 接收：桩实现固定返回 0 字节，且按契约清零输出缓冲 */
     char recv_buf[64];
-    int  received = example_module_b_receive(recv_buf, sizeof(recv_buf));
-    zassert_true(received >= 0, "接收应成功");
+    memset(recv_buf, 0xA5, sizeof(recv_buf));
+    int received = example_module_b_receive(recv_buf, sizeof(recv_buf));
+    zassert_equal(received, 0, "桩实现接收应返回 0 字节");
+    for (size_t i = 0; i < sizeof(recv_buf); i++) {
+        zassert_equal(recv_buf[i], 0, "接收缓冲应被清零（偏移 %zu）", i);
+    }
 
     example_module_b_stop();
     example_module_b_shutdown();
@@ -192,6 +208,9 @@ ZTEST(example_module_b, test_send_receive) {
 
 /**
  * @brief 测试通信统计
+ *
+ * 桩实现的 get_stats 恒写 0（无真实计数器）：发送前后统计均应为 0。
+ * 固定该契约——若实现开始真实计数，此处失败即提醒同步更新断言。
  */
 ZTEST(example_module_b, test_get_stats) {
     example_module_b_init(NULL);
@@ -201,17 +220,21 @@ ZTEST(example_module_b, test_get_stats) {
 
     /* 获取初始统计 */
     example_module_b_get_stats(&tx_count, &rx_count, &errors);
+    zassert_equal(tx_count, 0U, "初始发送计数应为 0");
+    zassert_equal(rx_count, 0U, "初始接收计数应为 0");
+    zassert_equal(errors, 0U, "初始错误计数应为 0");
 
     /* 发送一些数据 */
     const char test_data[] = "Test data";
-    example_module_b_send(test_data, sizeof(test_data));
+    int        sent = example_module_b_send(test_data, sizeof(test_data));
+    zassert_equal(sent, (int) sizeof(test_data), "发送应返回全部字节数");
 
     /* 再次获取统计 */
     uint32_t tx_after = 0, rx_after = 0, errors_after = 0;
     example_module_b_get_stats(&tx_after, &rx_after, &errors_after);
-
-    /* 验证发送计数增加 */
-    zassert_true(tx_after >= tx_count, "发送计数应增加");
+    zassert_equal(tx_after, 0U, "桩实现不计数，发送后统计仍应为 0");
+    zassert_equal(rx_after, 0U, "桩实现不计数，接收统计仍应为 0");
+    zassert_equal(errors_after, 0U, "桩实现不计数，错误统计仍应为 0");
 
     example_module_b_stop();
     example_module_b_shutdown();
@@ -227,7 +250,7 @@ ZTEST(example_module_b, test_get_stats) {
 ZTEST(example_module_b, test_control_invalid) {
     example_module_b_init(NULL);
 
-    int ret = example_module_b_control(9999, NULL);
+    int ret = example_module_b_control(CMD_INVALID, NULL);
     zassert_true(ret != 0, "无效命令应返回错误");
 
     example_module_b_shutdown();

@@ -2,8 +2,13 @@
  * @file module_manager_event.c
  * @brief 模块事件订阅与分发
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-06
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-06-06       1.1            zeh            引入稳定订阅 cookie 与 draining 协议
+ * 2026-09-18       1.2            zeh            订阅竞态回退路径检查 event_unsubscribe 返回值并告警
  */
 
 #include <zephyr/logging/log.h>
@@ -14,6 +19,17 @@
 LOG_MODULE_DECLARE(module_manager, CONFIG_SYS_LOG_LEVEL);
 
 static void module_event_handler(const event_t* event, void* user_data);
+
+/* 订阅竞态回退：订阅已在事件系统生效但槽位校验失败，必须退订以免订阅泄漏。
+ * 退订失败仅告警不改变原错误返回——此时残留的订阅会因 cookie 找不到槽位而被
+ * module_event_handler 安全丢弃。 */
+static void rollback_event_subscription(event_type_t event_type, uint32_t subscriber_id) {
+    const event_status_t status = event_unsubscribe(event_type, subscriber_id);
+    if (status != EVENT_OK) {
+        LOG_WRN("rollback event_unsubscribe(type=%d, sub_id=%u) failed: %d", (int) event_type,
+                (unsigned int) subscriber_id, (int) status);
+    }
+}
 
 uint8_t module_event_detach_locked(module_info_t* info, event_type_t* types_out, uint32_t* ids_out, uint8_t max_out) {
     if (info == NULL || types_out == NULL || ids_out == NULL || max_out == 0U) {
@@ -163,14 +179,14 @@ int module_manager_subscribe(uint32_t module_id, event_type_t event_type) {
     if (info == NULL || (uint16_t) (info - g_module_mgr.modules) != slot_index || info->generation != slot_gen ||
         info->unregistering || atomic_get(&info->draining) != 0) {
         module_manager_unlock();
-        (void) event_unsubscribe(event_type, subscriber_id);
+        rollback_event_subscription(event_type, subscriber_id);
         return MODULE_ERR_NOT_FOUND;
     }
 
     if (info->event_subscription_count >= CONFIG_MODULE_MAX_EVENT_SUBSCRIPTIONS ||
         find_event_sub_index(info, event_type) >= 0) {
         module_manager_unlock();
-        (void) event_unsubscribe(event_type, subscriber_id);
+        rollback_event_subscription(event_type, subscriber_id);
         return MODULE_ERR_BUSY;
     }
 

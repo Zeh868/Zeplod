@@ -1,6 +1,14 @@
 /**
  * @file test_core_coverage.c
  * @brief 补充 src/core 边界路径与统计/锁顺序覆盖
+ * @author zeh (china_qzh@163.com)
+ * @version 1.1
+ * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            首用例补 shutdown 兜底；新增 publish 级 DROP_LOWEST 防复发用例（配置门控）
  */
 
 #include <zephyr/sys/atomic.h>
@@ -30,6 +38,8 @@ static void core_cov_teardown(void* fixture) {
 }
 
 ZTEST(core_coverage, test_event_system_get_queue_uninitialized) {
+    /* 兜底 shutdown：本用例依赖"系统未初始化"前置，不再隐式依赖前序套件的 teardown */
+    (void) event_system_shutdown();
     zassert_is_null(event_system_get_queue(), NULL);
 }
 
@@ -290,5 +300,70 @@ ZTEST(core_coverage, test_dispatcher_idle_time_and_dropped_stats) {
     zassert_equal(event_dispatcher_stop(), EVENT_OK, NULL);
     zassert_equal(event_dispatcher_deinit(), EVENT_OK, NULL);
 }
+
+#if IS_ENABLED(CONFIG_EVENT_QUEUE_OVERFLOW_DROP_LOWEST)
+/**
+ * @brief 防复发：DROP_LOWEST 打开时，publish 级满队列应挤掉最低优先级并正确释放被挤事件
+ *
+ * 被挤事件带堆回退负载（64B > 内联 48B）：挤占路径经 event_free_queued_payload
+ * 释放其 DYNAMIC 负载；释放正确性以"不崩溃 + drop 恰好 +1 + 队列内容逐条校验"验证。
+ */
+ZTEST(core_coverage, test_publish_drop_lowest_evicts_lowest_when_full) {
+    struct k_msgq* q;
+    queue_stats_t  stats;
+    event_t        filler = {.type = 60U, .priority = EVENT_PRIORITY_LOW, .data_len = 0};
+    event_t        out;
+    uint32_t       drop_before;
+
+    zassert_equal(event_system_init(), EVENT_OK, NULL);
+    zassert_equal(event_system_start(), EVENT_OK, NULL);
+    zassert_equal(event_register_type(60U, "cov_drop_lowest"), EVENT_OK, NULL);
+
+    q = event_system_get_queue();
+    zassert_not_null(q, NULL);
+    event_queue_get_stats(q, &stats);
+    drop_before = stats.drop_count;
+
+    /* 队首放一条带堆负载的 LOW 事件：它是最旧的 LOW，将被挤占并触发负载释放路径 */
+    uint8_t payload[64] = {0};
+
+    zassert_equal(event_publish_copy(60U, EVENT_PRIORITY_LOW, payload, sizeof(payload)), EVENT_OK, NULL);
+
+    /* 用栈上事件（data_len=0，无堆分配）填满队列剩余容量 */
+    uint32_t cap = event_queue_capacity(q);
+
+    for (uint32_t i = 0; i < (cap - 1U); i++) {
+        zassert_equal(event_publish(&filler), EVENT_OK, "publish %u", i);
+    }
+    zassert_true(event_queue_is_full(q), NULL);
+
+    /* 高优先级事件应挤掉队首 LOW 事件并成功入队 */
+    zassert_equal(event_publish_copy(60U, EVENT_PRIORITY_HIGH, NULL, 0), EVENT_OK,
+                  "满队列上高优先级 publish 应挤掉 LOW 成功入队");
+    zassert_equal(event_queue_depth(q), cap, "挤占后队列应仍为满");
+
+    event_queue_get_stats(q, &stats);
+    zassert_equal(stats.drop_count, drop_before + 1U, "应恰好挤掉 1 条");
+
+    /* 逐条出队验证：被挤的是最旧 LOW，HIGH 在队尾 */
+    zassert_equal(event_queue_dequeue(q, &out, K_NO_WAIT), EVENT_OK, NULL);
+    zassert_equal(out.priority, EVENT_PRIORITY_LOW, "残留首条应为未被挤掉的 LOW");
+    zassert_equal(out.data_len, 0U, "被挤事件的负载不应残留到后续事件");
+    for (uint32_t i = 1U; i < (cap - 1U); i++) {
+        zassert_equal(event_queue_dequeue(q, &out, K_NO_WAIT), EVENT_OK, "dequeue %u", i);
+        zassert_equal(out.priority, EVENT_PRIORITY_LOW, "中间条目应保持 LOW");
+    }
+    zassert_equal(event_queue_dequeue(q, &out, K_NO_WAIT), EVENT_OK, NULL);
+    zassert_equal(out.priority, EVENT_PRIORITY_HIGH, "队尾应为挤入的 HIGH");
+    zassert_true(event_queue_is_empty(q), NULL);
+}
+#else
+/* 默认测试配置（tests/prj.conf）未启用 DROP_LOWEST：队列级挤占语义已由
+ * test_event_queue.c 的运行时策略用例无条件覆盖，publish 级接线用例仅在打开
+ * 该配置时编译；此处显式 skip，避免"静默少测"。 */
+ZTEST(core_coverage, test_publish_drop_lowest_evicts_lowest_when_full) {
+    ztest_test_skip();
+}
+#endif /* CONFIG_EVENT_QUEUE_OVERFLOW_DROP_LOWEST */
 
 ZTEST_SUITE(core_coverage, NULL, NULL, NULL, core_cov_teardown, NULL);

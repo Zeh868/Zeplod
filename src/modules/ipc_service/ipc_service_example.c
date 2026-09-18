@@ -12,7 +12,7 @@
  * 2. 初始化并启动服务
  * 3. 分别演示三种调用模式
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -20,11 +20,13 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.1            zeh            文档：Kconfig 编入说明；Future 示例简化
+ * 2026-09-18       1.2            zeh            示例线程栈大小具名；k_thread_create 返回值检查
  *
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <errno.h>
 #include <string.h>
 #include <zeplod/app_config.h>
 
@@ -196,10 +198,13 @@ static void example_future_call(void) {
  * 测试线程 (Test Thread)
  * ============================================================================ */
 
+/** 示例线程栈大小（字节） */
+#define EXAMPLE_THREAD_STACK_SIZE 2048
+
 /**
  * @brief 示例线程栈
  */
-static K_THREAD_STACK_DEFINE(example_stack, 2048);
+static K_THREAD_STACK_DEFINE(example_stack, EXAMPLE_THREAD_STACK_SIZE);
 
 /**
  * @brief 示例线程函数
@@ -260,8 +265,12 @@ static int ipc_service_example_init(void) {
 
     /* 创建示例线程 */
     static struct k_thread example_thread;
-    k_thread_create(&example_thread, example_stack, K_THREAD_STACK_SIZEOF(example_stack), example_thread_func, NULL,
-                    NULL, NULL, 5, 0, K_NO_WAIT);
+    k_tid_t example_tid = k_thread_create(&example_thread, example_stack, K_THREAD_STACK_SIZEOF(example_stack),
+                                          example_thread_func, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+    if (example_tid == NULL) {
+        LOG_ERR("Failed to create example thread");
+        return -EIO;
+    }
 
     LOG_INF("IPC Service Example initialized");
 

@@ -2,15 +2,14 @@
  * @file test_event_queue.c
  * @brief 事件队列单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
- *
- * Zehao Qian
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            套件声明前的用例归位；循环内入队/出队返回值检查
  *
  */
 
@@ -278,7 +277,8 @@ ZTEST(test_event_queue, test_queue_purge) {
 
     /* 添加一些事件 */
     for (int i = 0; i < 3; i++) {
-        event_queue_enqueue(&test_queue, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT);
+        zassert_equal(event_queue_enqueue(&test_queue, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT), EVENT_OK,
+                      "入队 %d 失败", i);
     }
 
     zassert_equal(event_queue_depth(&test_queue), 3, "队列深度应为 3");
@@ -308,13 +308,14 @@ ZTEST(test_event_queue, test_queue_stats) {
 
     /* 入队一些事件 */
     for (int i = 0; i < 4; i++) {
-        event_queue_enqueue(&test_queue, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT);
+        zassert_equal(event_queue_enqueue(&test_queue, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT), EVENT_OK,
+                      "入队 %d 失败", i);
     }
 
     /* 出队一些事件 */
     event_t out;
     for (int i = 0; i < 2; i++) {
-        event_queue_dequeue(&test_queue, &out, K_NO_WAIT);
+        zassert_equal(event_queue_dequeue(&test_queue, &out, K_NO_WAIT), EVENT_OK, "出队 %d 失败", i);
     }
 
     /* 获取统计 */
@@ -558,12 +559,13 @@ ZTEST(test_event_queue, test_multiple_queues) {
     zassert_equal(status, EVENT_OK, "队列 2 初始化失败");
 
     /* 向队列 1 入队 2 个事件 */
-    event_queue_enqueue(&queue1, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT);
-    event_queue_enqueue(&queue1, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT);
+    zassert_equal(event_queue_enqueue(&queue1, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT), EVENT_OK, NULL);
+    zassert_equal(event_queue_enqueue(&queue1, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT), EVENT_OK, NULL);
 
     /* 向队列 2 入队 3 个事件 */
     for (int i = 0; i < 3; i++) {
-        event_queue_enqueue(&queue2, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT);
+        zassert_equal(event_queue_enqueue(&queue2, &event, QUEUE_OVERFLOW_DROP_NEWEST, K_NO_WAIT), EVENT_OK,
+                      "队列 2 入队 %d 失败", i);
     }
 
     /* 验证统计独立 */
@@ -576,10 +578,6 @@ ZTEST(test_event_queue, test_multiple_queues) {
     event_queue_deinit(&queue1);
     event_queue_deinit(&queue2);
 }
-
-/* =============================================================================
- * 测试套件
- * ============================================================================= */
 
 ZTEST(test_event_queue, test_dequeue_unregistered_queue_does_not_consume) {
     struct k_msgq  raw_queue;
@@ -623,5 +621,9 @@ ZTEST(test_event_queue, test_drop_lowest_dequeue_waits_for_msgq_notification) {
 
     event_queue_deinit(&test_queue);
 }
+
+/* =============================================================================
+ * 测试套件
+ * ============================================================================= */
 
 ZTEST_SUITE(test_event_queue, NULL, NULL, NULL, NULL, NULL);

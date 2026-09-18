@@ -11,13 +11,14 @@
  * - 模块统计信息
  * - 模块状态回调
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            补 register 参数可空契约、stop 超时恢复路径与注销顺序说明
  *
  */
 
@@ -157,6 +158,8 @@ int module_manager_start(void);
  * 停止管理器，停止所有已注册的模块。
  *
  * @return 0 成功，负值错误码失败
+ * @note 等待模块操作排空超时返回 MODULE_ERR_TIMEOUT 时，管理器停留在 STOPPING 状态
+ *       （仍有模块操作在收尾）；可稍后重试本函数，直至排空完成并转入 STOPPED。
  */
 int module_manager_stop(void);
 
@@ -166,6 +169,9 @@ int module_manager_stop(void);
  * 完全关闭管理器，注销所有模块并释放资源。
  *
  * @return 0 成功，负值错误码失败
+ * @note 注销顺序：启用 CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES 时为依赖逆拓扑序
+ *       （同层按 priority 降序停止）；未启用时为 priority 降序——与 module_manager_stop_all
+ *       未启用依赖时的槽位遍历顺序不同。
  */
 int module_manager_shutdown(void);
 
@@ -178,9 +184,11 @@ int module_manager_shutdown(void);
  *
  * 将模块注册到管理器中，调用模块的 init() 函数。
  *
- * @param interface 模块接口指针
- * @param config 模块配置数据
- * @param module_id 输出参数：分配的模块 ID
+ * @param interface 模块接口指针，不能为 NULL
+ * @param config 模块配置数据；允许为 NULL——此时 interface->init 收到的 config 形参为
+ *               NULL，模块自行使用编译期静态配置
+ * @param module_id 输出参数：分配的模块 ID；允许为 NULL——不需要回读 ID 的调用方
+ *                  （如 SYS_INIT 自动注册）传 NULL 即可，注册失败时该参数不会被写入
  * @return 0 成功，负值错误码失败
  * @retval MODULE_ERR_NOT_INITIALIZED 管理器未初始化
  * @retval MODULE_ERR_INVALID_ARG 参数无效
@@ -212,6 +220,8 @@ int module_manager_register(const module_interface_t* interface, void* config, u
  * @note 注销期间会先标记 draining 并等待所有正在锁外执行的回调结束，再调用 shutdown
  *       与清槽。等待上限 1 秒；超时返回 MODULE_ERR_TIMEOUT，槽位保持冻结且不会释放资源，
  *       调用方可稍后重试注销。
+ * @note stop/unregister 执行期间，模块的 on_event 回调可能仍在并发执行；资源释放必须
+ *       放在 shutdown 而非 stop，防止回调访问已释放的资源。
  */
 int module_manager_unregister(uint32_t module_id);
 
@@ -285,6 +295,8 @@ int module_manager_start_module(uint32_t module_id);
  * @retval MODULE_ERR_IO 回调执行期间槽位被回收/复用
  * @note 含 SUSPENDED：挂起后直接 stop 亦返回 0 且不调业务 stop()；须先 resume 再 stop，
  *       或由模块在 control/shutdown 中自行收尾硬件。
+ * @note stop/unregister 执行期间，模块的 on_event 回调可能仍在并发执行（stop 不等待
+ *       in-flight 回调归零）；因此资源释放必须放在 shutdown 而非 stop。
  */
 int module_manager_stop_module(uint32_t module_id);
 

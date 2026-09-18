@@ -2,7 +2,7 @@
  * @file test_factory_mode.c
  * @brief factory_mode 模块单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-06-13
  *
  * @par 修改日志:
@@ -10,6 +10,9 @@
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 4 初始版本
  * 2026-06-13       1.1            zeh            事件订阅、失败路径与边界用例
+ * 2026-09-18       1.2            zeh            新增 value 超长拒绝用例（错误码统一
+ *                                                 APP_ERR_INVALID_PARAM 防复发）；snprintf
+ *                                                 返回值核对；补套件 teardown 停分发器
  *
  */
 
@@ -60,7 +63,17 @@ static void* factory_suite_setup(void) {
     return NULL;
 }
 
-ZTEST_SUITE(factory_mode_tests, NULL, factory_suite_setup, NULL, NULL, NULL);
+static void factory_suite_teardown(void* fixture) {
+    (void) fixture;
+
+    /* 套件收尾对称：setup 启动了分发器与事件系统，这里统一停掉，
+     * 避免分发线程泄漏影响同构建内的后续套件 */
+    (void) event_dispatcher_stop();
+
+    (void) event_system_stop();
+}
+
+ZTEST_SUITE(factory_mode_tests, NULL, factory_suite_setup, NULL, NULL, factory_suite_teardown);
 
 /* =============================================================================
  * 事件回调
@@ -89,7 +102,9 @@ static void fill_app_kv_full(void) {
     char key[16];
 
     for (int i = 0; i < APP_KV_MAX_ENTRIES; i++) {
-        (void) snprintf(key, sizeof(key), "fill%d", i);
+        /* key 上限 16 字节、i < APP_KV_MAX_ENTRIES(16)，两位序号不会截断 */
+        int n = snprintf(key, sizeof(key), "fill%d", i);
+        zassert_true(n >= 0 && n < (int) sizeof(key), "fill key snprintf 应完整写入");
         zassert_equal(app_kv_set(key, "v"), APP_OK, "fill kv %d", i);
     }
 }
@@ -174,7 +189,9 @@ ZTEST(factory_mode_tests, test_finalize_failed_reports_error) {
 
     /* 先前已写入的 KV 条目仍在（无回滚） */
     zassert_true(app_kv_has("fill0"), NULL);
-    (void) snprintf(key, sizeof(key), "fill%d", APP_KV_MAX_ENTRIES - 1);
+    /* fill 前缀 + 两位序号在 16 字节内不会截断 */
+    int n = snprintf(key, sizeof(key), "fill%d", APP_KV_MAX_ENTRIES - 1);
+    zassert_true(n >= 0 && n < (int) sizeof(key), "fill key snprintf 应完整写入");
     zassert_true(app_kv_has(key), NULL);
 
     teardown_factory();
@@ -214,11 +231,34 @@ ZTEST(factory_mode_tests, test_cal_slots_full) {
     zassert_equal(factory_mode_enter(), 0, NULL);
 
     for (size_t i = 0U; i < CONFIG_FACTORY_MODE_CAL_MAX_ENTRIES; i++) {
-        (void) snprintf(key, sizeof(key), "k%zu", i);
+        /* "k" + 个位/十位序号远小于 8 字节缓冲，不会截断 */
+        int n = snprintf(key, sizeof(key), "k%zu", i);
+        zassert_true(n >= 0 && n < (int) sizeof(key), "cal key snprintf 应完整写入");
         zassert_equal(factory_mode_set_calibration(key, val), 0, "slot %zu", i);
     }
 
     zassert_equal(factory_mode_set_calibration("overflow", val), -ENOMEM, NULL);
+
+    teardown_factory();
+}
+
+/**
+ * @brief 测试校准值超长拒绝（2026-09-18 契约：统一 APP_ERR_INVALID_PARAM）
+ *
+ * 原实现对 value 超长返回 -ENOMEM，与表满路径混淆；现与 key 超长统一为
+ * APP_ERR_INVALID_PARAM。本用例为该契约的防复发锚点。
+ */
+ZTEST(factory_mode_tests, test_calibration_value_too_long_rejected) {
+    char long_val[CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN];
+
+    setup_factory();
+    zassert_equal(factory_mode_enter(), 0, NULL);
+
+    /* 长度恰等于上限（不含结尾 0）：契约要求 strlen < 上限，此处必须拒绝 */
+    memset(long_val, 'v', sizeof(long_val) - 1U);
+    long_val[sizeof(long_val) - 1U] = '\0';
+    zassert_equal(factory_mode_set_calibration("toolong", long_val), APP_ERR_INVALID_PARAM,
+                  "value 达长度上限应返回 APP_ERR_INVALID_PARAM");
 
     teardown_factory();
 }

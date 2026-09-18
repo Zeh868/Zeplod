@@ -2,11 +2,15 @@
  * @file event_system_memory.c
  * @brief 事件创建、释放与负载内存管理
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.2
  * @date 2026-05-28
  *
  * @par 修改日志:
- * 2026-05-28 1.1 zeh 收敛 event 壳初始化与 inline/slab 负载附着 helper（P4.1）
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.1            zeh            收敛 event 壳初始化与 inline/slab 负载附着 helper（P4.1）
+ * 2026-09-18       1.2            zeh            提取 EVENT_DATA_LEN_MAX 具名常量；inline 负载附着改为 void 返回
+ *
  */
 
 #include <zephyr/logging/log.h>
@@ -15,6 +19,13 @@
 #include "event_system_internal.h"
 
 LOG_MODULE_DECLARE(event_system, CONFIG_SYS_LOG_LEVEL);
+
+/**
+ * 事件负载数据长度上限（字节）：64KB-1。
+ * 沿用初版实现的保守上限（对齐 16 位长度字段的常见协议约束）；event_t.data_len
+ * 声明为 uint32_t，负载校验层仍限制在 64KB 内，超出按参数错误拒绝。
+ */
+#define EVENT_DATA_LEN_MAX 65535U
 
 #define EVENT_SYSTEM_CHECK_MAGIC_FREE_VOID()                                                                           \
     do {                                                                                                               \
@@ -60,7 +71,7 @@ static void event_object_init(event_t* event, event_type_t type, event_priority_
 }
 
 static bool event_validate_data_len(size_t data_len) {
-    if (data_len > 65535) {
+    if (data_len > EVENT_DATA_LEN_MAX) {
         if (!k_is_in_isr()) {
             LOG_ERR("Event data length %zu exceeds maximum 64KB", data_len);
         }
@@ -69,14 +80,14 @@ static bool event_validate_data_len(size_t data_len) {
     return true;
 }
 
-static bool event_attach_inline_payload(event_t* event, const void* data, size_t data_len) {
+/* 将负载内联附着到事件壳（调用方保证参数合法：data_len ≤ INLINE_DATA_SIZE，恒成功） */
+static void event_attach_inline_payload(event_t* event, const void* data, size_t data_len) {
     __ASSERT_NO_MSG(event != NULL);
     __ASSERT_NO_MSG(data != NULL);
     __ASSERT_NO_MSG(data_len <= CONFIG_EVENT_INLINE_DATA_SIZE);
     memcpy(event->data.inline_data, data, data_len);
     event->data_len = (uint32_t) data_len;
     event->flags |= EVENT_FLAG_DATA_INLINE;
-    return true;
 }
 
 #if EVENT_SLAB_ENABLED && EVENT_SLAB_LARGE_AVAILABLE
@@ -200,7 +211,7 @@ event_t* event_create_with_data_rt(event_type_t type, event_priority_t priority,
     }
 
     if (data_len <= CONFIG_EVENT_INLINE_DATA_SIZE) {
-        (void) event_attach_inline_payload(event, data, data_len);
+        event_attach_inline_payload(event, data, data_len);
         return event;
     }
 
@@ -265,7 +276,7 @@ event_t* event_create_with_data(event_type_t type, event_priority_t priority, co
         if (event == NULL) {
             return NULL;
         }
-        (void) event_attach_inline_payload(event, data, data_len);
+        event_attach_inline_payload(event, data, data_len);
         return event;
     }
 

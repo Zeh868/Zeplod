@@ -2,13 +2,18 @@
  * @file example_module_b.c
  * @brief 示例模块 B 实现
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.3
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：init 补全零初始化；stop 改有界
+ * 2026-09-18       1.2            zeh            复审整改：start 先置 RUNNING 再以 K_FOREVER+k_thread_start 启动线程，消除启动竞态
+ * 2026-09-18       1.3            zeh            复审整改：删除死配置字段，init 忽略 config、注册传 NULL
+ *                                                 k_thread_join；status 改 atomic；补订阅
+ *                                                 返回值检查；事件负载解引用改 memcpy 保对齐
  *
  */
 
@@ -31,6 +36,9 @@ LOG_MODULE_REGISTER(example_module_b, CONFIG_SYS_LOG_LEVEL);
 #define EXAMPLE_MODULE_B_THREAD_PRIORITY   6
 #define EXAMPLE_MODULE_B_THREAD_STACK_SIZE 2048
 
+/** stop 时等待模块线程退出的有界超时；线程循环 k_msleep(50)，正常远小于该值 */
+#define EXAMPLE_MODULE_B_THREAD_JOIN_TIMEOUT_MS 200
+
 /* 控制命令 */
 #define CMD_SEND_DATA                      1
 #define CMD_GET_STATS                      2
@@ -41,8 +49,11 @@ LOG_MODULE_REGISTER(example_module_b, CONFIG_SYS_LOG_LEVEL);
  * ============================================================================= */
 
 typedef struct {
-    example_module_b_config_t config;
-    module_status_t           status;
+    /*
+     * status 被模块线程与模块管理器线程共同访问：
+     * 枚举整数的单写者多读者切换，用 atomic 保证可见性即可，不加互斥锁。
+     */
+    atomic_t                  status;
     struct k_thread           thread;
     K_KERNEL_STACK_MEMBER(stack, EXAMPLE_MODULE_B_THREAD_STACK_SIZE);
     uint32_t subscriber_id;
@@ -69,16 +80,11 @@ static void on_sensor_data(const event_t* event, void* user_data);
 int example_module_b_init(void* config) {
     LOG_INF("Initializing Example Module B...");
 
-    if (config != NULL) {
-        memcpy(&g_module_b.config, config, sizeof(example_module_b_config_t));
-    } else {
-        /* 默认配置 */
-        g_module_b.config.tx_buffer_size = 512;
-        g_module_b.config.rx_buffer_size = 512;
-        g_module_b.config.timeout_ms = 1000;
-    }
+    memset(&g_module_b, 0, sizeof(g_module_b));
+    /* 模块无运行参数：config 忽略（模块接口约定 init 形参保留） */
+    ARG_UNUSED(config);
 
-    g_module_b.status = MODULE_STATUS_INITIALIZED;
+    atomic_set(&g_module_b.status, MODULE_STATUS_INITIALIZED);
     g_module_b.subscriber_id = 0;
     g_module_b.event_type = EVENT_TYPE_SENSOR_DATA;
 
@@ -89,20 +95,35 @@ int example_module_b_init(void* config) {
 int example_module_b_start(void) {
     LOG_INF("Starting Module B...");
 
-    if (g_module_b.status != MODULE_STATUS_INITIALIZED && g_module_b.status != MODULE_STATUS_STOPPED) {
+    if (atomic_get(&g_module_b.status) != MODULE_STATUS_INITIALIZED &&
+        atomic_get(&g_module_b.status) != MODULE_STATUS_STOPPED) {
         LOG_ERR("Module not initialized");
         return -1;
     }
 
     /* 订阅来自模块 A 的传感器数据事件 */
     g_module_b.event_type = EVENT_TYPE_SENSOR_DATA;
-    event_subscribe(g_module_b.event_type, on_sensor_data, &g_module_b, &g_module_b.subscriber_id);
+    if (event_subscribe(g_module_b.event_type, on_sensor_data, &g_module_b, &g_module_b.subscriber_id) != EVENT_OK) {
+        LOG_ERR("event_subscribe sensor_data failed");
+        atomic_set(&g_module_b.status, MODULE_STATUS_ERROR);
+        return -EIO;
+    }
 
-    /* 启动模块线程 */
-    k_thread_create(&g_module_b.thread, g_module_b.stack, K_THREAD_STACK_SIZEOF(g_module_b.stack), module_b_thread_func,
-                    &g_module_b, NULL, NULL, EXAMPLE_MODULE_B_THREAD_PRIORITY, 0, K_NO_WAIT);
+    /* 先置 RUNNING 再创建线程（K_FOREVER + k_thread_start）：避免工作线程立即抢占
+     * 读到旧状态而直接退出（对齐 example_module_a 的安全模式） */
+    atomic_set(&g_module_b.status, MODULE_STATUS_RUNNING);
 
-    g_module_b.status = MODULE_STATUS_RUNNING;
+    k_tid_t tid = k_thread_create(&g_module_b.thread, g_module_b.stack, K_THREAD_STACK_SIZEOF(g_module_b.stack),
+                                  module_b_thread_func, &g_module_b, NULL, NULL, EXAMPLE_MODULE_B_THREAD_PRIORITY, 0,
+                                  K_FOREVER);
+    if (tid == NULL) {
+        LOG_ERR("Failed to create module B thread");
+        atomic_set(&g_module_b.status, MODULE_STATUS_ERROR);
+        return -ENOMEM;
+    }
+    k_thread_name_set(tid, "mod_b_receiver");
+    k_thread_start(tid);
+
     LOG_INF("Module B started");
     return 0;
 }
@@ -110,17 +131,18 @@ int example_module_b_start(void) {
 int example_module_b_stop(void) {
     LOG_INF("Stopping Module B...");
 
-    if (g_module_b.status != MODULE_STATUS_RUNNING) {
+    if (atomic_get(&g_module_b.status) != MODULE_STATUS_RUNNING) {
         return 0;
     }
 
     /* SIL-2: 先设置状态让线程自行退出，避免 k_thread_abort 强制终止 */
-    g_module_b.status = MODULE_STATUS_STOPPED;
+    atomic_set(&g_module_b.status, MODULE_STATUS_STOPPED);
 
-    /* 等待线程检测到状态变化并自然退出
-     * 线程循环中有 k_msleep(50)，等待 150ms 足够
-     */
-    k_msleep(150);
+    /* 有界汇合模块线程：线程循环 k_msleep(50)，正常应立即退出；超时说明线程异常滞留 */
+    int join_ret = k_thread_join(&g_module_b.thread, K_MSEC(EXAMPLE_MODULE_B_THREAD_JOIN_TIMEOUT_MS));
+    if (join_ret != 0) {
+        LOG_ERR("module b thread join timeout/failed: %d", join_ret);
+    }
 
     /* 取消事件订阅 */
     if (g_module_b.subscriber_id != 0) {
@@ -136,14 +158,14 @@ int example_module_b_shutdown(void) {
     LOG_INF("Shutting down Module B...");
 
     example_module_b_stop();
-    g_module_b.status = MODULE_STATUS_UNINITIALIZED;
+    atomic_set(&g_module_b.status, MODULE_STATUS_UNINITIALIZED);
 
     LOG_INF("Module B shutdown complete");
     return 0;
 }
 
 module_status_t example_module_b_get_status(void) {
-    return g_module_b.status;
+    return (module_status_t) atomic_get(&g_module_b.status);
 }
 
 void example_module_b_on_event(const event_t* event, void* user_data) {
@@ -161,7 +183,8 @@ void example_module_b_on_event(const event_t* event, void* user_data) {
         if (event->flags & EVENT_FLAG_DATA_INLINE) {
             memcpy(&sensor_value, event->data.inline_data, sizeof(int32_t));
         } else {
-            sensor_value = *(int32_t*) event->data.ptr;
+            /* 外部负载对齐未知，memcpy 到本地变量而非直接解引用指针 */
+            memcpy(&sensor_value, event->data.ptr, sizeof(int32_t));
         }
         LOG_DBG("Event data: %d", sensor_value);
     }
@@ -226,7 +249,7 @@ static void module_b_thread_func(void* p1, void* p2, void* p3) {
 
     LOG_INF("Module B thread started");
 
-    while (g_module_b.status == MODULE_STATUS_RUNNING) {
+    while (atomic_get(&g_module_b.status) == MODULE_STATUS_RUNNING) {
         /* 模拟通信处理 */
         k_msleep(50);
     }
@@ -249,7 +272,8 @@ static void on_sensor_data(const event_t* event, void* user_data) {
         if (event->flags & EVENT_FLAG_DATA_INLINE) {
             memcpy(&sensor_value, event->data.inline_data, sizeof(int32_t));
         } else {
-            sensor_value = *(int32_t*) event->data.ptr;
+            /* 外部负载对齐未知，memcpy 到本地变量而非直接解引用指针 */
+            memcpy(&sensor_value, event->data.ptr, sizeof(int32_t));
         }
 
         /* 示例：发送确认 */
@@ -282,10 +306,9 @@ const module_interface_t* example_module_b_get_interface(void) {
 
 #if APP_CONFIG_ENABLE_MODULE_B
 static int example_module_b_auto_register(void) {
-    uint32_t                  module_id;
-    example_module_b_config_t config_b = {.tx_buffer_size = 512, .rx_buffer_size = 512, .timeout_ms = 1000};
+    uint32_t module_id;
 
-    if (module_manager_register(example_module_b_get_interface(), &config_b, &module_id) != 0) {
+    if (module_manager_register(example_module_b_get_interface(), NULL, &module_id) != 0) {
         LOG_ERR("module_manager_register example_module_b failed");
         return -EIO;
     }

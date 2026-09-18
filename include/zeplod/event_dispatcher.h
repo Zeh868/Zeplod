@@ -11,7 +11,7 @@
  * - 支持暂停/恢复功能
  * - 支持手动批处理模式
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -19,6 +19,7 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.0            zeh            修正文档与注释
+ * 2026-09-18       1.1            zeh            get_current_latency 兼容别名注释改中文并引导新代码使用 get_idle_time_us
  *
  */
 
@@ -309,9 +310,12 @@ void event_dispatcher_stats_inc_dropped(void);
 uint32_t event_dispatcher_get_idle_time_us(void);
 
 /**
- * @brief Backward-compatible alias for event_dispatcher_get_idle_time_us().
+ * @brief event_dispatcher_get_idle_time_us() 的向后兼容别名
  *
- * @return Same value as event_dispatcher_get_idle_time_us().
+ * 兼容豁免：旧 API 名称，语义与 event_dispatcher_get_idle_time_us() 完全一致；
+ * 新代码请直接使用 event_dispatcher_get_idle_time_us()。
+ *
+ * @return 与 event_dispatcher_get_idle_time_us() 相同的空闲时间（微秒）
  */
 uint32_t event_dispatcher_get_current_latency(void);
 

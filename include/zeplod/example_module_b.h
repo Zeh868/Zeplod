@@ -2,13 +2,14 @@
  * @file example_module_b.h
  * @brief 示例模块 B 头文件
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.2
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.2            zeh            复审整改：删除全工程无读取的死配置结构体（模块无运行参数）
  *
  */
 
@@ -20,16 +21,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* =============================================================================
- * 模块配置
- * ============================================================================= */
-
-typedef struct {
-    uint32_t tx_buffer_size;
-    uint32_t rx_buffer_size;
-    uint32_t timeout_ms;
-} example_module_b_config_t;
 
 /* =============================================================================
  * 模块接口

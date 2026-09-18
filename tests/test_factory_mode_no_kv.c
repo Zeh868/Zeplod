@@ -2,8 +2,15 @@
  * @file test_factory_mode_no_kv.c
  * @brief factory_mode 在无 app_kv 时的行为测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh             初始版本
+ * 2026-09-18       1.1            zeh             补套件 teardown 停分发器与事件系统
+ *
  */
 
 #include <zephyr/kernel.h>
@@ -31,7 +38,17 @@ static void* factory_no_kv_suite_setup(void) {
     return NULL;
 }
 
-ZTEST_SUITE(factory_mode_no_kv_tests, NULL, factory_no_kv_suite_setup, NULL, NULL, NULL);
+static void factory_no_kv_suite_teardown(void* fixture) {
+    (void) fixture;
+
+    /* 套件收尾对称：setup 启动了分发器与事件系统，这里统一停掉，
+     * 避免分发线程泄漏影响同构建内的后续套件 */
+    (void) event_dispatcher_stop();
+
+    (void) event_system_stop();
+}
+
+ZTEST_SUITE(factory_mode_no_kv_tests, NULL, factory_no_kv_suite_setup, NULL, NULL, factory_no_kv_suite_teardown);
 
 ZTEST(factory_mode_no_kv_tests, test_finalize_disabled_without_app_kv) {
     zassert_equal(factory_mode_control(FACTORY_MODE_CMD_RESET, NULL), 0, NULL);

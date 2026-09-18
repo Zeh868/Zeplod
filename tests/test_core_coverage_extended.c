@@ -1,6 +1,17 @@
 /**
  * @file test_core_coverage_extended.c
  * @brief 补充 src/core 发布校验、队列策略、compat 错误路径与分发器边界
+ * @author zeh (china_qzh@163.com)
+ * @version 1.1
+ * @date 2026-06-13
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-06-13       1.0            zeh             初始版本
+ * 2026-09-18       1.1            zeh             slab 耗尽回调用例补回调与创建数断言；
+ *                                                  堆耗尽分支显式 skip；补全文件头模板
+ *
  */
 
 #include <zephyr/sys/atomic.h>
@@ -122,11 +133,15 @@ ZTEST(core_coverage_ext, test_event_create_large_malloc_fallback) {
     zassert_equal(event_system_init(), EVENT_OK, NULL);
 
     event_t* event = event_create_with_data(53, EVENT_PRIORITY_NORMAL, large, sizeof(large));
-    if (event != NULL) {
-        zassert_equal(event->data_len, sizeof(large), NULL);
-        zassert_true((event->flags & EVENT_FLAG_DATA_DYNAMIC) != 0, NULL);
-        event_free(event);
+    if (event == NULL) {
+        /* 主机堆耗尽无法确定性注入：NULL 属环境性结果而非用例失败，
+         * 显式跳过并在报告留痕，避免静默通过掩盖分支未覆盖 */
+        ztest_test_skip();
+        return;
     }
+    zassert_equal(event->data_len, sizeof(large), NULL);
+    zassert_true((event->flags & EVENT_FLAG_DATA_DYNAMIC) != 0, NULL);
+    event_free(event);
 
     zassert_equal(event_system_shutdown(), EVENT_OK, NULL);
 }
@@ -197,7 +212,11 @@ ZTEST(core_coverage_ext, test_event_get_statistics_after_init) {
     zassert_equal(dropped, 0U, NULL);
 }
 
-#if defined(CONFIG_EVENT_SLAB_EXHAUSTED_CB) && (CONFIG_EVENT_SLAB_EXHAUSTED_CB == 1)
+/* 回调开启且 NORMAL 池存在才可测耗尽；池容量 + 2 的富余量保证循环必然以 NULL 告终 */
+#if defined(CONFIG_EVENT_SLAB_EXHAUSTED_CB) && (CONFIG_EVENT_SLAB_EXHAUSTED_CB == 1) &&                           \
+    defined(CONFIG_EVENT_SLAB_NORMAL_COUNT)
+#define EXT_SLAB_PROBE_MAX (CONFIG_EVENT_SLAB_NORMAL_COUNT + 2U)
+
 static atomic_t g_ext_slab_exhausted;
 
 static void ext_slab_exhausted_cb(event_priority_t priority, const char* slab_name) {
@@ -207,7 +226,7 @@ static void ext_slab_exhausted_cb(event_priority_t priority, const char* slab_na
 }
 
 ZTEST(core_coverage_ext, test_slab_exhausted_callback_on_pressure) {
-    event_t* events[16];
+    event_t* events[EXT_SLAB_PROBE_MAX];
     int      i;
 
     atomic_set(&g_ext_slab_exhausted, 0);
@@ -215,12 +234,17 @@ ZTEST(core_coverage_ext, test_slab_exhausted_callback_on_pressure) {
 
     zassert_equal(event_system_init(), EVENT_OK, NULL);
 
-    for (i = 0; i < 16; i++) {
+    for (i = 0; i < (int) EXT_SLAB_PROBE_MAX; i++) {
         events[i] = event_create_rt((event_type_t) (60 + i), EVENT_PRIORITY_NORMAL);
         if (events[i] == NULL) {
             break;
         }
     }
+
+    /* 行为断言：压力下必须至少成功创建过事件（i>0），且回调被触发恰一次 */
+    zassert_true(i > 0, "slab 压力测试前应至少成功创建 1 个事件");
+    zassert_true(i < (int) EXT_SLAB_PROBE_MAX, "NORMAL 池应在探测上限内耗尽");
+    zassert_equal(atomic_get(&g_ext_slab_exhausted), 1, "slab 耗尽回调应被触发");
 
     for (int j = 0; j < i; j++) {
         event_free(events[j]);

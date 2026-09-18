@@ -2,13 +2,15 @@
  * @file provisioning_module.c
  * @brief 配网模块实现
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            Phase 3 初始版本
+ * 2026-09-18       1.1            zeh            reset() 同时删除持久化凭据并落盘；
+ *                                                 set_credentials() PSK 写失败回写旧 SSID
  *
  */
 
@@ -170,10 +172,35 @@ int provisioning_module_begin(const provisioning_credentials_t* creds) {
 }
 
 int provisioning_module_reset(void) {
+    int ret_ssid;
+    int ret_psk;
+
     prov_lock();
     g_prov.state = PROVISIONING_STATE_UNPROVISIONED;
     prov_unlock();
     (void) prov_publish_state(PROVISIONING_STATE_UNPROVISIONED, 0);
+
+    /* reset 语义为"恢复到未配网"：持久化凭据须一并删除，否则重启后 init 探测到
+       app_kv 残留的 SSID/PSK 会再次把状态标成 PROVISIONED，reset 形同虚设 */
+    ret_ssid = app_kv_remove(PROV_KV_KEY_SSID);
+    ret_psk = app_kv_remove(PROV_KV_KEY_PSK);
+    /* 键不存在（未配网即 reset）与 app_kv 未编译（DISABLED）均属正常，不视为失败 */
+    if ((ret_ssid != APP_OK && ret_ssid != APP_ERR_NOT_FOUND && ret_ssid != APP_ERR_DISABLED) ||
+        (ret_psk != APP_OK && ret_psk != APP_ERR_NOT_FOUND && ret_psk != APP_ERR_DISABLED)) {
+        LOG_ERR("remove persisted credentials failed (ssid=%d psk=%d)", ret_ssid, ret_psk);
+    }
+
+#if IS_ENABLED(CONFIG_APP_KV_PERSIST)
+    {
+        int save_ret = app_kv_save();
+
+        if (save_ret != APP_OK) {
+            /* 落盘失败仅记日志：RAM 表已删除，但 flash 残留会在下次上电恢复凭据 */
+            LOG_ERR("app_kv_save after reset failed: %d (stale credentials may reload on boot)", save_ret);
+        }
+    }
+#endif
+
     return 0;
 }
 
@@ -204,7 +231,9 @@ int provisioning_module_get_device_id(char* out, size_t out_len) {
 }
 
 int provisioning_module_set_credentials(const provisioning_credentials_t* creds) {
-    int ret;
+    int  ret;
+    char old_ssid[PROVISIONING_WIFI_SSID_MAX_LEN];
+    bool has_old_ssid;
 
     if (creds == NULL || creds->ssid == NULL || creds->psk == NULL) {
         return APP_ERR_INVALID_PARAM;
@@ -224,6 +253,10 @@ int provisioning_module_set_credentials(const provisioning_credentials_t* creds)
     }
     prov_unlock();
 
+    /* 暂存旧 SSID：PSK 写失败时回写，避免留下"新 SSID + 旧 PSK"的错配组合——
+       get_credentials 只看两键是否存在，半写状态会在下次上电被误判为已配网 */
+    has_old_ssid = (app_kv_get(PROV_KV_KEY_SSID, old_ssid, sizeof(old_ssid)) == APP_OK);
+
     /* app_kv 内部自带互斥锁，且不会回调本模块，锁外调用避免不必要的嵌套持锁 */
     ret = app_kv_set(PROV_KV_KEY_SSID, creds->ssid);
     if (ret != APP_OK && ret != APP_ERR_DISABLED) {
@@ -232,7 +265,17 @@ int provisioning_module_set_credentials(const provisioning_credentials_t* creds)
     }
     ret = app_kv_set(PROV_KV_KEY_PSK, creds->psk);
     if (ret != APP_OK && ret != APP_ERR_DISABLED) {
+        int rollback_ret;
+
         LOG_ERR("persist wifi.psk failed: %d", ret);
+        if (has_old_ssid) {
+            /* 回写旧 SSID，维持与新写入前的旧 PSK 成对一致；回滚失败保持报错返回，
+               此时凭据处于不一致态，状态机不会进入 PROVISIONED（见 begin 的失败路径） */
+            rollback_ret = app_kv_set(PROV_KV_KEY_SSID, old_ssid);
+            if (rollback_ret != APP_OK && rollback_ret != APP_ERR_DISABLED) {
+                LOG_ERR("rollback wifi.ssid failed: %d", rollback_ret);
+            }
+        }
         return ret;
     }
 

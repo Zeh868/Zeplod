@@ -4,21 +4,23 @@
  *
  * 实现 Slab 池定义和内存管理函数。
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-15
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-15       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            include 顺序修正；耗尽回调指针加 volatile 并注明同步契约
  *
  */
 
-#include "event_memory.h"
 #include <zephyr/irq.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <string.h>
+
+#include "event_memory.h"
 
 LOG_MODULE_REGISTER(event_memory, CONFIG_SYS_LOG_LEVEL);
 
@@ -79,8 +81,14 @@ static atomic_t g_fallback_count = ATOMIC_INIT(0);
  * ============================================================================= */
 
 #if defined(CONFIG_EVENT_SLAB_EXHAUSTED_CB) && (CONFIG_EVENT_SLAB_EXHAUSTED_CB == 1)
-/** Slab 耗尽回调函数指针 */
-static event_slab_exhausted_cb_t g_slab_exhausted_cb = NULL;
+/**
+ * Slab 耗尽回调函数指针。
+ * 同步契约：写侧（event_register_slab_exhausted_cb）在 irq_lock 临界区内更新；
+ * 读侧（notify_slab_exhausted）为单次指针读——单核对齐字长读本身原子，volatile
+ * 阻止编译器把读缓存到寄存器或与后续调用重排；跨核一致性由写侧先写后用的
+ * 发布顺序约定保证（回调注册须先于可能触发耗尽的分配路径完成）。
+ */
+static event_slab_exhausted_cb_t volatile g_slab_exhausted_cb = NULL;
 
 void event_register_slab_exhausted_cb(event_slab_exhausted_cb_t cb) {
     unsigned int key = irq_lock();

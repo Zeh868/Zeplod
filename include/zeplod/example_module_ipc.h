@@ -4,13 +4,16 @@
  *
  * 由 Kconfig CONFIG_EXAMPLE_MODULE_THREAD_IPC 控制是否编译与注册。
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：删除无实际用途的 reserved
+ *                                                 字段（模块无可配置项，配置结构体一并
+ *                                                 移除，init/config 传 NULL 即可）
  *
  */
 
@@ -25,10 +28,6 @@ extern "C" {
 
 /** 演示用：事件桥中的 source_id（与 thread_ipc_event_publish_result 一致） */
 #define EXAMPLE_MODULE_IPC_EVENT_SOURCE_ID 42U
-
-typedef struct {
-    uint32_t reserved; /**< 占位，可按业务扩展 */
-} example_module_ipc_config_t;
 
 int             example_module_ipc_init(void* config);
 int             example_module_ipc_start(void);

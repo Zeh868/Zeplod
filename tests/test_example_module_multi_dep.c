@@ -2,13 +2,16 @@
  * @file test_example_module_multi_dep.c
  * @brief 多依赖示例模块单元测试
  * @author OpenClaw Agent
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-10
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-10       1.0            agent          为 example_module_multi_dep 编写测试用例
+ * 2026-09-18       1.1            zeh            版本断言改为具体值（消除恒真断言）；
+ *                                                 接口函数指针按 MINIMAL_WITH_DEPS
+ *                                                 契约精确锚定
  *
  */
 
@@ -77,21 +80,22 @@ ZTEST(example_module_multi_dep, test_depends_on) {
 
 /**
  * @brief 测试版本号
+ *
+ * 接口由 DECLARE_MODULE_INTERFACE_MINIMAL_WITH_DEPS 生成，版本号宏写死为
+ * MODULE_VERSION(1, 0, 0)——直接断言具体值，恒真范围断言无回归价值。
  */
 ZTEST(example_module_multi_dep, test_version) {
     const module_interface_t* iface = example_module_multi_dep_get_interface();
 
-    /* 验证版本号格式正确 */
-    zassert_true(iface->version > 0, "版本号应 > 0");
-
-    /* 验证版本号编码正确 */
+    /* 验证版本号编码正确（与注册宏的实参一致） */
     uint8_t major = MODULE_VERSION_MAJOR(iface->version);
     uint8_t minor = MODULE_VERSION_MINOR(iface->version);
     uint8_t patch = MODULE_VERSION_PATCH(iface->version);
 
-    zassert_true(major <= 255, "主版本号应 <= 255");
-    zassert_true(minor <= 255, "次版本号应 <= 255");
-    zassert_true(patch <= 255, "补丁号应 <= 255");
+    zassert_equal(major, 1U, "主版本号应为 1");
+    zassert_equal(minor, 0U, "次版本号应为 0");
+    zassert_equal(patch, 0U, "补丁号应为 0");
+    zassert_equal(iface->version, MODULE_VERSION(1, 0, 0), "整体版本号应为 1.0.0");
 }
 
 /* =============================================================================
@@ -104,9 +108,8 @@ ZTEST(example_module_multi_dep, test_version) {
 ZTEST(example_module_multi_dep, test_priority) {
     const module_interface_t* iface = example_module_multi_dep_get_interface();
 
-    /* 验证优先级在有效范围内 */
-    zassert_true(iface->priority >= MODULE_PRIORITY_CRITICAL, "优先级应 >= 最高优先级");
-    zassert_true(iface->priority <= MODULE_PRIORITY_LOW, "优先级应 <= 最低优先级");
+    /* 注册宏固定为 MODULE_PRIORITY_NORMAL，直接锚定具体值 */
+    zassert_equal(iface->priority, MODULE_PRIORITY_NORMAL, "优先级应为 NORMAL");
 }
 
 /* =============================================================================
@@ -145,17 +148,21 @@ ZTEST(example_module_multi_dep, test_register_with_deps) {
 
 /**
  * @brief 测试接口函数指针完整性
+ *
+ * MINIMAL_WITH_DEPS 宏的确定契约：init/start/stop/on_event 必须实现，
+ * shutdown/get_status/control 固定为 NULL（管理器调用前自会判空）。
  */
 ZTEST(example_module_multi_dep, test_interface_functions) {
     const module_interface_t* iface = example_module_multi_dep_get_interface();
 
-    /* 所有函数指针都应该是 NULL（这个模块只有接口定义） */
-    /* 或者，这个模块可能实现了所有接口 */
-    /* 根据实际实现来验证 */
-    if (iface->init != NULL) {
-        zassert_true(iface->start != NULL, "start 不应为 NULL");
-        zassert_true(iface->stop != NULL, "stop 不应为 NULL");
-    }
+    zassert_not_null(iface->init, "init 不应为 NULL");
+    zassert_not_null(iface->start, "start 不应为 NULL");
+    zassert_not_null(iface->stop, "stop 不应为 NULL");
+    zassert_not_null(iface->on_event, "on_event 不应为 NULL");
+
+    zassert_is_null(iface->shutdown, "MINIMAL 接口 shutdown 应为 NULL");
+    zassert_is_null(iface->get_status, "MINIMAL 接口 get_status 应为 NULL");
+    zassert_is_null(iface->control, "MINIMAL 接口 control 应为 NULL");
 }
 
 /* =============================================================================

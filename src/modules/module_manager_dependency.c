@@ -2,15 +2,20 @@
  * @file module_manager_dependency.c
  * @brief 模块依赖规划器实现（委托 module_dependency_planner API）
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.1            zeh            引入依赖版本下限校验
+ * 2026-09-18       1.2            zeh            build_start_order 按剔除/建边/拓扑阶段拆分；修正 include 顺序
  */
-
-#include "module_manager_internal.h"
-#include "module_manager_planner_internal.h"
 
 #include <zephyr/logging/log.h>
 #include <string.h>
+
+#include "module_manager_internal.h"
+#include "module_manager_planner_internal.h"
 
 LOG_MODULE_DECLARE(module_manager, CONFIG_SYS_LOG_LEVEL);
 
@@ -96,26 +101,13 @@ static bool mm_dep_version_satisfied(const mm_dep_order_entry_t* entry, unsigned
     return false;
 }
 
-int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
+/* 校验并剔除非法条目（不动点）：依赖未知/自依赖/版本不满足/不在批内的条目逐轮剔除，
+ * 被剔除条目的依赖方随之剔除。持锁调用；返回收敛后的有效条目数（n 原地压缩）。 */
+static int mm_dep_prune_invalid_locked(mm_dep_order_entry_t* entries, int n) {
     bool valid[CONFIG_MAX_MODULES];
-    uint32_t(*adj)[MM_ADJ_ROW_WORDS] = g_module_mgr.topo_adj_scratch;
-    int      indegree[CONFIG_MAX_MODULES];
-    uint32_t pick_order[CONFIG_MAX_MODULES];
-    int      n_work;
-
-    if (entries == NULL || n < 0 || n > CONFIG_MAX_MODULES) {
-        return 0;
-    }
-    if (n <= 1) {
-        return n;
-    }
-
-    n_work = n;
-
-    module_manager_lock();
 
     for (;;) {
-        for (int i = 0; i < n_work; i++) {
+        for (int i = 0; i < n; i++) {
             valid[i] = true;
             if (entries[i].depends_on == NULL) {
                 continue;
@@ -159,7 +151,7 @@ int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
                 }
                 int found = -1;
 
-                for (int k = 0; k < n_work; k++) {
+                for (int k = 0; k < n; k++) {
                     if (entries[k].id == did) {
                         found = k;
                         break;
@@ -176,7 +168,7 @@ int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
 
         int n2 = 0;
 
-        for (int i = 0; i < n_work; i++) {
+        for (int i = 0; i < n; i++) {
             if (valid[i]) {
                 if (n2 != i) {
                     entries[n2] = entries[i];
@@ -185,34 +177,33 @@ int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
             }
         }
 
-        if (n2 == n_work) {
+        if (n2 == n) {
             break;
         }
         if (n2 <= 1) {
-            module_manager_unlock();
             return n2;
         }
-        n_work = n2;
+        n = n2;
     }
+    return n;
+}
 
-    if (n_work <= 1) {
-        module_manager_unlock();
-        return n_work;
-    }
-
+/* 持锁构建依赖邻接矩阵与入度表（dep → 依赖方 的边，跳过已 RUNNING 的依赖）。
+ * 批内不一致（依赖缺失或超上限，具体错误已记录日志）时返回 false，调用方回退
+ * 为纯 priority 排序。 */
+static bool mm_dep_build_edges_locked(mm_dep_order_entry_t* entries, int n, uint32_t adj[][MM_ADJ_ROW_WORDS],
+                                      int* indegree) {
     mm_adj_matrix_clear(adj);
-    (void) memset(indegree, 0, sizeof(indegree));
+    (void) memset(indegree, 0, sizeof(int) * (size_t) n);
 
-    for (int i = 0; i < n_work; i++) {
+    for (int i = 0; i < n; i++) {
         if (entries[i].depends_on == NULL) {
             continue;
         }
         for (unsigned int di = 0U;; di++) {
             if (di >= (unsigned int) CONFIG_MODULE_MANAGER_DEPENDS_LIST_MAX) {
                 LOG_ERR("Module id=%u: depends_on exceeds max or not NULL-terminated", (unsigned int) entries[i].id);
-                module_manager_unlock();
-                mm_dep_planner_sort_priority_asc(entries, n_work);
-                return n_work;
+                return false;
             }
             const char* const depn = entries[i].depends_on[di];
 
@@ -227,7 +218,7 @@ int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
             }
             int j = -1;
 
-            for (int k = 0; k < n_work; k++) {
+            for (int k = 0; k < n; k++) {
                 if (entries[k].id == did) {
                     j = k;
                     break;
@@ -235,9 +226,7 @@ int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
             }
             if (j < 0) {
                 LOG_ERR("Module id=%u: internal: missing edge for dependency '%s'", (unsigned int) entries[i].id, depn);
-                module_manager_unlock();
-                mm_dep_planner_sort_priority_asc(entries, n_work);
-                return n_work;
+                return false;
             }
             if (!mm_adj_matrix_test(adj, j, i)) {
                 mm_adj_matrix_set(adj, j, i);
@@ -245,17 +234,23 @@ int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
             }
         }
     }
+    return true;
+}
 
+/* 持锁 Kahn 变体：每轮从未完成节点中选入度为 0 且 priority 最小者。
+ * 成功时 pick_order 填满 n 个下标；返回 false 表示存在依赖环（调用方回退排序）。 */
+static bool mm_dep_topo_pick_locked(const mm_dep_order_entry_t* entries, int n, const uint32_t adj[][MM_ADJ_ROW_WORDS],
+                                    int* indegree, uint32_t* pick_order) {
     bool remaining[CONFIG_MAX_MODULES];
 
-    for (int i = 0; i < n_work; i++) {
+    for (int i = 0; i < n; i++) {
         remaining[i] = true;
     }
 
-    for (int out = 0; out < n_work; out++) {
+    for (int out = 0; out < n; out++) {
         int best = -1;
 
-        for (int i = 0; i < n_work; i++) {
+        for (int i = 0; i < n; i++) {
             if (!remaining[i] || indegree[i] != 0) {
                 continue;
             }
@@ -264,29 +259,67 @@ int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
             }
         }
         if (best < 0) {
-            LOG_ERR("Dependency cycle; using priority order for start");
-            module_manager_unlock();
-            mm_dep_planner_sort_priority_asc(entries, n_work);
-            return n_work;
+            return false;
         }
         pick_order[out] = (uint32_t) best;
         remaining[best] = false;
-        for (int i = 0; i < n_work; i++) {
+        for (int i = 0; i < n; i++) {
             if (mm_adj_matrix_test(adj, best, i)) {
                 indegree[i]--;
             }
         }
     }
+    return true;
+}
+
+/* 按 pick_order 重排 entries 前 n 项（与 build_stop_order 共用）。 */
+static void mm_dep_apply_pick_order(mm_dep_order_entry_t* entries, int n, const uint32_t* pick_order) {
+    mm_dep_order_entry_t tmp[CONFIG_MAX_MODULES];
+
+    for (int i = 0; i < n; i++) {
+        tmp[i] = entries[(int) pick_order[i]];
+    }
+    (void) memcpy(entries, tmp, sizeof(entries[0]) * (size_t) n);
+}
+
+int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
+    uint32_t (*adj)[MM_ADJ_ROW_WORDS] = g_module_mgr.topo_adj_scratch;
+    int      indegree[CONFIG_MAX_MODULES];
+    uint32_t pick_order[CONFIG_MAX_MODULES];
+
+    if (entries == NULL || n < 0 || n > CONFIG_MAX_MODULES) {
+        return 0;
+    }
+    if (n <= 1) {
+        return n;
+    }
+
+    module_manager_lock();
+
+    n = mm_dep_prune_invalid_locked(entries, n);
+    if (n <= 1) {
+        module_manager_unlock();
+        return n;
+    }
+
+    if (!mm_dep_build_edges_locked(entries, n, adj, indegree)) {
+        /* 具体错误已由建边阶段记录日志；回退为纯 priority 顺序保证批内仍可启动。 */
+        module_manager_unlock();
+        mm_dep_planner_sort_priority_asc(entries, n);
+        return n;
+    }
+
+    if (!mm_dep_topo_pick_locked(entries, n, adj, indegree, pick_order)) {
+        LOG_ERR("Dependency cycle; using priority order for start");
+        module_manager_unlock();
+        mm_dep_planner_sort_priority_asc(entries, n);
+        return n;
+    }
 
     module_manager_unlock();
 
-    mm_dep_order_entry_t tmp[CONFIG_MAX_MODULES];
-
-    for (int i = 0; i < n_work; i++) {
-        tmp[i] = entries[(int) pick_order[i]];
-    }
-    (void) memcpy(entries, tmp, sizeof(entries[0]) * (size_t) n_work);
-    return n_work;
+    mm_dep_apply_pick_order(entries, n, pick_order);
+    return n;
 }
 
 int mm_dep_planner_build_stop_order(mm_dep_order_entry_t* entries, int n) {
@@ -374,19 +407,16 @@ int mm_dep_planner_build_stop_order(mm_dep_order_entry_t* entries, int n) {
 
     module_manager_unlock();
 
-    mm_dep_order_entry_t tmp[CONFIG_MAX_MODULES];
+    mm_dep_apply_pick_order(entries, n, pick_order);
 
-    for (int i = 0; i < n; i++) {
-        tmp[i] = entries[(int) pick_order[i]];
-    }
+    /* 拓扑序原址反转为停止顺序：越晚启动的依赖方越早停止。 */
     for (int i = 0; i < n / 2; i++) {
         const int            j = n - 1 - i;
-        mm_dep_order_entry_t t = tmp[i];
+        mm_dep_order_entry_t t = entries[i];
 
-        tmp[i] = tmp[j];
-        tmp[j] = t;
+        entries[i] = entries[j];
+        entries[j] = t;
     }
-    (void) memcpy(entries, tmp, sizeof(entries[0]) * (size_t) n);
     return n;
 }
 #endif /* CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES */

@@ -2,13 +2,15 @@
  * @file test_sys_diag.c
  * @brief sys_diag 单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-06-13
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            模块注册用例末尾补注销清理；去 const
+ *                                                 类型压制（改本地可写缓冲）
  *
  */
 
@@ -91,10 +93,11 @@ ZTEST(sys_diag_tests, test_collect_null_rejected) {
 
 ZTEST(sys_diag_tests, test_format_invalid_args) {
     sys_diag_snapshot_t snap;
+    char                writable[2] = "x"; /* 本地可写缓冲，避免对字面量去 const */
 
-    zassert_equal(sys_diag_format(NULL, (char*) "x", 2U), -EINVAL, NULL);
+    zassert_equal(sys_diag_format(NULL, writable, sizeof(writable)), -EINVAL, NULL);
     zassert_equal(sys_diag_format(&snap, NULL, 16U), -EINVAL, NULL);
-    zassert_equal(sys_diag_format(&snap, (char*) "x", 0U), -EINVAL, NULL);
+    zassert_equal(sys_diag_format(&snap, writable, 0U), -EINVAL, NULL);
 }
 
 ZTEST(sys_diag_tests, test_format_buffer_too_small) {
@@ -162,5 +165,8 @@ ZTEST(sys_diag_tests, test_collect_modules_when_manager_enabled) {
     sys_diag_snapshot_t snap;
     zassert_equal(sys_diag_collect(&snap), 0, NULL);
     zassert_true(snap.module_count >= 1U, "module_count should reflect registration");
+
+    /* 用例自清理：注销桩模块，避免残留注册影响同构建内其他套件 */
+    zassert_equal(module_manager_unregister(module_id), 0, "unregister diag_stub failed");
 }
 #endif

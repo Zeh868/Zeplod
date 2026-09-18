@@ -4,6 +4,14 @@
  * @author zeh (china_qzh@163.com)
  * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            正式发布
+ * 2026-09-18       1.1            zeh            审查整改：就绪环满告警日志移出关中断
+ *                                                 临界区（先快照标志、解锁后打印）
+ *
  */
 
 #include "data_bus_ready.h"
@@ -33,8 +41,8 @@ static struct {
 static atomic_t g_ready_fallback_pending;
 
 static bool ready_ring_push(data_bus_channel_t* ch) {
+    /* 队列满仅返回失败标志，由调用方在临界区外打印日志（锁内不做日志 IO） */
     if (g_ready.count >= DATA_BUS_READY_QUEUE_CAPACITY) {
-        LOG_WRN("Data bus ready queue full for '%s'", ch->name);
         return false;
     }
 
@@ -93,6 +101,7 @@ void data_bus_ready_signal(data_bus_channel_t* ch) {
     }
 
     bool wake = false;
+    bool queue_overflow = false;
 
     k_spinlock_key_t key = k_spin_lock(&g_ready.lock);
 
@@ -103,12 +112,18 @@ void data_bus_ready_signal(data_bus_channel_t* ch) {
             (void) atomic_cas(&ch->dispatch_ready, 1, 0);
             atomic_set(&g_ready_fallback_pending, 1);
             wake = true;
+            queue_overflow = true;
         }
     } else {
         wake = true;
     }
 
     k_spin_unlock(&g_ready.lock, key);
+
+    /* 先在临界区内快照溢出标志，解锁后再打印，缩短关中断时间 */
+    if (queue_overflow) {
+        LOG_WRN("Data bus ready queue full for '%s'", ch->name);
+    }
 
     if (wake) {
         k_sem_give(&g_dispatcher_sem);

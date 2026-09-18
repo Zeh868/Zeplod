@@ -2,7 +2,7 @@
  * @file test_example_module_a.c
  * @brief 示例模块 A 单元测试
  * @author OpenClaw Agent
- * @version 1.0
+ * @version 1.2
  * @date 2026-04-10
  *
  * @par 修改日志:
@@ -10,6 +10,11 @@
  *    Date         Version        Author          Description
  * 2026-04-10       1.0            agent          为 example_module_a 编写完整测试用例
  * 2026-05-28       1.1            zeh            异步等待改用 ztest_sync（P0）
+ * 2026-09-18       1.2            zeh            类型/宏定义上移修复先用后定义；删除
+ *                                                 未注册的 stub_a 死代码；并发用例改真
+ *                                                 线程并发；reset 补效果断言；同步删除
+ *                                                 src 侧 buffer_size 字段；本地
+ *                                                 sensor_sample_t 对齐内部定义（含 quality）
  *
  */
 
@@ -63,6 +68,32 @@ static void test_suite_teardown(void* fixture) {
 }
 
 /* =============================================================================
+ * 本地定义（与 example_module_a.c 内部定义保持一致）
+ * ============================================================================= */
+
+/* 控制命令（example_module_a.c 内部约定的 1/2/3） */
+#define CMD_SET_RATE 1
+#define CMD_GET_RATE 2
+#define CMD_RESET    3
+
+/* 无效命令探针：落在合法命令集合之外 */
+#define CMD_INVALID 9999U
+
+/* 异步等待上限：覆盖最慢采样周期（10ms）的富余量 */
+#define MODULE_A_DATA_WAIT_MS 2000U
+
+/* 并发用例参数：工作线程数与每线程读写轮数 */
+#define MODULE_A_CONCURRENT_WORKERS 2
+#define MODULE_A_CONCURRENT_ITERS   20
+
+/* 传感器采样数据类型（与内部缓冲条目同布局，保证 get_data 步长一致） */
+typedef struct {
+    int32_t  value;
+    uint32_t timestamp;
+    uint8_t  quality;
+} sensor_sample_t;
+
+/* =============================================================================
  * 辅助函数
  * ============================================================================= */
 
@@ -87,43 +118,6 @@ static bool module_a_sample_rate_is_500(void* ctx) {
     return rate == 500U;
 }
 
-/* 简单的存根模块，用于测试模块管理器（使用唯一前缀避免符号冲突）*/
-static int stub_a_init(void* config) {
-    (void) config;
-    return 0;
-}
-
-static int stub_a_start(void) {
-    return 0;
-}
-static int stub_a_stop(void) {
-    return 0;
-}
-static int stub_a_shutdown(void) {
-    return 0;
-}
-static void stub_a_on_event(const event_t* event, void* user_data) {
-    (void) event;
-    (void) user_data;
-}
-
-DECLARE_MODULE_INTERFACE_MINIMAL(stub_a);
-
-/* =============================================================================
- * 本地类型定义（与 example_module_a.c 内部定义一致）
- * ============================================================================= */
-
-/* 控制命令 */
-#define CMD_SET_RATE 1
-#define CMD_GET_RATE 2
-#define CMD_RESET    3
-
-/* 传感器采样数据类型 */
-typedef struct {
-    int32_t  value;
-    uint32_t timestamp;
-} sensor_sample_t;
-
 /* =============================================================================
  * 测试用例：模块初始化与生命周期
  * ============================================================================= */
@@ -147,7 +141,7 @@ ZTEST(example_module_a, test_init_with_null_config) {
  * @brief 测试模块初始化 - 有效配置
  */
 ZTEST(example_module_a, test_init_with_valid_config) {
-    example_module_a_config_t config = {.sample_rate_ms = 50, .buffer_size = 128, .enable_filtering = false};
+    example_module_a_config_t config = {.sample_rate_ms = 50, .enable_filtering = false};
 
     /* 先关闭模块（如果之前已启动） */
     example_module_a_stop();
@@ -165,7 +159,6 @@ ZTEST(example_module_a, test_init_with_valid_config) {
  */
 ZTEST(example_module_a, test_init_with_invalid_config) {
     example_module_a_config_t config = {.sample_rate_ms = 0, /* 无效值 */
-                                        .buffer_size = 128,
                                         .enable_filtering = false};
 
     /* 模块应能初始化，但后续操作会用到默认值 */
@@ -275,7 +268,7 @@ ZTEST(example_module_a, test_control_set_rate) {
  * @brief 测试获取采样率
  */
 ZTEST(example_module_a, test_control_get_rate) {
-    example_module_a_config_t config = {.sample_rate_ms = 150, .buffer_size = 256, .enable_filtering = true};
+    example_module_a_config_t config = {.sample_rate_ms = 150, .enable_filtering = true};
 
     example_module_a_init(&config);
 
@@ -289,23 +282,35 @@ ZTEST(example_module_a, test_control_get_rate) {
 
 /**
  * @brief 测试重置模块
+ *
+ * 复位效果可观测：确认产出后让环形缓冲积累待读样本，先停止采集线程消除
+ * 并发写入干扰，再执行 RESET——若复位未清空缓冲，此处会读到残留样本。
  */
 ZTEST(example_module_a, test_control_reset) {
-    example_module_a_init(NULL);
-    example_module_a_start();
+    example_module_a_config_t config = {.sample_rate_ms = 10, .enable_filtering = true};
+    sensor_sample_t           samples[4];
+    module_a_get_data_ctx_t   probe = {
+        .samples = samples,
+        .samples_bytes = sizeof(samples),
+        .bytes_read = 0,
+    };
+    int8_t leftover[64];
 
-    /* 重置前先获取一些数据 */
-    int8_t dummy[64];
-    example_module_a_get_data(dummy, sizeof(dummy));
+    example_module_a_init(&config);
+    zassert_equal(example_module_a_start(), 0, "启动应成功");
 
-    /* 重置 */
-    int ret = example_module_a_control(CMD_RESET, NULL);
-    zassert_equal(ret, 0, "重置应返回 0");
+    /* 确认采样线程确实在产出 */
+    zassert_true(ztest_wait_until(module_a_has_sample_data, &probe, MODULE_A_DATA_WAIT_MS), "应先有样本产出");
 
-    /* 验证内部状态已重置 */
-    /* 注意：需要通过后续操作验证重置效果 */
+    /* 静置积累待读样本：10ms 采样周期下 50ms 至少新增 3 条 */
+    k_msleep(50);
 
-    example_module_a_stop();
+    zassert_equal(example_module_a_stop(), 0, "停止应成功");
+    zassert_equal(example_module_a_control(CMD_RESET, NULL), 0, "重置应返回 0");
+
+    /* 复位效果断言：待读样本应被清空 */
+    zassert_equal(example_module_a_get_data(leftover, sizeof(leftover)), 0, "复位后不应残留可读样本");
+
     example_module_a_shutdown();
 }
 
@@ -315,7 +320,7 @@ ZTEST(example_module_a, test_control_reset) {
 ZTEST(example_module_a, test_control_invalid_cmd) {
     example_module_a_init(NULL);
 
-    int ret = example_module_a_control(9999, NULL); /* 无效命令 */
+    int ret = example_module_a_control(CMD_INVALID, NULL); /* 无效命令 */
     zassert_true(ret != 0, "无效命令应返回错误");
 
     example_module_a_shutdown();
@@ -378,7 +383,6 @@ ZTEST(example_module_a, test_get_data_null) {
  */
 ZTEST(example_module_a, test_get_data_normal) {
     example_module_a_config_t config = {.sample_rate_ms = 10, /* 10ms 采样率，加快测试 */
-                                        .buffer_size = 256,
                                         .enable_filtering = true};
 
     example_module_a_init(&config);
@@ -391,7 +395,7 @@ ZTEST(example_module_a, test_get_data_normal) {
         .bytes_read = 0,
     };
 
-    zassert_true(ztest_wait_until(module_a_has_sample_data, &probe, 2000U), "应采集到至少一条样本");
+    zassert_true(ztest_wait_until(module_a_has_sample_data, &probe, MODULE_A_DATA_WAIT_MS), "应采集到至少一条样本");
     zassert_true(probe.bytes_read > 0, "获取数据应返回正字节数");
 
     example_module_a_stop();
@@ -430,7 +434,8 @@ ZTEST(example_module_a, test_event_sensor_config) {
     uint32_t new_rate = 500;
     event_publish_copy(EVENT_TYPE_SENSOR_CONFIG, EVENT_PRIORITY_NORMAL, &new_rate, sizeof(new_rate));
 
-    zassert_true(ztest_wait_until(module_a_sample_rate_is_500, NULL, 2000U), "事件处理后采样率应更新为 500");
+    zassert_true(ztest_wait_until(module_a_sample_rate_is_500, NULL, MODULE_A_DATA_WAIT_MS),
+                 "事件处理后采样率应更新为 500");
 
     uint32_t rate = 0;
     example_module_a_control(CMD_GET_RATE, &rate);
@@ -527,25 +532,68 @@ ZTEST(example_module_a, test_shutdown_twice) {
  * 测试用例：线程安全
  * ============================================================================= */
 
+/* 并发工作线程的失败计数：任何 API 返回异常值即置位 */
+static atomic_t g_conc_worker_errors;
+
+/* 工作线程栈与线程控制块（静态分配，避免测试路径动态建线程） */
+#define MODULE_A_CONC_STACK_SIZE 1024
+static K_THREAD_STACK_ARRAY_DEFINE(g_conc_worker_stacks, MODULE_A_CONCURRENT_WORKERS, MODULE_A_CONC_STACK_SIZE);
+static struct k_thread g_conc_worker_threads[MODULE_A_CONCURRENT_WORKERS];
+
+static void conc_worker(void* p1, void* p2, void* p3) {
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
+
+    sensor_sample_t samples[4];
+
+    for (int i = 0; i < MODULE_A_CONCURRENT_ITERS; i++) {
+        /* 与采集线程并发读环形缓冲 */
+        if (example_module_a_get_data(samples, sizeof(samples)) < 0) {
+            atomic_inc(&g_conc_worker_errors);
+        }
+        /* 与采集线程/事件回调并发写采样率 */
+        if (example_module_a_set_rate((uint32_t) (50 + (i % 5) * 10)) != 0) {
+            atomic_inc(&g_conc_worker_errors);
+        }
+        k_yield();
+    }
+}
+
 /**
  * @brief 测试并发访问
+ *
+ * 两个工作线程交错调用 get_data/set_rate，与采集线程形成三方并发；
+ * 全部汇合后校验零错误返回、模块仍 RUNNING，且控制通道恢复确定状态。
  */
 ZTEST(example_module_a, test_concurrent_access) {
     example_module_a_init(NULL);
-    example_module_a_start();
+    zassert_equal(example_module_a_start(), 0, "启动应成功");
 
-    /* 并发读取数据 */
-    for (int i = 0; i < 10; i++) {
-        sensor_sample_t samples[10];
-        example_module_a_get_data(samples, sizeof(samples));
+    atomic_set(&g_conc_worker_errors, 0);
 
-        /* 并发设置参数 */
-        uint32_t rate = 50 + i * 10;
-        example_module_a_set_rate(rate);
+    for (uintptr_t i = 0; i < MODULE_A_CONCURRENT_WORKERS; i++) {
+        k_tid_t tid = k_thread_create(&g_conc_worker_threads[i], g_conc_worker_stacks[i],
+                                      K_THREAD_STACK_SIZEOF(g_conc_worker_stacks[i]), conc_worker, (void*) i, NULL,
+                                      NULL, 5, 0, K_NO_WAIT);
+        k_thread_name_set(tid, "mod_a_conc");
     }
 
-    example_module_a_stop();
-    example_module_a_shutdown();
+    for (uint32_t i = 0; i < MODULE_A_CONCURRENT_WORKERS; i++) {
+        zassert_equal(k_thread_join(&g_conc_worker_threads[i], K_SECONDS(2)), 0, "工作线程应正常退出");
+    }
+
+    zassert_equal(atomic_get(&g_conc_worker_errors), 0, "并发调用不应产生错误返回");
+    zassert_equal(example_module_a_get_status(), MODULE_STATUS_RUNNING, "并发后模块应仍为 RUNNING");
+
+    /* 汇合后单线程恢复确定状态：写入值不与工作线程取值集合（50..90）重叠 */
+    zassert_equal(example_module_a_set_rate(100), 0, NULL);
+    uint32_t rate = 0;
+    zassert_equal(example_module_a_control(CMD_GET_RATE, &rate), 0, NULL);
+    zassert_equal(rate, 100, "汇合后控制通道应恢复确定状态");
+
+    zassert_equal(example_module_a_stop(), 0, NULL);
+    zassert_equal(example_module_a_shutdown(), 0, NULL);
 }
 
 /* =============================================================================

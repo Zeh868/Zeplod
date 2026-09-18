@@ -2,8 +2,13 @@
  * @file module_manager_stats.c
  * @brief 模块管理器统计、调试与状态回调
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-05-28
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-05-28       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补修改日志段
  */
 
 #include <zephyr/logging/log.h>

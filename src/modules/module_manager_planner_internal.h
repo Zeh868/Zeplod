@@ -9,7 +9,13 @@
  *       请使用 module_manager_start_all / module_manager_stop_all。
  *
  * @author zeh (china_qzh@163.com)
+ * @version 1.1
  * @date 2026-06-06
+ *
+ * @par 修改日志:
+ *    Date         Version        Author          Description
+ * 2026-06-06       1.0            zeh            初始版本
+ * 2026-09-18       1.1            zeh            补 @version 与修改日志段
  */
 
 #ifndef MODULE_MANAGER_PLANNER_INTERNAL_H

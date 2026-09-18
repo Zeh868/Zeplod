@@ -7,13 +7,19 @@
  * 收集条目时使用。具体的排序与拓扑构建函数已迁移到内部头
  * module_manager_planner_internal.h，不再对应用层公开。
  *
- * @note
- * 依赖版本下限按 MODULE_VERSION(major, minor, patch) 打包整数比较，
+ * @note 依赖版本下限按 MODULE_VERSION(major, minor, patch) 打包整数比较，
  *       不解析 semver 字符串。
- * @author zeh
- * (china_qzh@163.com)
- * @version 1.1
+ *
+ * @author zeh (china_qzh@163.com)
+ * @version 1.2
  * @date 2026-06-06
+ *
+ * @par 修改日志:
+ *
+ *    Date         Version        Author          Description
+ * 2026-06-06       1.1            zeh            排序与拓扑函数迁移至内部头，本头仅保留公开类型
+ * 2026-09-18       1.2            zeh            修复 @author 断行导致的 Doxygen 解析破碎，补修改日志
+ *
  */
 
 #ifndef MODULE_DEPENDENCY_PLANNER_H
