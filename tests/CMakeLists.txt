@@ -121,6 +121,34 @@ if(CONFIG_ZTEST_CONCURRENCY_STRESS)
 endif()
 
 # =============================================================================
+# 订阅级过滤测试（需 CONFIG_EVENT_SUBSCRIBER_FILTER）
+# =============================================================================
+if(CONFIG_EVENT_SUBSCRIBER_FILTER)
+	target_sources(app PRIVATE test_event_filter.c)
+endif()
+
+# =============================================================================
+# Sticky 事件测试（需 CONFIG_EVENT_STICKY）
+# =============================================================================
+if(CONFIG_EVENT_STICKY)
+	target_sources(app PRIVATE test_event_sticky.c)
+endif()
+
+# =============================================================================
+# 延迟/周期发布定时器池测试（需 CONFIG_EVENT_TIMER_POOL）
+# =============================================================================
+if(CONFIG_EVENT_TIMER_POOL)
+	target_sources(app PRIVATE test_event_timer.c)
+endif()
+
+# =============================================================================
+# 优先级有序分发测试（需 CONFIG_EVENT_PRIORITY_DISPATCH）
+# =============================================================================
+if(CONFIG_EVENT_PRIORITY_DISPATCH)
+	target_sources(app PRIVATE test_event_priority.c)
+endif()
+
+# =============================================================================
 # Data Bus 测试
 # =============================================================================
 if(CONFIG_DATA_BUS)

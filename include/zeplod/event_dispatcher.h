@@ -11,7 +11,7 @@
  * - 支持暂停/恢复功能
  * - 支持手动批处理模式
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.3
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -20,6 +20,8 @@
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.0            zeh            修正文档与注释
  * 2026-09-18       1.1            zeh            get_current_latency 兼容别名注释改中文并引导新代码使用 get_idle_time_us
+ * 2026-09-27       1.2            zeh            dispatcher_stats_t 尾部追加 subscriber_filtered（CONFIG_EVENT_SUBSCRIBER_FILTER_STATS）
+ * 2026-09-27       1.3            zeh            新增优先级有序分发统计 aged_promotions 与诊断 API（CONFIG_EVENT_PRIORITY_DISPATCH）
  *
  */
 
@@ -118,6 +120,12 @@ typedef struct {
     uint32_t max_latency_us;    /**< 最大处理延迟（微秒） */
     uint32_t avg_latency_us;    /**< 平均处理延迟（微秒） */
     uint32_t processing_errors; /**< 处理错误次数 */
+#if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS) || defined(__DOXYGEN__)
+    uint64_t subscriber_filtered; /**< 被订阅级过滤器跳过的订阅者交付次数（全局 filter 的计数在 events_filtered） */
+#endif
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH) || defined(__DOXYGEN__)
+    uint64_t aged_promotions; /**< 发生过有效优先级提档（aging 生效）的出队事件-次计数 */
+#endif
 } dispatcher_stats_t;
 
 /**
@@ -254,6 +262,8 @@ void event_dispatcher_clear_filter(void);
  * @note DISPATCHER_PAUSED 返回 EVENT_ERR_INVALID_ARG
  * @note 返回 EVENT_ERR_QUEUE_EMPTY 表示队列中无事件
  * @note 返回 EVENT_ERR_TIMEOUT 表示在 timeout 内未等到事件
+ * @note 启用 CONFIG_EVENT_PRIORITY_DISPATCH 时本函数按「有效优先级」有序取事件
+ *       （行为变化点，默认配置仍为 FIFO）；队列为空进入阻塞等待时按到达序取出
  * @warning 外部线程手动消费时请使用有限 timeout：阻塞期间会持有分发器生命周期门闩，
  *          传入 K_FOREVER 会在无事件到达前长期阻塞 init/start/stop/deinit。
  */
@@ -268,6 +278,9 @@ event_status_t event_dispatcher_process_one(k_timeout_t timeout);
  * @note 此函数会一直处理直到队列为空或达到 max_events 限制
  * @note 返回值包含被过滤器跳过的事件（process_one 对过滤事件亦返回 EVENT_OK）
  * @note 与 process_one 相同的手动消费约束；不得与 RUNNING 的分发器线程并行调用
+ * @note 启用 CONFIG_EVENT_PRIORITY_DISPATCH 时一次批出队取整批并按「有效优先级」
+ *       序处理（行为变化点，默认配置仍为 FIFO）；全局 filter 在出队后应用，
+ *       被拒高优事件仍占用一次最优选择
  */
 uint32_t event_dispatcher_process_all(uint32_t max_events);
 
@@ -295,6 +308,26 @@ void event_dispatcher_reset_stats(void);
  * @note ISR 安全：使用原子计数，可在 event_publish_from_isr 满队列路径调用
  */
 void event_dispatcher_stats_inc_dropped(void);
+
+/**
+ * @brief 获取发生过有效优先级提档（aging 生效）的出队事件-次计数
+ *
+ * 统计口径：优先级批出队选中某事件时，若其有效优先级已低于名义优先级
+ * （即 (now - timestamp) >= CONFIG_EVENT_PRIORITY_AGING_STEP_MS），计 1 次。
+ * 未启用 CONFIG_EVENT_PRIORITY_DISPATCH 时恒为 0。
+ *
+ * @return 累计提档事件-次数（自上次 event_dispatcher_reset_stats 起累计）
+ */
+uint64_t event_dispatcher_get_aged_promotions(void);
+
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH) || defined(__DOXYGEN__)
+/**
+ * @brief 递增「优先级提档」统计（供 event_queue 优先级批出队路径调用）
+ *
+ * @note ISR 安全：使用原子计数
+ */
+void event_dispatcher_stats_inc_aged_promotions(void);
+#endif /* CONFIG_EVENT_PRIORITY_DISPATCH */
 
 /**
  * @brief 获取距上次事件处理完成后的空闲时间（微秒）

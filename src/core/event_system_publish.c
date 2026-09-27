@@ -2,7 +2,7 @@
  * @file event_system_publish.c
  * @brief 事件发布与入队
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.3
  * @date 2026-05-28
  *
  * @par 修改日志:
@@ -10,6 +10,8 @@
  *    Date         Version        Author          Description
  * 2026-05-28       1.0            zeh            初始版本
  * 2026-09-18       1.1            zeh            补充文件头修改日志段（审查整改）
+ * 2026-09-27       1.2            zeh            线程侧发布入队成功后接入 sticky 锁存钩子（ISR 路径跳过）
+ * 2026-09-27       1.3            zeh            sticky 锁存改两段式：入队前拷贝私有副本修 use-after-free（C-1）
  */
 
 #include <zephyr/logging/log.h>
@@ -128,7 +130,7 @@ static void event_publish_transfer_data_ownership(event_t* event) {
 }
 
 static event_status_t event_publish_common(event_t* event, queue_overflow_policy_t policy, k_timeout_t timeout,
-                                           bool log_failures) {
+                                           bool log_failures, bool from_isr) {
     event_status_t status = EVENT_OK;
 
     if (!event_system_op_enter()) {
@@ -179,10 +181,34 @@ static event_status_t event_publish_common(event_t* event, queue_overflow_policy
         goto out;
     }
 
+#if defined(CONFIG_EVENT_STICKY)
+    /* sticky 两段式锁存 stage 段：必须在入队前执行——此刻发布者仍持负载
+     * 所有权，私有副本拷贝读到的内存保证有效；入队成功后负载所有权已转移
+     * 给队列副本，分发线程可并发释放原缓冲，不可再读（C-1）。
+     * 非 sticky 类型在 stage 内一次字节比较即返回；ISR 路径不参与锁存。
+     * staged 结构仅 !from_isr 路径触碰，ISR 变体多占少量栈帧属可接受代价。 */
+    event_sticky_staged_t staged = {.active = false};
+    if (!from_isr) {
+        event_sticky_stage_copy(event, &staged);
+    }
+#endif
+
     status = event_queue_enqueue(g_event_system.event_queue, event, policy, timeout);
     if (status == EVENT_OK) {
         event_publish_transfer_data_ownership(event);
+#if defined(CONFIG_EVENT_STICKY)
+        if (!from_isr) {
+            /* commit 段：入队成功，副本提交进 sticky 槽（释放槽内旧沿） */
+            event_sticky_commit(&staged);
+        }
+#endif
     }
+#if defined(CONFIG_EVENT_STICKY)
+    else if (!from_isr) {
+        /* discard 段：入队失败即发布失败，副本丢弃不计 sticky miss */
+        event_sticky_discard(&staged);
+    }
+#endif
 
 out:
     event_system_op_exit();
@@ -190,11 +216,11 @@ out:
 }
 
 event_status_t event_publish(event_t* event) {
-    return event_publish_common(event, EVENT_PUBLISH_QUEUE_OVERFLOW_POLICY, EVENT_PUBLISH_ENQUEUE_TIMEOUT, true);
+    return event_publish_common(event, EVENT_PUBLISH_QUEUE_OVERFLOW_POLICY, EVENT_PUBLISH_ENQUEUE_TIMEOUT, true, false);
 }
 
 event_status_t event_publish_from_isr(event_t* event) {
-    return event_publish_common(event, EVENT_PUBLISH_ISR_QUEUE_OVERFLOW_POLICY, K_NO_WAIT, false);
+    return event_publish_common(event, EVENT_PUBLISH_ISR_QUEUE_OVERFLOW_POLICY, K_NO_WAIT, false, true);
 }
 
 event_status_t event_publish_copy(event_type_t type, event_priority_t priority, const void* data, size_t data_len) {

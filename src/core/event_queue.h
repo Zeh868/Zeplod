@@ -10,13 +10,14 @@
  * - 详细的队列统计信息
  * - 水位线监控
  * @author zeh (china_qzh@163.com)
- * @version 1.0
+ * @version 1.1
  * @date 2026-04-01
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
+ * 2026-09-27       1.1            zeh            新增优先级批出队 dequeue_priority_batch 内部 API（B4）
  *
  */
 
@@ -95,6 +96,8 @@ event_status_t event_queue_init(struct k_msgq* queue, void* buffer, size_t capac
  * @note ISR 路径为避免在中断上下文持互斥锁，会进行无锁控制块查询；因此要求
  *       queue 仅在 event_queue_init() 完成后、event_queue_deinit() 开始前调用；
  *       不得与 init/deinit 并发，推荐先停分发/发布再 deinit。
+ * @note 优先级批出队期间 ISR 仍可在队列未满时入队；仅 DROP_LOWEST 的排空/回灌
+ *       窗口会关闭 ISR 准入。该窗口内的拒收按 EVENT_ERR_QUEUE_FULL 计入 overflow_count。
  * @note QUEUE_OVERFLOW_DROP_LOWEST：在队列满时排空并丢弃 priority 数值最大的一条（同值则丢弃 FIFO
  * 最旧）； 若新事件比队列中最差事件还低，则丢弃新事件。需线程上下文，不可在 ISR 中使用。
  *       启用时线程侧入队/出队由 reorder_lock 串行化，排空/回灌期间屏蔽 ISR 入队。
@@ -118,6 +121,32 @@ event_status_t event_queue_enqueue(struct k_msgq* queue, const event_t* event, q
  *       等待期间不持有 reorder_lock。
  */
 event_status_t event_queue_dequeue(struct k_msgq* queue, event_t* event, k_timeout_t timeout);
+
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH) || defined(__DOXYGEN__)
+/**
+ * @brief 优先级批出队：排空队列，按「有效优先级」选出至多 max_out 条最优事件
+ *
+ * 有效优先级 = max(priority - age_steps, 0)，其中
+ * age_steps = (now_ms - timestamp) / CONFIG_EVENT_PRIORITY_AGING_STEP_MS；
+ * 有效优先级数值最小者最先出队（数值小=优先级高），平局取 FIFO 最旧。
+ * 其余事件按原 FIFO 相对次序回灌队列。
+ *
+ * @param queue 队列实例（须经 event_queue_init()）
+ * @param out 输出事件数组，容量不小于 min(max_out, 队列容量)
+ * @param max_out 最多取出的事件数（须 > 0）
+ * @param remaining 输出：本次出队后队列剩余事件数（可为 NULL）
+ * @return 实际写入 out 的事件数；0 表示队列为空或参数非法
+ *
+ * @note 仅线程上下文调用。内部持有 reorder_lock 并与线程侧入队、DROP_LOWEST 挤占
+ *       串行；ISR 入队保持可用，期间新到事件留给下一批排序。若它们占满容量导致
+ *       本批剩余事件回灌失败，失败事件按真实溢出释放并计入统计。
+ * @note 事件 timestamp 须为创建时刻（event_create 系列与 event_publish_copy
+ *       已满足）；手搓 event_t 必须设置 timestamp，否则按「严重老化」处理
+ *       （有效优先级归 0），退化为 FIFO 平局次序——不会乱序，但失去优先级语义
+ * @note 须 CONFIG_EVENT_PRIORITY_DISPATCH=y
+ */
+uint32_t event_queue_dequeue_priority_batch(struct k_msgq* queue, event_t* out, uint32_t max_out, uint32_t* remaining);
+#endif /* CONFIG_EVENT_PRIORITY_DISPATCH */
 
 /**
  * @brief 检查队列是否为空

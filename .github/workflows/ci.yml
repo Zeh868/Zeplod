@@ -197,7 +197,7 @@ jobs:
       - name: Build and run unit tests
         run: |
           west build -b native_sim tests/ --build-dir build_tests -p always \
-            -- -DCONF_FILE="prj.conf;prj_test_extensions.conf"
+            -- -DCONF_FILE="prj.conf;prj_test_extensions.conf;prj_event_ext.conf"
           west build -t run --build-dir build_tests
 
       - name: Run BLOCK overflow config tests

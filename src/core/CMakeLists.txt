@@ -22,6 +22,16 @@ target_sources(app PRIVATE
     state_machine.c
 )
 
+# Sticky 事件锁存（CONFIG_EVENT_STICKY=n 时零链接残留）
+if(CONFIG_EVENT_STICKY)
+    target_sources(app PRIVATE event_sticky.c)
+endif()
+
+# 延迟/周期发布定时器池（CONFIG_EVENT_TIMER_POOL=n 时零链接残留）
+if(CONFIG_EVENT_TIMER_POOL)
+    target_sources(app PRIVATE event_timer.c)
+endif()
+
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )

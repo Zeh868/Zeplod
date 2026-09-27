@@ -2,7 +2,7 @@
  * @file event_system_lifecycle.c
  * @brief 事件系统生命周期（init/start/stop/shutdown）
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.3
  * @date 2026-05-28
  *
  * @par 修改日志:
@@ -10,6 +10,8 @@
  *    Date         Version        Author          Description
  * 2026-05-28       1.0            zeh            初始版本
  * 2026-09-18       1.1            zeh            拆分 init/stop/shutdown 超长函数（门控/资源准备/停止流程提取为辅助函数）
+ * 2026-09-27       1.2            zeh            init 复位 sticky 索引、shutdown 清理 sticky 槽与锁存负载（stop 不动锁存）
+ * 2026-09-27       1.3            zeh            shutdown 在队列销毁前取消全部定时器池槽并释放负载（B3）
  */
 
 #include <zephyr/logging/log.h>
@@ -92,8 +94,16 @@ void event_system_cleanup_event_types(void) {
         entry->name_storage[0] = '\0';
         entry->subscriber_count = 0;
         memset(entry->subscribers, 0, sizeof(entry->subscribers));
+#if defined(CONFIG_EVENT_STICKY)
+        entry->sticky_slot = EVENT_STICKY_IDX_NONE;
+#endif
         event_system_entry_unlock(entry);
     }
+
+#if defined(CONFIG_EVENT_STICKY)
+    /* shutdown 释放全部锁存负载与槽位；此时 ops gate 已关闭且在途操作排空 */
+    event_sticky_release_all();
+#endif
 }
 
 void event_system_reset_control_block(void) {
@@ -156,8 +166,16 @@ static event_status_t event_system_init_resources(void) {
 
     for (int i = 0; i < MAX_EVENT_TYPES; i++) {
         g_event_system.event_types[i].type = i;
+#if defined(CONFIG_EVENT_STICKY)
+        g_event_system.event_types[i].sticky_slot = EVENT_STICKY_IDX_NONE;
+#endif
         k_mutex_init(&g_event_system.event_types[i].lock);
     }
+
+#if defined(CONFIG_EVENT_STICKY)
+    /* BSS 冷启动时 owner_type 为 0，必须显式复位为空闲标记。 */
+    event_sticky_init_all();
+#endif
 
     g_event_system.event_queue = &g_event_msgq;
     atomic_clear(&g_restart_dispatcher_on_start);
@@ -449,6 +467,12 @@ event_status_t event_system_shutdown(void) {
     if (event_system_lifecycle_state() == ZEP_STATE_STOPPING) {
         (void) zepl_state_machine_try_transition(&g_event_system.lifecycle, ZEP_STATE_STOPPED);
     }
+
+#if defined(CONFIG_EVENT_TIMER_POOL)
+    /* B3：先取消全部定时槽（k_timer_stop + 释放负载），防止队列销毁后到期回调
+     * 触碰已 deinit 的队列；与在飞 expiry 的竞态由槽状态机 + gen 校验兜底（单核与 SMP 同） */
+    event_timer_pool_cancel_all();
+#endif
 
     /* 顺序约束：须在 magic 置 IDLE 前完成队列清理，否则 event_free_data 可能跳过释放 */
     event_queue_deinit(g_event_system.event_queue);

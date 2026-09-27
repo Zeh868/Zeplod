@@ -9,7 +9,7 @@
  * - 支持多种溢出策略
  * - 提供详细的统计信息
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -17,6 +17,7 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-09-18       1.1            zeh            拆分 enqueue/drop_lowest 超长函数；msgq 最后写发布；裸 extern 移入 internal 头
+ * 2026-09-27       1.2            zeh            新增优先级批出队（aging 有效优先级）；scratch 预分配扩展至 PRIORITY_DISPATCH
  *
  */
 
@@ -25,6 +26,7 @@
 #include <zephyr/sys/util.h>
 #include <errno.h>
 
+#include <zeplod/event_dispatcher.h>
 #include "event_queue.h"
 #include "event_system_internal.h"
 
@@ -52,8 +54,8 @@ typedef struct {
     atomic_t       reordering;                 /**< 线程侧排空/回灌正在进行中 */
     atomic_t       isr_ops_in_flight;          /**< reordering 之前已准入的 ISR 操作数 */
     uint32_t       capacity;                   /**< 队列容量 */
-    struct k_mutex reorder_lock;               /**< DROP_LOWEST 时串行化线程侧 msgq 操作 */
-    event_t*       drop_lowest_scratch;        /**< DROP_LOWEST 独立临时缓冲区 */
+    struct k_mutex reorder_lock;               /**< scratch 启用时串行化线程侧 msgq 操作 */
+    event_t*       drop_lowest_scratch;        /**< 排空/重排临时缓冲区（DROP_LOWEST 与优先级批出队共用） */
     event_t*       drop_lowest_restore_failed; /**< DROP_LOWEST 回灌失败后待释放 payload */
 } event_queue_cb_t;
 
@@ -494,13 +496,16 @@ event_status_t event_queue_init(struct k_msgq* queue, void* buffer, size_t capac
         return EVENT_ERR_NO_MEM;
     }
 
-#if defined(CONFIG_EVENT_QUEUE_OVERFLOW_DROP_LOWEST)
+#if defined(CONFIG_EVENT_QUEUE_OVERFLOW_DROP_LOWEST) || defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+    /* reorder scratch 由 DROP_LOWEST 入队挤占与优先级批出队共用（经 reorder_lock
+     * 互斥串行）；任一特性启用即在 init 期一次预分配，去除惰性分配的运行期依赖 */
     cb->drop_lowest_scratch = (event_t*) k_malloc(capacity * sizeof(event_t));
     if (cb->drop_lowest_scratch == NULL) {
         k_mutex_unlock(&g_queue_cb_lock);
         LOG_ERR("Failed to allocate drop_lowest_scratch for queue");
         return EVENT_ERR_NO_MEM;
     }
+#if defined(CONFIG_EVENT_QUEUE_OVERFLOW_DROP_LOWEST)
     cb->drop_lowest_restore_failed = (event_t*) k_malloc(capacity * sizeof(event_t));
     if (cb->drop_lowest_restore_failed == NULL) {
         k_free(cb->drop_lowest_scratch);
@@ -509,6 +514,12 @@ event_status_t event_queue_init(struct k_msgq* queue, void* buffer, size_t capac
         LOG_ERR("Failed to allocate drop_lowest_restore_failed for queue");
         return EVENT_ERR_NO_MEM;
     }
+#else
+    /* restore_failed 缓冲仅 DROP_LOWEST drain 失败恢复路径使用；优先级批出队的
+     * 回灌失败兜底在门控内直接释放负载（与 purge 同一上下文约束），不依赖此缓冲，
+     * 运行期经 ensure_drop_lowest_scratch 仍可补齐（如单测显式指定 DROP_LOWEST） */
+    cb->drop_lowest_restore_failed = NULL;
+#endif
 #else
     cb->drop_lowest_scratch = NULL;
     cb->drop_lowest_restore_failed = NULL;
@@ -762,6 +773,114 @@ out:
     event_queue_cb_release(cb);
     return st;
 }
+
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+/**
+ * @brief 计算事件的有效优先级（aging 后）
+ *
+ * age_steps = (now_ms - timestamp) / CONFIG_EVENT_PRIORITY_AGING_STEP_MS；
+ * effective = max(priority - age_steps, 0)。无符号减法天然容忍 timestamp 回绕；
+ * timestamp 为 0（手搓未设置）时 effective 归 0，退化为 FIFO 平局次序。
+ */
+static inline uint32_t event_queue_effective_priority(const event_t* event, uint32_t now_ms) {
+    uint32_t age_steps = (now_ms - event->timestamp) / CONFIG_EVENT_PRIORITY_AGING_STEP_MS;
+    uint32_t nominal   = (uint32_t) event->priority;
+
+    return (nominal > age_steps) ? (nominal - age_steps) : 0U;
+}
+
+/**
+ * @brief 优先级批出队：排空→按有效优先级选最优（≤max_out 条）→其余保序回灌
+ *
+ * 复用 DROP_LOWEST 的 scratch/reorder_lock：线程侧入队与批出队串行，ISR 入队不受
+ * 准入门控影响。批出队仅摘取开始时的队列快照，期间到达的 ISR 事件保留在 msgq，
+ * 留给下一批排序；回灌时若这些新事件已真实占满容量，则按溢出处置被挤出的旧事件。按
+ * 有效优先级（数值最小者最优，平局取下标最小=FIFO 最旧）选出至多 max_out 条
+ * 写入 out；其余条目保持原 FIFO 相对次序回灌。与 DROP_LOWEST 入队挤占共用
+ * 同一 scratch，经 reorder_lock 互斥串行。
+ */
+uint32_t event_queue_dequeue_priority_batch(struct k_msgq* queue, event_t* out, uint32_t max_out, uint32_t* remaining) {
+    if (queue == NULL || out == NULL || max_out == 0U || k_is_in_isr()) {
+        return 0U;
+    }
+
+    event_queue_cb_t* cb = event_queue_cb_borrow(queue);
+
+    if (cb == NULL || cb->drop_lowest_scratch == NULL) {
+        LOG_ERR("Priority batch dequeue requires event_queue_init() scratch");
+        return 0U;
+    }
+
+    k_mutex_lock(&cb->reorder_lock, K_FOREVER);
+
+    /* 仅摘取批次开始时的快照。ISR 在此期间可继续入队，留给下一批排序。 */
+    uint32_t n = MIN(k_msgq_num_used_get(queue), cb->capacity);
+
+    for (uint32_t i = 0U; i < n; i++) {
+        if (k_msgq_get(queue, &cb->drop_lowest_scratch[i], K_NO_WAIT) != 0) {
+            n = i;
+            break;
+        }
+    }
+
+    const uint32_t now_ms  = k_uptime_get_32();
+    uint32_t       left     = n; /* scratch[0, left) 为尚未选出的条目；移除只收缩右端 */
+    uint32_t       selected = 0U;
+
+    while (selected < max_out && left > 0U) {
+        /* 在 [0, left) 内选有效优先级最小者；严格小于保证平局取下标最小（FIFO 最旧） */
+        uint32_t best     = 0U;
+        uint32_t best_eff = event_queue_effective_priority(&cb->drop_lowest_scratch[0], now_ms);
+
+        for (uint32_t i = 1U; i < left; i++) {
+            uint32_t eff = event_queue_effective_priority(&cb->drop_lowest_scratch[i], now_ms);
+
+            if (eff < best_eff) {
+                best     = i;
+                best_eff = eff;
+            }
+        }
+
+        /* 提档统计先行摘录：有效优先级低于名义优先级说明 aging 生效 */
+        if (best_eff < (uint32_t) cb->drop_lowest_scratch[best].priority) {
+            event_dispatcher_stats_inc_aged_promotions();
+        }
+
+        out[selected] = cb->drop_lowest_scratch[best];
+
+        /* 关闭空隙并保持其余条目的 FIFO 相对次序（保序回灌的前提） */
+        if (best + 1U < left) {
+            memmove(&cb->drop_lowest_scratch[best], &cb->drop_lowest_scratch[best + 1U],
+                    (size_t) (left - best - 1U) * sizeof(event_t));
+        }
+        left--;
+        selected++;
+    }
+
+    /* 并发 ISR 事件保留在队列并留给下一批；若它们已实际占满容量，回灌失败时释放
+     * 本批旧事件并按真实溢出计数，避免泄漏或虚假成功。 */
+    for (uint32_t i = 0U; i < left; i++) {
+        if (k_msgq_put(queue, &cb->drop_lowest_scratch[i], K_NO_WAIT) != 0) {
+            LOG_ERR("Priority requeue failed at %u; dropping event", i);
+            event_free_queued_payload(&cb->drop_lowest_scratch[i]);
+            atomic_inc(&cb->drop_count);
+            event_queue_record_drop(cb);
+        }
+    }
+
+    if (remaining != NULL) {
+        *remaining = k_msgq_num_used_get(queue);
+    }
+    if (selected > 0U) {
+        atomic_add(&cb->dequeue_count, (atomic_val_t) selected);
+    }
+
+    k_mutex_unlock(&cb->reorder_lock);
+    event_queue_cb_release(cb);
+
+    return selected;
+}
+#endif /* CONFIG_EVENT_PRIORITY_DISPATCH */
 
 /**
  * @brief 检查队列是否为空

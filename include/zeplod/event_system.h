@@ -12,7 +12,7 @@
  * - 支持 ISR 上下文发布事件
  * - 动态事件数据分配
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.4
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -21,6 +21,9 @@
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.0            zeh            修正文档与注释
  * 2026-09-18       1.1            zeh            event_subscribe @note 登记槽满错误码延期引入 EVENT_ERR_NO_RESOURCE 的计划
+ * 2026-09-27       1.2            zeh            新增订阅级过滤 API（subscribe_filtered/set_filter/get_skip_count，CONFIG_EVENT_SUBSCRIBER_FILTER）
+ * 2026-09-27       1.3            zeh            新增 sticky 事件 API（enable/clear/disable/is_latched/get_stats，CONFIG_EVENT_STICKY）
+ * 2026-09-27       1.4            zeh            sticky enable/clear/disable 补 NOT_RUNNING 返回语义（gate 关闭与 timer 口径统一，m-7）
  *
  */
 
@@ -250,7 +253,18 @@ typedef struct {
     event_callback_t callback;      /**< 回调函数指针；NULL 表示槽位空闲 */
     void*            user_data;     /**< 回调用户数据 */
     uint32_t         subscriber_id; /**< 唯一订阅者 ID（由系统分配） */
+    uint8_t          filter_idx;    /**< 过滤侧表槽下标；EVENT_FILTER_IDX_NONE(0xFF)=无订阅级过滤 */
 } subscriber_entry_t;
+
+/** filter_idx 取值：无订阅级过滤（侧表未占用） */
+#define EVENT_FILTER_IDX_NONE 0xFFU
+
+/* filter_idx 增量须被尾部 padding 吸收：结构体尺寸不变（32 位 16B / 64 位 24B） */
+#ifdef CONFIG_64BIT
+BUILD_ASSERT(sizeof(subscriber_entry_t) == 24U, "subscriber_entry_t grew: filter_idx must be absorbed by padding");
+#else
+BUILD_ASSERT(sizeof(subscriber_entry_t) == 16U, "subscriber_entry_t grew: filter_idx must be absorbed by padding");
+#endif
 
 /**
  * @brief 事件类型注册表条目
@@ -259,6 +273,7 @@ typedef struct {
  */
 typedef struct {
     event_type_t       type;                                      /**< 事件类型 ID */
+    uint8_t            sticky_slot;                               /**< sticky 槽下标；EVENT_STICKY_IDX_NONE(0xFF)=未启用（CONFIG_EVENT_STICKY） */
     char               name_storage[CONFIG_EVENT_TYPE_NAME_MAX];  /**< 类型名存储（register 时拷贝） */
     const char*        name;                                      /**< 指向 name_storage，未注册时为 NULL */
     atomic_t           registered;                                /**< 1=已注册（ISR/线程可无锁读取） */
@@ -266,6 +281,26 @@ typedef struct {
     uint32_t           subscriber_count;                          /**< 当前活跃的订阅者数量 */
     struct k_mutex     lock;                                      /**< 保护订阅者列表的互斥锁 */
 } event_type_entry_t;
+
+/** sticky_slot 取值：该类型未启用 sticky（CONFIG_EVENT_STICKY） */
+#define EVENT_STICKY_IDX_NONE 0xFFU
+
+/* sticky_slot 增量须被既有布局空隙吸收：结构体尺寸不变。
+ * 影子结构体为 sticky_slot 引入前的布局，仅编译期对照用；
+ * 因尺寸随 CONFIG_EVENT_TYPE_NAME_MAX / CONFIG_EVENT_MAX_SUBSCRIBERS 变化，
+ * 断言采用「与影子结构等尺寸」的相对校验而非钉绝对字节数。 */
+typedef struct {
+    event_type_t       type;
+    char               name_storage[CONFIG_EVENT_TYPE_NAME_MAX];
+    const char*        name;
+    atomic_t           registered;
+    subscriber_entry_t subscribers[CONFIG_EVENT_MAX_SUBSCRIBERS];
+    uint32_t           subscriber_count;
+    struct k_mutex     lock;
+} event_type_entry_layout_ref_t;
+
+BUILD_ASSERT(sizeof(event_type_entry_t) == sizeof(event_type_entry_layout_ref_t),
+             "event_type_entry_t grew: sticky_slot must be absorbed by existing padding");
 
 /* =============================================================================
  * 核心 API
@@ -425,6 +460,221 @@ event_status_t event_unsubscribe(event_type_t type, uint32_t subscriber_id);
  * @note 与 event_unsubscribe 相同：不等待已拍下快照的回调执行完毕
  */
 void event_unsubscribe_all(uint32_t subscriber_id);
+
+/**
+ * @brief 订阅级过滤回调类型
+ *
+ * @param event 指向事件的指针（只读，不要修改）
+ * @param filter_user_data 订阅时/设置过滤时传入的过滤用户数据
+ *
+ * @return true 允许本订阅者回调；false 跳过本订阅者（不影响其他订阅者）
+ *
+ * @note 在分发器线程上下文、订阅者回调之前执行；不得阻塞、不得发布事件、
+ *       不得调用任何订阅/退订 API
+ */
+typedef bool (*event_subscriber_filter_t)(const event_t* event, void* filter_user_data);
+
+#if defined(CONFIG_EVENT_SUBSCRIBER_FILTER) || defined(__DOXYGEN__)
+
+/**
+ * @brief 订阅事件类型并附加订阅级过滤器
+ *
+ * 与 event_subscribe 等价（filter 为 NULL 时），额外为该订阅绑定一个
+ * 订阅级过滤器：事件分发时先于回调执行，返回 false 仅跳过本订阅者。
+ *
+ * @param type 事件类型 ID（0-255，须已 register_type）
+ * @param callback 回调函数指针（不能为 NULL）
+ * @param user_data 用户数据，将在回调时原样传入（可为 NULL）
+ * @param filter 订阅级过滤函数；NULL 表示不过滤（等价 event_subscribe）
+ * @param filter_user_data 过滤函数用户数据，将在过滤判定时原样传入（可为 NULL）
+ * @param subscriber_id 输出参数，接收分配的订阅者 ID（不能为 NULL）
+ * @return EVENT_OK 成功
+ * @return EVENT_ERR_INVALID_ARG 参数非法（类型越界/callback 为 NULL/subscriber_id 为 NULL/系统未初始化）
+ * @return EVENT_ERR_NOT_FOUND 事件类型未注册
+ * @return EVENT_ERR_QUEUE_FULL 该类型订阅槽已满（槽满复用此码，见 event_subscribe @note）
+ * @return EVENT_ERR_NO_MEM 过滤侧表槽已满（filter 非 NULL 且无可用槽）
+ *
+ * @note 过滤判定在分发器线程内、回调前执行（锁外）；全局 dispatcher filter 先判，
+ *       全局拒绝时订阅级过滤器不会被调用
+ * @note 其余约束（回调上下文、槽上限语义）与 event_subscribe 相同
+ */
+event_status_t event_subscribe_filtered(event_type_t type, event_callback_t callback, void* user_data,
+                                        event_subscriber_filter_t filter, void* filter_user_data,
+                                        uint32_t* subscriber_id);
+
+/**
+ * @brief 设置/热换/清除订阅者的订阅级过滤器
+ *
+ * 对已存在的订阅热替换过滤器（复用原侧表槽，不额外占槽）；filter 传 NULL
+ * 清除过滤，恢复接收全部事件。
+ *
+ * @param subscriber_id 订阅者 ID（event_subscribe* 返回值）
+ * @param type 事件类型 ID（该订阅所属类型）
+ * @param filter 新的过滤函数；NULL 清除过滤
+ * @param filter_user_data 过滤函数用户数据（filter 为 NULL 时应为 NULL）
+ * @return EVENT_OK 成功
+ * @return EVENT_ERR_INVALID_ARG 参数非法（类型越界/subscriber_id 非法/系统未初始化）
+ * @return EVENT_ERR_NOT_FOUND 该类型下不存在此订阅者
+ * @return EVENT_ERR_NO_MEM 设置新过滤时侧表槽不足
+ *
+ * @note 可在分发器运行中调用；并发分发线程会在其快照中看到替换前或替换后的
+ *       完整 (filter, filter_user_data) 配对，不会看到撕裂组合
+ */
+event_status_t event_set_subscriber_filter(uint32_t subscriber_id, event_type_t type,
+                                           event_subscriber_filter_t filter, void* filter_user_data);
+
+/**
+ * @brief 获取被订阅级过滤器跳过的分发次数（自上次统计复位起累计）
+ *
+ * @return 累计跳过次数；未启用 CONFIG_EVENT_SUBSCRIBER_FILTER_STATS 时恒为 0
+ *
+ * @note 计数口径为「订阅者级跳过」：每个被过滤的订阅者交付 +1，与事件级
+ *       dispatcher 统计 events_filtered（全局过滤）相互独立
+ */
+uint64_t event_subscriber_filter_get_skip_count(void);
+
+#else /* !CONFIG_EVENT_SUBSCRIBER_FILTER */
+
+/* 特性未启用时提供可编译桩：调用即返回参数错误，保持上层代码无需条件编译 */
+static inline event_status_t event_subscribe_filtered(event_type_t type, event_callback_t callback, void* user_data,
+                                                      event_subscriber_filter_t filter, void* filter_user_data,
+                                                      uint32_t* subscriber_id) {
+    ARG_UNUSED(type);
+    ARG_UNUSED(callback);
+    ARG_UNUSED(user_data);
+    ARG_UNUSED(filter);
+    ARG_UNUSED(filter_user_data);
+    ARG_UNUSED(subscriber_id);
+    return EVENT_ERR_INVALID_ARG;
+}
+
+static inline event_status_t event_set_subscriber_filter(uint32_t subscriber_id, event_type_t type,
+                                                         event_subscriber_filter_t filter, void* filter_user_data) {
+    ARG_UNUSED(subscriber_id);
+    ARG_UNUSED(type);
+    ARG_UNUSED(filter);
+    ARG_UNUSED(filter_user_data);
+    return EVENT_ERR_INVALID_ARG;
+}
+
+static inline uint64_t event_subscriber_filter_get_skip_count(void) {
+    return 0U;
+}
+
+#endif /* CONFIG_EVENT_SUBSCRIBER_FILTER */
+
+/* =============================================================================
+ * Sticky 事件（CONFIG_EVENT_STICKY）
+ * 对显式启用的类型锁存最近一条事件沿，新订阅者订阅成功时同步重放一次
+ * ============================================================================= */
+
+#if defined(CONFIG_EVENT_STICKY) || defined(__DOXYGEN__)
+
+/**
+ * @brief 为事件类型启用 sticky 锁存能力
+ *
+ * 启用后，该类型的每次线程侧发布成功（入队成功）即把最近一条事件沿
+ * 锁存到 sticky 槽（含完整 event 元数据与负载私有副本，线程上下文执行）。
+ *
+ * @param type 事件类型 ID（0-255，须已 register_type）
+ * @return EVENT_OK 成功（重复启用同一类型幂等返回成功）
+ * @return EVENT_ERR_NOT_FOUND 类型未注册，或 sticky 槽池已无空闲槽
+ * @return EVENT_ERR_INVALID_ARG 类型越界或系统未初始化
+ * @return EVENT_ERR_NOT_RUNNING 事件系统未处于 running（stop/shutdown 排空中被拒）
+ *
+ * @note 不回溯历史：仅锁存启用之后的发布；启用前发布的沿不会被补锁
+ * @note 锁存为 best-effort：负载拷贝失败（slab/堆耗尽或超过 4KB 上界）时
+ *       发布仍成功、保留上一次锁存沿，miss 计数递增并输出 LOG_WRN
+ * @note 占用的槽在 event_sticky_disable() 或 event_system_shutdown() 时释放
+ * @note 类型 event_unregister_type 后再重注册，锁存能力与锁存沿保留；
+ *       如需释放槽请显式调用 event_sticky_disable()
+ */
+event_status_t event_sticky_enable(event_type_t type);
+
+/**
+ * @brief 清除该类型当前锁存的沿，保留 sticky 能力
+ *
+ * 清除后新订阅者不再获得重放，直到下一次发布重新锁存。
+ *
+ * @param type 事件类型 ID
+ * @return EVENT_OK 成功（未持有锁存沿时幂等返回成功）
+ * @return EVENT_ERR_NOT_FOUND 类型未注册或未启用 sticky
+ * @return EVENT_ERR_INVALID_ARG 类型越界或系统未初始化
+ * @return EVENT_ERR_NOT_RUNNING 事件系统未处于 running（stop/shutdown 排空中被拒）
+ *
+ * @note 若清除时该槽正处于订阅重放中，则立即按「已清除」对待
+ *       （新订阅不再重放），旧负载副本延迟到重放结束后释放
+ */
+event_status_t event_sticky_clear(event_type_t type);
+
+/**
+ * @brief 关闭该类型的 sticky 能力并释放锁存副本与槽位
+ *
+ * @param type 事件类型 ID
+ * @return EVENT_OK 成功
+ * @return EVENT_ERR_NOT_FOUND 类型未注册或未启用 sticky
+ * @return EVENT_ERR_INVALID_ARG 类型越界或系统未初始化
+ * @return EVENT_ERR_NOT_RUNNING 事件系统未处于 running（stop/shutdown 排空中被拒）
+ *
+ * @note 若关闭时该槽正处于订阅重放中，槽位与负载副本延迟到重放结束后释放
+ */
+event_status_t event_sticky_disable(event_type_t type);
+
+/**
+ * @brief 查询该类型当前是否持有有效锁存沿
+ *
+ * @param type 事件类型 ID
+ * @return true 当前持有锁存沿（新订阅者将获得同步重放）
+ * @return false 未启用 sticky、未锁存或参数非法
+ *
+ * @note 原子读实现，ISR 安全；与 disable/clear 并发时允许读到
+ *       紧邻变化前后的状态（无撕裂，但非瞬时一致快照）
+ */
+bool event_sticky_is_latched(event_type_t type);
+
+/**
+ * @brief 获取 sticky 诊断统计
+ *
+ * @param latched_types 输出：当前持有锁存沿的类型数（可为 NULL）
+ * @param miss_count 输出：自 init 起累计锁存失败次数（可为 NULL）
+ *
+ * @note 仅线程上下文调用（内部短暂持有 sticky 池锁）
+ */
+void event_sticky_get_stats(uint32_t* latched_types, uint32_t* miss_count);
+
+#else /* !CONFIG_EVENT_STICKY */
+
+/* 特性未启用时提供可编译桩：调用即返回未启用错误，保持上层代码无需条件编译 */
+static inline event_status_t event_sticky_enable(event_type_t type) {
+    ARG_UNUSED(type);
+    return EVENT_ERR_INVALID_ARG;
+}
+
+static inline event_status_t event_sticky_clear(event_type_t type) {
+    ARG_UNUSED(type);
+    return EVENT_ERR_INVALID_ARG;
+}
+
+static inline event_status_t event_sticky_disable(event_type_t type) {
+    ARG_UNUSED(type);
+    return EVENT_ERR_INVALID_ARG;
+}
+
+static inline bool event_sticky_is_latched(event_type_t type) {
+    ARG_UNUSED(type);
+    return false;
+}
+
+static inline void event_sticky_get_stats(uint32_t* latched_types, uint32_t* miss_count) {
+    if (latched_types != NULL) {
+        *latched_types = 0U;
+    }
+    if (miss_count != NULL) {
+        *miss_count = 0U;
+    }
+}
+
+#endif /* CONFIG_EVENT_STICKY */
 
 /* =============================================================================
  * 事件发布

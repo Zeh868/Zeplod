@@ -47,6 +47,12 @@ config EVENT_TYPE_NAME_MAX
 	help
 	  Storage size for event type names registered via event_register_type().
 	  Includes the terminating null byte.
+	  Alignment constraint: name_storage sits at offset 2 inside
+	  event_type_entry_t (after type + sticky_slot) and is directly followed
+	  by pointer members. When (2 + N) is not pointer-aligned the compiler
+	  inserts padding and each of the MAX_EVENT_TYPES entries grows (memory
+	  cost only, no correctness impact). Avoid the worst-fit values N%4==3
+	  on 32-bit and N%8==7 on 64-bit targets; the default 32 is safe on both.
 
 config EVENT_DISPATCHER_STACK_SIZE
 	int "Event Dispatcher Stack Size"
@@ -69,6 +75,115 @@ config EVENT_DISPATCHER_MAX_EVENTS_PER_CYCLE
 	help
 	  Maximum number of events processed in a single dispatcher cycle.
 	  Limits processing time per cycle to prevent starving other threads.
+
+config EVENT_SUBSCRIBER_FILTER
+	bool "Enable per-subscriber event filter"
+	default n
+	depends on EVENT_SYSTEM
+	help
+	  Per-subscriber event filtering: each subscription may carry a filter
+	  callback that runs in dispatcher-thread context before the subscriber
+	  callback; returning false skips only that subscriber (the event is still
+	  delivered to other subscribers). Independent from and evaluated after the
+	  global dispatcher filter. Memory cost: subscriber_entry_t grows by one
+	  uint8_t filter index (+4 bytes per slot on 32-bit targets; absorbed by
+	  tail padding on 64-bit) plus a static side table of about 24 bytes per
+	  CONFIG_EVENT_SUBSCRIBER_FILTER_SLOTS slot. The dispatcher subscriber
+	  snapshot grows by up to 256 bytes (64-bit; 128 bytes on 32-bit) with the
+	  default CONFIG_EVENT_MAX_SUBSCRIBERS=16, so evaluate
+	  CONFIG_EVENT_DISPATCHER_STACK_SIZE >= 2560 when enabling this option.
+
+config EVENT_SUBSCRIBER_FILTER_SLOTS
+	int "Per-subscriber filter side-table slots"
+	default 16
+	range 4 64
+	depends on EVENT_SUBSCRIBER_FILTER
+	help
+	  Number of slots in the static filter side table. Each active filtered
+	  subscription occupies one slot (~24 bytes each). Subscribe with a filter
+	  returns EVENT_ERR_NO_MEM when all slots are occupied.
+
+config EVENT_SUBSCRIBER_FILTER_STATS
+	bool "Count events skipped by subscriber filters"
+	default y
+	depends on EVENT_SUBSCRIBER_FILTER
+	help
+	  Maintain an atomic counter of deliveries skipped by subscriber filters,
+	  exposed via event_subscriber_filter_get_skip_count() and mirrored into
+	  dispatcher_stats_t.subscriber_filtered. Disable to save the counter and
+	  the stats field.
+
+config EVENT_STICKY
+	bool "Enable sticky event latch and replay"
+	default n
+	depends on EVENT_SYSTEM
+	help
+	  Sticky events: for event types explicitly enabled via event_sticky_enable(),
+	  each successful thread-side publish latches (stores a private copy of) the
+	  most recent event edge; a new subscriber receives one synchronous replay of
+	  the latched edge right after event_subscribe/event_subscribe_filtered
+	  succeeds. Enable does NOT replay history: only publishes after enable are
+	  latched. ISR publishes (event_publish_from_isr) never update the latch.
+	  Latching is best-effort: if the payload copy fails (slab/heap exhausted or
+	  payload above the 4KB cap) the publish still succeeds, the previous latch
+	  is kept and the miss counter is incremented (LOG_WRN).
+	  Memory cost: a static slot pool of CONFIG_EVENT_STICKY_MAX_TYPES slots,
+	  about 88 bytes per slot (64-bit targets) plus one dynamically allocated
+	  payload copy (at most one 4KB block) per currently latched type, plus one
+	  extra uint8_t per event type entry (absorbed by existing padding).
+	  Default n: zero behavioral and memory impact when disabled.
+
+config EVENT_STICKY_MAX_TYPES
+	int "Max simultaneously sticky-enabled event types"
+	default 4
+	range 1 32
+	depends on EVENT_STICKY
+	help
+	  Number of slots in the static sticky slot pool; each event_sticky_enable()
+	  occupies one slot until event_sticky_disable()/shutdown. Enabling a type
+	  while all slots are occupied returns EVENT_ERR_NOT_FOUND. Each slot costs
+	  about 88 bytes static plus at most one <=4KB payload copy while latched.
+
+config EVENT_TIMER_POOL
+	bool "Enable delayed and periodic publish timer pool"
+	default n
+	depends on EVENT_SYSTEM
+	help
+	  Static k_timer slot pool shared by two features: delayed publish
+	  (event_publish_delayed_copy, payload deep-copied into the slot and
+	  delivered once after delay_ms with zero allocation on the expiry path)
+	  and periodic publish (event_periodic_start, requires
+	  EVENT_PERIODIC_PUBLISH). No extra thread is created: expiry callbacks
+	  run in the system clock ISR context and arbitrate against cancel via
+	  an atomic slot state machine plus a generation counter.
+	  Memory cost: about 130 bytes per slot (32-bit targets), static.
+	  Default n: zero behavioral and memory impact when disabled.
+
+config EVENT_TIMER_SLOTS
+	int "Timer pool slot count (delayed and periodic share one pool)"
+	default 8
+	range 1 32
+	depends on EVENT_TIMER_POOL
+	help
+	  Number of slots in the static timer pool. Delayed publishes
+	  (event_publish_delayed_copy) and periodic publishes
+	  (event_periodic_start) share this one slot pool; each armed delayed
+	  publish and each active periodic publish occupies one slot until it
+	  fires, is cancelled, or the system shuts down. Submitting while all
+	  slots are occupied returns EVENT_ERR_NO_MEM. Each slot costs about
+	  130 bytes static.
+
+config EVENT_PERIODIC_PUBLISH
+	bool "Enable periodic publish (auto re-armed timer slots)"
+	default n
+	depends on EVENT_TIMER_POOL
+	help
+	  Provide event_periodic_start()/event_periodic_cancel(): each round
+	  re-creates a fresh event copy from the latched master via the pure
+	  slab path (never k_malloc) and publishes it from the expiry callback.
+	  Rounds skipped due to slab exhaustion or a stopped system are counted
+	  as misses and are not re-delivered. Default n: the delayed-publish
+	  feature alone remains available with zero periodic residue.
 
 	choice EVENT_QUEUE_OVERFLOW_POLICY
 		prompt "Default queue overflow policy for event_publish"
@@ -111,6 +226,42 @@ config EVENT_QUEUE_BLOCK_RETRY_MS
 	  When the queue is full under BLOCK policy, k_msgq_put is retried with
 	  this timeout so publishers can observe event_system_is_running() == false
 	  after stop/shutdown without deadlocking.
+
+config EVENT_PRIORITY_DISPATCH
+	bool "Priority-ordered event dispatch with aging"
+	default n
+	depends on EVENT_SYSTEM
+	depends on !EVENT_QUEUE_OVERFLOW_BLOCK
+	help
+	  Dequeue events in effective-priority order instead of FIFO: each
+	  dispatcher dequeue drains the queue into the reorder scratch, picks the
+	  best event and requeues the rest in their original FIFO order. The
+	  effective priority is max(priority - age_steps, 0) with age_steps =
+	  (now - timestamp) / EVENT_PRIORITY_AGING_STEP_MS, so a waiting
+	  low-priority event is gradually promoted and cannot starve: LOW(10)
+	  reaches effective 0 after (max priority difference * aging step) and
+	  then wins the FIFO tie-break against fresh CRITICAL events. Enqueue
+	  paths (including ISR publishes) are unchanged.
+	  Mutually exclusive with EVENT_QUEUE_OVERFLOW_BLOCK on purpose: BLOCK
+	  parks publishers inside k_msgq_put while priority dispatch needs to
+	  drain/requeue the queue under the reorder lock; combining them would
+	  require a two-phase enqueue redesign, so the combination is rejected
+	  at Kconfig time.
+	  Memory cost: per-queue reorder scratch of 2 * capacity * sizeof(event_t)
+	  (2 * 4KB for the default CONFIG_EVENT_QUEUE_SIZE=64, allocated in
+	  event_queue_init) shared with DROP_LOWEST, plus a dispatcher-side
+	  batch buffer of CONFIG_EVENT_QUEUE_SIZE * sizeof(event_t).
+
+config EVENT_PRIORITY_AGING_STEP_MS
+	int "Aging step for priority dispatch (ms)"
+	default 100
+	range 10 60000
+	depends on EVENT_PRIORITY_DISPATCH
+	help
+	  One priority level is forgiven per this many milliseconds of queue
+	  wait. Smaller values tighten the anti-starvation bound
+	  (max priority difference * this value) but promote low-priority
+	  events earlier; larger values keep strict priority order longer.
 
 config EVENT_SYSTEM_AUTOINIT
 	bool "Auto-initialize event system at boot (SYS_INIT)"

@@ -6,7 +6,7 @@
  * retain 异步持有、队列溢出、消费者注销、publish_block、
  * manual_release、ISR 发布、统计重置。
  * @author zeh (china_qzh@163.com)
- * @version 2.4
+ * @version 2.5
  * @date 2026-05-15
  *
  * @par 修改日志:
@@ -17,6 +17,7 @@
  * 2026-05-20       2.2            zeh            消费者固定槽位：交错注销不使 out_consumer 指针错位
  * 2026-05-28       2.3            zeh            deinit 分发线程拒绝路径（P2 契约）
  * 2026-09-18       2.4            zeh            超时/容量魔数具名；裸调用返回值检查
+ * 2026-09-27       2.5            zeh            消费者用例补注销修复 destroy -EBUSY；新增 destroy 忙判定用例
  *
  */
 
@@ -393,8 +394,9 @@ ZTEST(test_data_bus, test_publish_auto_release) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("auto_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons = NULL;
+    int                  ret = data_bus_channel_create("auto_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     /* 注册 manual_release=false（启用自动释放）的消费者 */
@@ -404,7 +406,7 @@ ZTEST(test_data_bus, test_publish_auto_release) {
         .callback = auto_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg, NULL);
+    ret = data_bus_consumer_register(ch, &cfg, &cons);
     zassert_equal(ret, 0, "消费者注册失败");
 
     /* 发布数据 */
@@ -418,7 +420,9 @@ ZTEST(test_data_bus, test_publish_auto_release) {
     zassert_equal(atomic_get(&g_call_count), 1, "消费者应被调用一次");
     zassert_equal(g_recv_seq, 0, "第一个 seq 应为 0");
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -429,8 +433,10 @@ ZTEST(test_data_bus, test_multi_consumer) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("multi_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons_a = NULL;
+    data_bus_consumer_t* cons_b = NULL;
+    int                  ret = data_bus_channel_create("multi_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     /* 注册两个自动释放消费者 */
@@ -440,7 +446,7 @@ ZTEST(test_data_bus, test_multi_consumer) {
         .callback = auto_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg1, NULL);
+    ret = data_bus_consumer_register(ch, &cfg1, &cons_a);
     zassert_equal(ret, 0, "消费者 A 注册失败");
 
     data_bus_consumer_cfg_t cfg2 = {
@@ -449,7 +455,7 @@ ZTEST(test_data_bus, test_multi_consumer) {
         .callback = auto_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg2, NULL);
+    ret = data_bus_consumer_register(ch, &cfg2, &cons_b);
     zassert_equal(ret, 0, "消费者 B 注册失败");
 
     /* 发布数据 */
@@ -465,7 +471,10 @@ ZTEST(test_data_bus, test_multi_consumer) {
 
     zassert_equal(atomic_get(&g_call_count), 2, "两个消费者都应被调用");
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons_a), 0, NULL);
+    zassert_equal(data_bus_consumer_unregister(cons_b), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -476,8 +485,9 @@ ZTEST(test_data_bus, test_retain) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("retain_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons = NULL;
+    int                  ret = data_bus_channel_create("retain_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     /* 注册 retain 消费者的块 */
@@ -487,7 +497,7 @@ ZTEST(test_data_bus, test_retain) {
         .callback = retain_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg, NULL);
+    ret = data_bus_consumer_register(ch, &cfg, &cons);
     zassert_equal(ret, 0, "消费者注册失败");
 
     /* 发布数据 */
@@ -510,7 +520,9 @@ ZTEST(test_data_bus, test_retain) {
     data_bus_block_release(g_retained_block);
     g_retained_block = NULL;
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -521,8 +533,9 @@ ZTEST(test_data_bus, test_manual_release) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("manual_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons = NULL;
+    int                  ret = data_bus_channel_create("manual_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     /* 注册 manual_release=true 的消费者 */
@@ -532,7 +545,7 @@ ZTEST(test_data_bus, test_manual_release) {
         .callback = manual_release_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg, NULL);
+    ret = data_bus_consumer_register(ch, &cfg, &cons);
     zassert_equal(ret, 0, "消费者注册失败");
 
     /* 发布数据 */
@@ -546,7 +559,9 @@ ZTEST(test_data_bus, test_manual_release) {
     zassert_equal(atomic_get(&g_manual_release_count), 1, "消费者应被调用一次");
     zassert_equal(g_recv_seq, 0, "seq 应为 0");
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -691,6 +706,32 @@ ZTEST(test_data_bus, test_channel_destroy_retries_after_publish) {
     }
     zassert_equal(ret, 0, "destroy should succeed without hang");
 
+    zassert_equal(data_bus_deinit(), 0, NULL);
+}
+
+/**
+ * @brief 有活跃消费者时 destroy 应返回 -EBUSY，注销后 destroy 应成功（正向契约）
+ */
+ZTEST(test_data_bus, test_channel_destroy_rejects_active_consumer) {
+    data_bus_test_setup();
+    zassert_equal(data_bus_init(), 0, NULL);
+
+    data_bus_channel_t*     ch = NULL;
+    data_bus_consumer_t*    cons = NULL;
+    data_bus_consumer_cfg_t cfg = {
+        .name = "busy_consumer",
+        .manual_release = false,
+        .callback = auto_consumer_cb,
+        .user_data = NULL,
+    };
+
+    zassert_equal(data_bus_channel_create("busy_ch", &ch), 0, NULL);
+    zassert_equal(data_bus_consumer_register(ch, &cfg, &cons), 0, NULL);
+
+    zassert_equal(data_bus_channel_destroy(ch), -EBUSY, "有活跃消费者时 destroy 应返回 -EBUSY");
+
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -885,8 +926,9 @@ ZTEST(test_data_bus, test_publish_block) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("block_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons = NULL;
+    int                  ret = data_bus_channel_create("block_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     /* 注册自动释放消费者 */
@@ -896,7 +938,7 @@ ZTEST(test_data_bus, test_publish_block) {
         .callback = auto_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg, NULL);
+    ret = data_bus_consumer_register(ch, &cfg, &cons);
     zassert_equal(ret, 0, "消费者注册失败");
 
     /* 分配块并填充数据 */
@@ -917,7 +959,9 @@ ZTEST(test_data_bus, test_publish_block) {
     zassert_equal(ret, 0, "消费者回调超时");
     zassert_equal(atomic_get(&g_call_count), 1, "消费者应被调用一次");
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -928,8 +972,9 @@ ZTEST(test_data_bus, test_publish_from_isr) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("isr_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons = NULL;
+    int                  ret = data_bus_channel_create("isr_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     /* 注册消费者 */
@@ -939,7 +984,7 @@ ZTEST(test_data_bus, test_publish_from_isr) {
         .callback = auto_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg, NULL);
+    ret = data_bus_consumer_register(ch, &cfg, &cons);
     zassert_equal(ret, 0, "消费者注册失败");
 
     /* 设置 ISR 发布目标 */
@@ -955,7 +1000,9 @@ ZTEST(test_data_bus, test_publish_from_isr) {
     k_timer_stop(&g_isr_timer);
     g_isr_ch = NULL;
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -966,8 +1013,9 @@ ZTEST(test_data_bus, test_reset_stats) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("stats_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons = NULL;
+    int                  ret = data_bus_channel_create("stats_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     /* 注册消费者 */
@@ -977,7 +1025,7 @@ ZTEST(test_data_bus, test_reset_stats) {
         .callback = auto_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg, NULL);
+    ret = data_bus_consumer_register(ch, &cfg, &cons);
     zassert_equal(ret, 0, "消费者注册失败");
 
     /* 发布数据 */
@@ -1006,7 +1054,9 @@ ZTEST(test_data_bus, test_reset_stats) {
     zassert_equal(stats.consumer_count, 1, "consumer_count 应保持 1");
     zassert_equal(stats.peak_queue_usage, 0, "peak_queue_usage 应为 0");
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 
@@ -1121,8 +1171,9 @@ ZTEST(test_data_bus, test_dispatch_burst_drain) {
     data_bus_test_setup();
     zassert_equal(data_bus_init(), 0, NULL);
 
-    data_bus_channel_t* ch = NULL;
-    int                 ret = data_bus_channel_create("burst_ch", &ch);
+    data_bus_channel_t*  ch = NULL;
+    data_bus_consumer_t* cons = NULL;
+    int                  ret = data_bus_channel_create("burst_ch", &ch);
     zassert_equal(ret, 0, "通道创建失败");
 
     data_bus_consumer_cfg_t cfg = {
@@ -1131,7 +1182,7 @@ ZTEST(test_data_bus, test_dispatch_burst_drain) {
         .callback = auto_consumer_cb,
         .user_data = NULL,
     };
-    ret = data_bus_consumer_register(ch, &cfg, NULL);
+    ret = data_bus_consumer_register(ch, &cfg, &cons);
     zassert_equal(ret, 0, "消费者注册失败");
 
     const int burst_count = CONFIG_DATA_BUS_CHANNEL_QUEUE_DEPTH;
@@ -1153,7 +1204,9 @@ ZTEST(test_data_bus, test_dispatch_burst_drain) {
         zassert_equal(atomic_get(&g_call_count), burst_count, "第 %d 轮应投递全部 %d 块", round, burst_count);
     }
 
-    zassert_equal(data_bus_channel_destroy(ch), 0, NULL);
+    /* destroy 要求先注销全部消费者 */
+    zassert_equal(data_bus_consumer_unregister(cons), 0, NULL);
+    data_bus_test_destroy_channel(ch);
     zassert_equal(data_bus_deinit(), 0, NULL);
 }
 

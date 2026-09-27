@@ -10,7 +10,7 @@
  * - 处理延迟统计
  * - 批处理支持
  * @author zeh (china_qzh@163.com)
- * @version 1.2
+ * @version 1.5
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -20,6 +20,9 @@
  * 2026-05-09       1.0            zeh            文档注释修订
  * 2026-05-28       1.1            zeh            热路径：state 原子化，config 快照无锁读（P3.3）
  * 2026-09-18       1.2            zeh            拆分 init/stop/process_one 超长函数；EMA 种子读取纳入锁内防撕裂
+ * 2026-09-27       1.3            zeh            统计同步 subscriber_filtered：get/reset 联动过滤跳过计数（memset 路径随结构体覆盖）
+ * 2026-09-27       1.4            zeh            接入优先级批出队（process_all 一次取批/process_one 单条有序）；新增提档统计
+ * 2026-09-27       1.5            zeh            手动消费准入收紧：RUNNING 态仅分发线程自身放行（M-2，护共享批缓冲唯一消费者前提）
  *
  */
 
@@ -28,6 +31,7 @@
 #include <zephyr/sys/time_units.h>
 #include <zeplod/event_dispatcher.h>
 #include "event_queue.h"
+#include "event_system_internal.h"
 
 LOG_MODULE_REGISTER(event_dispatcher, CONFIG_SYS_LOG_LEVEL);
 
@@ -86,6 +90,14 @@ static atomic_t g_dispatcher_initialized = ATOMIC_INIT(0);
 
 /** ISR/线程均可递增；避免在 ISR 路径对 g_dispatcher.lock 调用 mutex */
 static atomic_t g_dispatcher_events_dropped = ATOMIC_INIT(0);
+
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+/** 优先级批出队路径累计的「有效优先级提档」事件-次计数（event_queue 经 inc 接口递增） */
+static atomic_t g_dispatcher_aged_promotions = ATOMIC_INIT(0);
+
+/** 优先级批出队缓冲：一次 dequeue_priority_batch 取批，处理期间持有批内事件 */
+static event_t g_priority_batch[CONFIG_EVENT_QUEUE_SIZE];
+#endif /* CONFIG_EVENT_PRIORITY_DISPATCH */
 
 /** 单调递增世代号；每次 k_thread_create 成功前递增并写入 thread_gen */
 static atomic_t g_dispatcher_next_gen = ATOMIC_INIT(0);
@@ -291,6 +303,12 @@ static void dispatcher_apply_thread_stopped_locked(uint32_t join_gen) {
 /**
  * @brief 当前上下文是否允许调用 process_one / process_all
  *
+ * RUNNING 态仅分发线程自身放行：共享批缓冲 g_priority_batch 与控制块统计
+ * 的准入前提是「消费者唯一」——RUNNING 期间只有分发线程可消费；外部手动
+ * 消费仅限 STOPPED 且从未 start（该形态下经 lifecycle gate 串行，不会与
+ * 分发线程并存）。旧实现的「RUNNING && !thread_started 放行」窗口只在
+ * start() 持锁临界区内可观测，收紧后无损。
+ *
  * @pre 已持有 g_dispatcher.lock
  */
 static bool dispatcher_can_process_locked(dispatcher_state_t state, bool thread_started, bool ever_started) {
@@ -299,10 +317,8 @@ static bool dispatcher_can_process_locked(dispatcher_state_t state, bool thread_
     }
 
     if (state == DISPATCHER_RUNNING) {
-        if (thread_started && k_current_get() != &g_dispatcher.thread) {
-            return false;
-        }
-        return true;
+        /* 仅分发线程自身（thread_started 恒真；窄窗内分发线程尚未起跑即被拒） */
+        return (thread_started && k_current_get() == &g_dispatcher.thread);
     }
 
     if (state == DISPATCHER_STOPPED) {
@@ -788,12 +804,16 @@ static bool process_one_state_check(dispatcher_state_t* state_out, bool* thread_
     return allowed;
 }
 
-/** 出队前被拒绝时的差异化日志：区分「曾启动已停止」与「分发线程独占消费」两类误用 */
+/** 出队前被拒绝时的差异化日志：区分「曾启动已停止」「分发线程独占消费」与「start 进行中」三类误用 */
 static void process_one_log_reject(dispatcher_state_t state, bool thread_started, bool ever_started) {
     if (ever_started && state == DISPATCHER_STOPPED) {
         LOG_WRN("process_one rejected: dispatcher was started and is now stopped");
-    } else if (thread_started && state == DISPATCHER_RUNNING) {
-        LOG_WRN("process_one rejected: dispatcher thread is consuming the queue");
+    } else if (state == DISPATCHER_RUNNING) {
+        if (thread_started) {
+            LOG_WRN("process_one rejected: dispatcher thread is consuming the queue");
+        } else {
+            LOG_WRN("process_one rejected: dispatcher start is in progress");
+        }
     }
 }
 
@@ -875,7 +895,18 @@ static event_status_t event_dispatcher_process_one_impl(k_timeout_t timeout, boo
         goto out;
     }
 
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+    /* 优先级有序消费：队列非空时经批出队取有效优先级最优的一条（max_out=1）；
+     * 队列为空时回退阻塞式单条出队以保留 timeout 语义（等待期间无排序对象，
+     * 新到事件按到达序取出，不破坏既有阻塞行为的可观测契约） */
+    if (event_queue_dequeue_priority_batch(g_event_queue, &event, 1U, NULL) == 1U) {
+        st = EVENT_OK;
+    } else {
+        st = event_queue_dequeue(g_event_queue, &event, timeout);
+    }
+#else
     st = event_queue_dequeue(g_event_queue, &event, timeout);
+#endif
     if (st != EVENT_OK) {
         goto out;
     }
@@ -944,12 +975,39 @@ uint32_t event_dispatcher_process_all(uint32_t max_events) {
     batch_stats_t batch;
     batch_stats_init(&batch);
 
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+    /* 批模式：一次 dequeue_priority_batch 取整批（队列容量为上界），逐条走既有
+     * filter/统计/释放逻辑，批提交不变。批出队非阻塞，无「阻塞期间状态翻转」
+     * 窗口，故快照一次 filter 后不再逐事件复核状态（与单条路径的复核时机对齐：
+     * 那里的复核只为覆盖阻塞等待窗口）。 */
+    if (max_events > (uint32_t) CONFIG_EVENT_QUEUE_SIZE) {
+        max_events = (uint32_t) CONFIG_EVENT_QUEUE_SIZE;
+    }
+
+    dispatcher_state_t state_snapshot;
+    bool               thread_started_snapshot;
+    bool               ever_started_snapshot;
+    event_filter_t     filter = NULL;
+    void*              filter_user_data = NULL;
+
+    if (process_one_state_check(&state_snapshot, &thread_started_snapshot, &ever_started_snapshot, &filter,
+                                &filter_user_data)) {
+        uint32_t remaining = 0U;
+        uint32_t n = event_queue_dequeue_priority_batch(g_event_queue, g_priority_batch, max_events, &remaining);
+
+        for (uint32_t i = 0U; i < n; i++) {
+            (void) process_one_dispatch(&g_priority_batch[i], filter, filter_user_data, &batch);
+        }
+        processed = n;
+    }
+#else
     while (processed < max_events) {
         if (event_dispatcher_process_one_impl(K_NO_WAIT, false, &batch) != EVENT_OK) {
             break; /* 无更多事件 */
         }
         processed++;
     }
+#endif
 
     /* 批末一次性提交：每批一次锁往返，替代 v1 的每事件一次 */
     dispatcher_commit_batch(&batch, processed);
@@ -985,6 +1043,14 @@ void event_dispatcher_get_stats(dispatcher_stats_t* stats) {
     k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
     *stats = g_dispatcher.stats;
     stats->events_dropped += (uint64_t) atomic_get(&g_dispatcher_events_dropped);
+#if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
+    /* 订阅级过滤跳过计数在 pubsub 侧原子累计，此处镜像进分发器统计 */
+    stats->subscriber_filtered += (uint64_t) atomic_get(&g_event_filter_skip_count);
+#endif
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+    /* 优先级提档计数在 queue 侧批出队路径原子累计，此处镜像进分发器统计 */
+    stats->aged_promotions += (uint64_t) atomic_get(&g_dispatcher_aged_promotions);
+#endif
     k_mutex_unlock(&g_dispatcher.lock);
     k_mutex_unlock(&g_dispatcher_api_lock);
 }
@@ -997,6 +1063,12 @@ void event_dispatcher_reset_stats(void) {
 
     if (!dispatcher_is_initialized()) {
         atomic_set(&g_dispatcher_events_dropped, 0);
+#if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
+        atomic_set(&g_event_filter_skip_count, 0);
+#endif
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+        atomic_set(&g_dispatcher_aged_promotions, 0);
+#endif
         k_mutex_unlock(&g_dispatcher_api_lock);
         return;
     }
@@ -1004,6 +1076,12 @@ void event_dispatcher_reset_stats(void) {
     k_mutex_lock(&g_dispatcher.lock, K_FOREVER);
     memset(&g_dispatcher.stats, 0, sizeof(g_dispatcher.stats));
     atomic_set(&g_dispatcher_events_dropped, 0);
+#if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
+    atomic_set(&g_event_filter_skip_count, 0);
+#endif
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+    atomic_set(&g_dispatcher_aged_promotions, 0);
+#endif
     k_mutex_unlock(&g_dispatcher.lock);
     k_mutex_unlock(&g_dispatcher_api_lock);
 
@@ -1017,6 +1095,24 @@ void event_dispatcher_stats_inc_dropped(void) {
 
     atomic_inc(&g_dispatcher_events_dropped);
 }
+
+uint64_t event_dispatcher_get_aged_promotions(void) {
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+    return (uint64_t) atomic_get(&g_dispatcher_aged_promotions);
+#else
+    return 0U;
+#endif
+}
+
+#if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
+void event_dispatcher_stats_inc_aged_promotions(void) {
+    if (!dispatcher_is_initialized()) {
+        return;
+    }
+
+    atomic_inc(&g_dispatcher_aged_promotions);
+}
+#endif /* CONFIG_EVENT_PRIORITY_DISPATCH */
 
 /**
  * @brief 获取当前事件延迟

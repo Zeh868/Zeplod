@@ -106,6 +106,9 @@ clang-tidy -p build src/core/event_system.c
 
 ## 3. 代码风格规范
 
+### 版本号口径
+双层口径：公共头（`include/zeplod/`）仅当公共 API 语义变化（增删改签名/返回值/可观测行为契约）时 `@version` +0.1；`src/` 内部实现文件（含 `*_internal.h`）按整改批次逐批 +0.1。行为不变的内部修改不升版本、不记日志。
+
 ### 总体规则
 - **语言**：C（Zephyr RTOS）
 - **标准**：C11（`<stdint.h>`、`<stdbool.h>` 等）
@@ -282,6 +285,9 @@ SYS_INIT(my_module_auto_register, POST_KERNEL, APP_INIT_PRIO_MODULE_MINE);
 // 订阅事件
 event_subscribe(EVENT_TYPE_SENSOR_DATA, my_callback, user_data, &subscriber_id);
 
+// 订阅级过滤（须 CONFIG_EVENT_SUBSCRIBER_FILTER=y）：filter 在分发线程回调前判定
+event_subscribe_filtered(EVENT_TYPE_SENSOR_DATA, my_callback, user_data, my_filter, &filter_ctx, &subscriber_id);
+
 // 发布事件（推荐 publish_copy / create_with_data，勿手搓不一致的 flags/data_len）
 event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL, &data, sizeof(data));
 
@@ -297,6 +303,10 @@ event_publish_from_isr(&my_event);
 | 模块卸载 | `event_system_stop()` → `event_unsubscribe_all(id)` → 再释放 `user_data`（`unsubscribe` 返回后回调仍可能短暂执行） |
 | 手动 `process_one` / `process_all` | 仅 init 后、首次 `event_dispatcher_start()` 之前；曾 start 后再 stop 或与 RUNNING 的分发器线程并行调用会返回 `EVENT_ERR_INVALID_ARG` |
 | `CONFIG_EVENT_QUEUE_OVERFLOW_DROP_LOWEST` | 仅线程侧 `event_publish` 可挤掉低优先级；ISR 满队列仍为 `DROP_NEWEST` |
+| 订阅级 filter（`CONFIG_EVENT_SUBSCRIBER_FILTER=y`） | 分发线程回调前判定；返回 false 仅跳过该订阅者（事件对其他订阅者照常分发）；与全局 dispatcher filter 独立叠加且全局先判；filter 回调内不得阻塞/发布/调订阅 API |
+| Sticky 事件（`CONFIG_EVENT_STICKY=y`，默认 n） | 先 `event_sticky_enable(type)` 再发布；仅锁存启用后的线程侧发布最近一条沿（不回溯历史，ISR 发布不更新），新订阅者订阅成功时在订阅线程同步重放一次（不经过滤器、不计入 total_events）；锁存 best-effort（拷贝失败发布仍成功，计 miss）；未注册/槽池满返回 `EVENT_ERR_NOT_FOUND`；重放回调内订阅其他锁存类型不会递归重放（每线程深度防御） |
+| 延迟/周期发布（`CONFIG_EVENT_TIMER_POOL=y`，默认 n；周期另须 `CONFIG_EVENT_PERIODIC_PUBLISH=y`） | 延迟 `event_publish_delayed_copy` 深拷贝负载入槽（上界 4KB），`delay_ms` 后到期回调（时钟 ISR 上下文）以槽内事件壳零分配投递；周期 `event_periodic_start` 母本入槽，每轮经纯 slab 路径生成新副本，绝不 `k_malloc`；到期投递尽力而为（队列满/未 running/副本分配失败该轮丢弃计 miss，不补发不重试）；句柄 slot+gen 防 ABA，取消与到期回调竞态由 gen 仲裁（回调已通过校验返回 `EVENT_ERR_NOT_FOUND` 不干扰）；`stop` 不清 armed（停止期间轮次丢弃计 miss，恢复继续），`shutdown` 取消全部并释放负载；提交/取消仅线程上下文，ISR 直接用 `event_publish_from_isr` |
+| 优先级有序分发（`CONFIG_EVENT_PRIORITY_DISPATCH=y`，默认 n；与 `EVENT_QUEUE_OVERFLOW_BLOCK` 硬互斥） | 出队侧按「有效优先级」排序：`effective = max(priority − (now−timestamp)/CONFIG_EVENT_PRIORITY_AGING_STEP_MS, 0)`，数值小者先出、平局取 FIFO 最旧；仅出队侧重排（`event_queue_dequeue_priority_batch`），入队与 ISR 路径零改动。事件 `timestamp` 须为创建时刻（`event_create*`/`publish_copy*` 已满足），**手搓 `event_t` 必须设置 timestamp**，否则按严重老化退化为 FIFO（不乱序但失去优先级语义）。手动 `process_one`/`process_all` 开启后亦有序（行为变化点）；全局 dispatcher filter 在出队后应用，被拒高优事件仍占用一次最优选择；`event_notify_subscribers` 直发不参与排序（正交）；与 `DROP_LOWEST` 挤占共用同一 scratch，经 reorder_lock 互斥串行。饿死界 = 最大优先级差 × AGING_STEP + 一个出队周期（LOW(10) 与新 CRITICAL 平局需 10×AGING_STEP）。内存代价：每队列 scratch 1×容量×sizeof(event_t)（默认 4KB，init 预分配；与 DROP_LOWEST 组合时 2×）+ 分发器批缓冲 容量×sizeof(event_t)。与 BLOCK 互斥原因：BLOCK 在 `k_msgq_put` 内驻留发布者，优先级出队需在 reorder_lock 下排空/回灌队列，组合须入队两段式改造，保守起见 Kconfig 直接拒绝 |
 
 **自动初始化（标准版，默认启用）**
 
@@ -369,6 +379,8 @@ zeplod/
 │   │   ├── event_system.c
 │   │   ├── event_queue.c/h
 │   │   ├── event_dispatcher.c
+│   │   ├── event_sticky.c     # Sticky 锁存/重放（CONFIG_EVENT_STICKY，默认 n）
+│   │   ├── event_timer.c/h    # 延迟/周期发布定时器池（CONFIG_EVENT_TIMER_POOL，默认 n）
 │   │   ├── event_system_compat.c
 │   │   ├── state_machine.c
 │   │   └── lock_order.c
@@ -394,6 +406,10 @@ zeplod/
 │   ├── test_event_system.c
 │   ├── test_event_queue.c
 │   ├── test_event_dispatcher.c
+│   ├── test_event_filter.c   # 订阅级过滤（叠加 prj_event_ext.conf）
+│   ├── test_event_priority.c # 优先级有序分发（叠加 prj_event_ext.conf）
+│   ├── test_event_sticky.c   # Sticky 锁存/重放（叠加 prj_event_ext.conf）
+│   ├── test_event_timer.c    # 延迟/周期发布（叠加 prj_event_ext.conf）
 │   ├── test_module_manager.c
 │   ├── test_sys_memory.c
 │   ├── test_sys_timer.c

@@ -2,7 +2,7 @@
  * @file test_event_system.c
  * @brief 事件系统单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.1
+ * @version 1.2
  * @date 2026-04-01
  *
  * @par 修改日志:
@@ -10,12 +10,14 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-09-18       1.1            zeh            修复 ZTEST_SUITE 参数错位；rt 系列改为直接断言；统计用例补哨兵断言；裸调用返回值检查
+ * 2026-09-27       1.2            zeh            unregister_type 用例对齐注销后换名重注册契约；新增正向用例
  *
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/ztest.h>
+#include <string.h>
 #include <zeplod/event_dispatcher.h>
 #include <zeplod/event_system.h>
 #include "event_memory.h"
@@ -326,6 +328,7 @@ ZTEST(test_event_system, test_event_unregister_type) {
     event_status_t status;
     uint32_t       subscriber_id;
     const char*    registered_name;
+    char           name_snapshot[CONFIG_EVENT_TYPE_NAME_MAX];
 
     zassert_equal(event_system_init(), EVENT_OK, NULL);
 
@@ -333,6 +336,12 @@ ZTEST(test_event_system, test_event_unregister_type) {
     status = event_register_type(80, "unregister_test");
     zassert_equal(status, EVENT_OK, "注册失败");
     registered_name = event_get_type_name(80);
+
+    /* 返回的是内部名称缓冲指针，按头文件指引立即拷贝后再断言 */
+    zassert_not_null(registered_name, NULL);
+    (void) strncpy(name_snapshot, registered_name, sizeof(name_snapshot) - 1U);
+    name_snapshot[sizeof(name_snapshot) - 1U] = '\0';
+    zassert_str_equal(name_snapshot, "unregister_test", "注册后类型名应正确");
 
     /* 订阅事件 */
     status = event_subscribe(80, test_event_noop_callback, NULL, &subscriber_id);
@@ -352,12 +361,34 @@ ZTEST(test_event_system, test_event_unregister_type) {
     /* 验证类型已注销 */
     zassert_equal(event_get_subscriber_count(80), 0, "注销后订阅者数应为 0");
     zassert_str_equal(event_get_type_name(80), "UNREGISTERED", "注销后查询应返回 UNREGISTERED");
-    zassert_str_equal(registered_name, "unregister_test", "注销不得改写此前返回的类型名存储");
 
+    /* 注销后槽位完全释放：换名重注册应成功 */
     status = event_register_type(80, "renamed_type");
-    zassert_equal(status, EVENT_ERR_INVALID_ARG, "同一生命周期内注销后不得换名注册");
+    zassert_equal(status, EVENT_OK, "注销后换名重注册应成功");
+
+    /* 重注册占位后，同 ID 再以不同名注册应被拒绝 */
     status = event_register_type(80, "unregister_test");
-    zassert_equal(status, EVENT_OK, "注销后使用原名称重新注册应成功");
+    zassert_equal(status, EVENT_ERR_INVALID_ARG, "重注册占位后同 ID 换名应被拒绝");
+}
+
+/**
+ * @brief 注销 → 换名重注册成功（固化注销完全释放槽位契约，防复发）
+ */
+ZTEST(test_event_system, test_event_unregister_then_renamed_register) {
+    event_status_t status;
+
+    zassert_equal(event_system_init(), EVENT_OK, NULL);
+    zassert_equal(event_register_type(81, "orig_name"), EVENT_OK, NULL);
+
+    /* 注销后槽位完全释放，任意名可重注册 */
+    zassert_equal(event_unregister_type(81), EVENT_OK, NULL);
+    status = event_register_type(81, "new_name");
+    zassert_equal(status, EVENT_OK, "注销后换名重注册应成功");
+    zassert_str_equal(event_get_type_name(81), "new_name", "重注册后类型名应更新");
+
+    /* 重注册占位后，原名（视为不同名）应被拒绝 */
+    status = event_register_type(81, "orig_name");
+    zassert_equal(status, EVENT_ERR_INVALID_ARG, "重注册占位后换名应被拒绝");
 }
 
 /**
