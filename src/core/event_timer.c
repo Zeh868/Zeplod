@@ -16,36 +16,37 @@
  * - SMP 下「读 gen → CAS → 复核 gen」防槽取消后立即复用导致的 ABA 误投；
  *   单核到期回调与线程代码不会交错，该窗口天然不存在。
  * @author zeh (china_qzh@163.com)
- * @version 1.1
- * @date 2026-09-27
+ * @version 1.2
+ * @date 2026-09-29
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-09-27       1.0            zeh            初始版本（B3：延迟发布 + 周期发布共池交付）
- * 2026-09-27       1.1            zeh            零长负载提交清槽内残留 len（M-1，含领槽防御）；cancel 等在飞超时改返回 TIMEOUT
+ * 2026-09-27       1.1            zeh            零长负载提交清槽内残留 len（M-1，含领槽防御）；cancel 等在飞超时改返回
+ * TIMEOUT 2026-09-29       1.2            zeh            k_timer 只在池初始化时接线一次，领槽不再重入 init
  *
  */
 
+#include "event_timer.h"
 #include <zephyr/logging/log.h>
 #include <string.h>
 #include <zeplod/event_timer.h>
 #include "event_memory.h"
 #include "event_system_internal.h"
-#include "event_timer.h"
 
 #if defined(CONFIG_EVENT_TIMER_POOL)
 
 LOG_MODULE_DECLARE(event_system, CONFIG_SYS_LOG_LEVEL);
 
 /** 负载长度上界（字节）：与最大数据 slab 块（4KB）对齐，保证到期投递零 k_malloc */
-#define EVENT_TIMER_PAYLOAD_MAX 4096U
+#define EVENT_TIMER_PAYLOAD_MAX       4096U
 
 /** delay_ms / initial_delay_ms 上界（毫秒）：为内部换算保留符号位 */
-#define EVENT_TIMER_DELAY_MAX_MS 0x7FFFFFFFU
+#define EVENT_TIMER_DELAY_MAX_MS      0x7FFFFFFFU
 
 /** 世代号保留值（0xFFFF），不参与分配 */
-#define EVENT_TIMER_GEN_INVALID 0xFFFFU
+#define EVENT_TIMER_GEN_INVALID       0xFFFFU
 
 /** cancel_all 等待在飞到期回调的迭代上限（每次 k_busy_wait(50) 微秒） */
 #define EVENT_TIMER_FIRING_WAIT_LOOPS 2000U
@@ -58,6 +59,9 @@ static K_MUTEX_DEFINE(g_timer_pool_lock);
 
 /** 全局投递失败累计（自上次 shutdown 起累计；原子读，ISR 安全） */
 static atomic_t g_timer_miss_total;
+
+/** k_timer 只初始化一次。到期回调返回前不能再 k_timer_init 同一对象 */
+static bool g_timer_pool_inited;
 
 /* =============================================================================
  * 内部辅助
@@ -310,8 +314,6 @@ static int32_t timer_claim_slot(void) {
             timer_slot_reset_stats(slot);
             /* M-1 防御：领槽即清残留长度，任何 fill 路径遗漏都不会外溢成错误投递长度 */
             slot->len = 0U;
-            /* 领槽即重接线到期回调：上次使用可能已遗留任何内部状态 */
-            k_timer_init(&slot->timer, event_timer_expiry_fn, NULL);
             return (int32_t) i;
         }
     }
@@ -461,8 +463,8 @@ static event_status_t timer_cancel_common(event_timer_handle_t handle) {
         /* 护栏耗尽仍在飞（SMP 长尾）：让位并按超时报告——语义是「到期回调
          * 未收尾」，与「已取消/已消费」的 NOT_FOUND 区分（m-6）；
          * 负载由到期回调自行收尾，此处不得触碰 */
-        LOG_WRN("event_timer: cancel timed out waiting in-flight expiry (slot=%u gen=%u)",
-                (unsigned int) handle.slot, (unsigned int) handle.gen);
+        LOG_WRN("event_timer: cancel timed out waiting in-flight expiry (slot=%u gen=%u)", (unsigned int) handle.slot,
+                (unsigned int) handle.gen);
         timer_lock_release();
         event_system_op_exit();
         return EVENT_ERR_TIMEOUT;
@@ -519,8 +521,7 @@ uint32_t event_periodic_active_count(void) {
 #if defined(CONFIG_EVENT_PERIODIC_PUBLISH)
 
 event_status_t event_periodic_start(event_type_t type, event_priority_t priority, const void* data, size_t data_len,
-                                    uint32_t period_ms, uint32_t initial_delay_ms,
-                                    event_timer_handle_t* handle_out) {
+                                    uint32_t period_ms, uint32_t initial_delay_ms, event_timer_handle_t* handle_out) {
     if (period_ms == 0U || period_ms > EVENT_TIMER_DELAY_MAX_MS || initial_delay_ms > EVENT_TIMER_DELAY_MAX_MS) {
         return EVENT_ERR_INVALID_ARG;
     }
@@ -624,6 +625,24 @@ event_status_t event_timer_get_stats(event_timer_handle_t handle, uint32_t* fire
 /* =============================================================================
  * 生命周期收尾（event_system_shutdown 调用，线程上下文）
  * ============================================================================= */
+
+void event_timer_pool_init(void) {
+    if (g_timer_pool_inited) {
+        return;
+    }
+    for (uint32_t i = 0; i < CONFIG_EVENT_TIMER_SLOTS; i++) {
+        event_timer_slot_t* slot = &g_timer_slots[i];
+
+        k_timer_init(&slot->timer, event_timer_expiry_fn, NULL);
+        atomic_set(&slot->state, EVENT_TIMER_SLOT_FREE);
+        slot->gen = 0U;
+        slot->len = 0U;
+        slot->period_ms = 0U;
+        slot->mode = EVENT_TIMER_MODE_ONESHOT;
+        slot->payload = NULL;
+    }
+    g_timer_pool_inited = true;
+}
 
 void event_timer_pool_cancel_all(void) {
     timer_lock_acquire();

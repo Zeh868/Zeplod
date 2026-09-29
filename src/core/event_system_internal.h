@@ -2,8 +2,8 @@
  * @file event_system_internal.h
  * @brief 事件系统 core 内部共享（不对外公开）
  * @author zeh (china_qzh@163.com)
- * @version 1.4
- * @date 2026-05-28
+ * @version 1.6
+ * @date 2026-09-29
  *
  * @par 修改日志:
  *
@@ -13,7 +13,8 @@
  * 2026-09-27       1.2            zeh            新增订阅级过滤跳过计数原子变量声明（dispatcher 统计镜像）
  * 2026-09-27       1.3            zeh            新增 sticky 更新/重放/全量释放内部接口声明
  * 2026-09-27       1.4            zeh            新增事件定时器池 cancel_all 内部接口声明（B3 延迟/周期发布）
- * 2026-09-27       1.5            zeh            sticky 锁存改两段式：stage/commit/discard 暂存区接口取代入队后 update 钩子（C-1）
+ * 2026-09-27       1.5            zeh            sticky 锁存改两段式：stage/commit/discard 暂存区接口取代入队后 update
+ * 钩子（C-1） 2026-09-29       1.6            zeh            定时器池增加 event_timer_pool_init 声明
  */
 
 #ifndef EVENT_SYSTEM_INTERNAL_H
@@ -102,7 +103,7 @@ extern atomic_t          g_event_ops_accepting;
 extern atomic_t          g_event_ops_epoch;
 extern atomic_t          g_event_ops_in_flight;
 #if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
-extern atomic_t          g_event_filter_skip_count; /**< 订阅级过滤跳过计数（event_system_pubsub.c 定义） */
+extern atomic_t g_event_filter_skip_count; /**< 订阅级过滤跳过计数（event_system_pubsub.c 定义） */
 #endif
 
 void         event_system_lifecycle_lock_wait(void);
@@ -144,12 +145,12 @@ void event_system_inc_dropped_count(void);
  * event_sticky.c 私有约定，发布路径仅透传。
  */
 typedef struct {
-    bool            active;  /**< stage 已命中 sticky 类型并备好副本；false 时 commit/discard 直返 */
-    event_type_t    type;    /**< 暂存锁存沿的事件类型 */
-    event_t         shell;   /**< 入队前拍下的沿快照（提交时 flags 覆写为副本 provenance） */
-    void*           payload; /**< 超内联负载私有副本；NULL=内联于 shell 或空负载 */
-    uint8_t         flags;   /**< 副本 provenance 标记（DYNAMIC/FROM_SLAB/SLAB 档位） */
-    uint32_t        len;     /**< 锁存负载长度（字节） */
+    bool         active;  /**< stage 已命中 sticky 类型并备好副本；false 时 commit/discard 直返 */
+    event_type_t type;    /**< 暂存锁存沿的事件类型 */
+    event_t      shell;   /**< 入队前拍下的沿快照（提交时 flags 覆写为副本 provenance） */
+    void*        payload; /**< 超内联负载私有副本；NULL=内联于 shell 或空负载 */
+    uint8_t      flags;   /**< 副本 provenance 标记（DYNAMIC/FROM_SLAB/SLAB 档位） */
+    uint32_t     len;     /**< 锁存负载长度（字节） */
 } event_sticky_staged_t;
 
 /**
@@ -216,6 +217,11 @@ void event_sticky_release_all(void);
 #endif /* CONFIG_EVENT_STICKY */
 
 #if defined(CONFIG_EVENT_TIMER_POOL)
+/**
+ * @brief 初始化定时槽的 k_timer（定义于 event_timer.c，只执行一次）
+ */
+void event_timer_pool_init(void);
+
 /**
  * @brief 取消全部定时槽并释放槽内负载（定义于 event_timer.c）
  *

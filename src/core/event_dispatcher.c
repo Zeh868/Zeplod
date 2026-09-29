@@ -10,8 +10,8 @@
  * - 处理延迟统计
  * - 批处理支持
  * @author zeh (china_qzh@163.com)
- * @version 1.5
- * @date 2026-04-01
+ * @version 1.6
+ * @date 2026-09-29
  *
  * @par 修改日志:
  *
@@ -20,9 +20,11 @@
  * 2026-05-09       1.0            zeh            文档注释修订
  * 2026-05-28       1.1            zeh            热路径：state 原子化，config 快照无锁读（P3.3）
  * 2026-09-18       1.2            zeh            拆分 init/stop/process_one 超长函数；EMA 种子读取纳入锁内防撕裂
- * 2026-09-27       1.3            zeh            统计同步 subscriber_filtered：get/reset 联动过滤跳过计数（memset 路径随结构体覆盖）
- * 2026-09-27       1.4            zeh            接入优先级批出队（process_all 一次取批/process_one 单条有序）；新增提档统计
- * 2026-09-27       1.5            zeh            手动消费准入收紧：RUNNING 态仅分发线程自身放行（M-2，护共享批缓冲唯一消费者前提）
+ * 2026-09-27       1.3            zeh            统计同步 subscriber_filtered：get/reset 联动过滤跳过计数（memset
+ * 路径随结构体覆盖） 2026-09-27       1.4            zeh            接入优先级批出队（process_all 一次取批/process_one
+ * 单条有序）；新增提档统计 2026-09-27       1.5            zeh            手动消费准入收紧：RUNNING
+ * 态仅分发线程自身放行（M-2，护共享批缓冲唯一消费者前提） 2026-09-29       1.6            zeh            优先级
+ * process_all 重复取批直至排空；回调重入改走逐条出队
  *
  */
 
@@ -97,6 +99,9 @@ static atomic_t g_dispatcher_aged_promotions = ATOMIC_INIT(0);
 
 /** 优先级批出队缓冲：一次 dequeue_priority_batch 取批，处理期间持有批内事件 */
 static event_t g_priority_batch[CONFIG_EVENT_QUEUE_SIZE];
+
+/** process_all 批缓冲占用深度：回调再次进入时外层仍持有 g_priority_batch */
+static uint32_t g_priority_batch_depth;
 #endif /* CONFIG_EVENT_PRIORITY_DISPATCH */
 
 /** 单调递增世代号；每次 k_thread_create 成功前递增并写入 thread_gen */
@@ -976,29 +981,46 @@ uint32_t event_dispatcher_process_all(uint32_t max_events) {
     batch_stats_init(&batch);
 
 #if defined(CONFIG_EVENT_PRIORITY_DISPATCH)
-    /* 批模式：一次 dequeue_priority_batch 取整批（队列容量为上界），逐条走既有
-     * filter/统计/释放逻辑，批提交不变。批出队非阻塞，无「阻塞期间状态翻转」
-     * 窗口，故快照一次 filter 后不再逐事件复核状态（与单条路径的复核时机对齐：
-     * 那里的复核只为覆盖阻塞等待窗口）。 */
-    if (max_events > (uint32_t) CONFIG_EVENT_QUEUE_SIZE) {
-        max_events = (uint32_t) CONFIG_EVENT_QUEUE_SIZE;
-    }
-
-    dispatcher_state_t state_snapshot;
-    bool               thread_started_snapshot;
-    bool               ever_started_snapshot;
-    event_filter_t     filter = NULL;
-    void*              filter_user_data = NULL;
-
-    if (process_one_state_check(&state_snapshot, &thread_started_snapshot, &ever_started_snapshot, &filter,
-                                &filter_user_data)) {
-        uint32_t remaining = 0U;
-        uint32_t n = event_queue_dequeue_priority_batch(g_event_queue, g_priority_batch, max_events, &remaining);
-
-        for (uint32_t i = 0U; i < n; i++) {
-            (void) process_one_dispatch(&g_priority_batch[i], filter, filter_user_data, &batch);
+    /* 批模式重复取批，直到队列空或达到 max_events。单批容量受队列大小限制；
+     * 回调里新发布的事件由下一轮取批纳入同一次 process_all。
+     * 回调若再次进入 process_all，外层仍持有 g_priority_batch，内层改逐条出队。 */
+    if (g_priority_batch_depth > 0U) {
+        while (processed < max_events) {
+            if (event_dispatcher_process_one_impl(K_NO_WAIT, false, &batch) != EVENT_OK) {
+                break;
+            }
+            processed++;
         }
-        processed = n;
+    } else {
+        dispatcher_state_t state_snapshot;
+        bool               thread_started_snapshot;
+        bool               ever_started_snapshot;
+        event_filter_t     filter = NULL;
+        void*              filter_user_data = NULL;
+
+        g_priority_batch_depth = 1U;
+        while (processed < max_events) {
+            uint32_t room = max_events - processed;
+
+            if (room > (uint32_t) CONFIG_EVENT_QUEUE_SIZE) {
+                room = (uint32_t) CONFIG_EVENT_QUEUE_SIZE;
+            }
+            if (!process_one_state_check(&state_snapshot, &thread_started_snapshot, &ever_started_snapshot, &filter,
+                                         &filter_user_data)) {
+                break;
+            }
+
+            uint32_t n = event_queue_dequeue_priority_batch(g_event_queue, g_priority_batch, room, NULL);
+
+            if (n == 0U) {
+                break;
+            }
+            for (uint32_t i = 0U; i < n; i++) {
+                (void) process_one_dispatch(&g_priority_batch[i], filter, filter_user_data, &batch);
+            }
+            processed += n;
+        }
+        g_priority_batch_depth = 0U;
     }
 #else
     while (processed < max_events) {

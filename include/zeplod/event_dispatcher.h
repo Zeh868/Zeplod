@@ -11,17 +11,19 @@
  * - 支持暂停/恢复功能
  * - 支持手动批处理模式
  * @author zeh (china_qzh@163.com)
- * @version 1.3
- * @date 2026-04-01
+ * @version 1.4
+ * @date 2026-09-29
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.0            zeh            修正文档与注释
- * 2026-09-18       1.1            zeh            get_current_latency 兼容别名注释改中文并引导新代码使用 get_idle_time_us
- * 2026-09-27       1.2            zeh            dispatcher_stats_t 尾部追加 subscriber_filtered（CONFIG_EVENT_SUBSCRIBER_FILTER_STATS）
- * 2026-09-27       1.3            zeh            新增优先级有序分发统计 aged_promotions 与诊断 API（CONFIG_EVENT_PRIORITY_DISPATCH）
+ * 2026-09-18       1.1            zeh            get_current_latency 兼容别名注释改中文并引导新代码使用
+ * get_idle_time_us 2026-09-27       1.2            zeh            dispatcher_stats_t 尾部追加
+ * subscriber_filtered（CONFIG_EVENT_SUBSCRIBER_FILTER_STATS） 2026-09-27       1.3            zeh
+ * 新增优先级有序分发统计 aged_promotions 与诊断 API（CONFIG_EVENT_PRIORITY_DISPATCH） 2026-09-29       1.4 zeh
+ * process_all 在优先级模式下重复取批直至排空，回调重入改为逐条出队
  *
  */
 
@@ -278,9 +280,11 @@ event_status_t event_dispatcher_process_one(k_timeout_t timeout);
  * @note 此函数会一直处理直到队列为空或达到 max_events 限制
  * @note 返回值包含被过滤器跳过的事件（process_one 对过滤事件亦返回 EVENT_OK）
  * @note 与 process_one 相同的手动消费约束；不得与 RUNNING 的分发器线程并行调用
- * @note 启用 CONFIG_EVENT_PRIORITY_DISPATCH 时一次批出队取整批并按「有效优先级」
- *       序处理（行为变化点，默认配置仍为 FIFO）；全局 filter 在出队后应用，
- *       被拒高优事件仍占用一次最优选择
+ * @note 启用 CONFIG_EVENT_PRIORITY_DISPATCH 时按批出队，每批内按「有效优先级」
+ *       序处理，并重复取批直到队列为空或达到 max_events（回调里新发布的事件
+ *       计入同一次调用；行为变化点，默认配置仍为 FIFO）。回调若再次进入
+ *       process_all，内层改为逐条出队，避免覆盖外层批缓冲。全局 filter 在出队后
+ *       应用，被拒高优事件仍占用一次最优选择
  */
 uint32_t event_dispatcher_process_all(uint32_t max_events);
 

@@ -247,10 +247,11 @@ config EVENT_PRIORITY_DISPATCH
 	  drain/requeue the queue under the reorder lock; combining them would
 	  require a two-phase enqueue redesign, so the combination is rejected
 	  at Kconfig time.
-	  Memory cost: per-queue reorder scratch of 2 * capacity * sizeof(event_t)
-	  (2 * 4KB for the default CONFIG_EVENT_QUEUE_SIZE=64, allocated in
-	  event_queue_init) shared with DROP_LOWEST, plus a dispatcher-side
-	  batch buffer of CONFIG_EVENT_QUEUE_SIZE * sizeof(event_t).
+	  Memory cost: per-queue reorder scratch of capacity * sizeof(event_t)
+	  (4KB for the default CONFIG_EVENT_QUEUE_SIZE=64, allocated in
+	  event_queue_init). Selecting EVENT_QUEUE_OVERFLOW_DROP_LOWEST as well
+	  adds a second buffer of the same size. Plus a dispatcher-side batch
+	  buffer of CONFIG_EVENT_QUEUE_SIZE * sizeof(event_t).
 
 config EVENT_PRIORITY_AGING_STEP_MS
 	int "Aging step for priority dispatch (ms)"

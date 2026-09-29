@@ -2,8 +2,8 @@
  * @file test_event_priority.c
  * @brief 优先级有序分发测试（须 CONFIG_EVENT_PRIORITY_DISPATCH=y）
  * @author zeh (china_qzh@163.com)
- * @version 1.0
- * @date 2026-09-27
+ * @version 1.1
+ * @date 2026-09-29
  *
  * 覆盖：批出队排序、同级 FIFO、remaining 回灌、aging 提档与饿死界、
  * aging 未生效窗口负控、与 DROP_LOWEST 共用 scratch、pause/resume、
@@ -13,6 +13,12 @@
  *
  * @note AGING_STEP 依赖 prj_event_ext.conf 固定的 100ms：
  *       提档窗口（10x100=1000ms）与负控窗口（50ms < 100ms）按此值推导。
+ *
+ * @par 修改日志:
+ *
+ * Date Version Author Description
+ * 2026-09-27 1.0 zeh 初始版本
+ * 2026-09-29 1.1 zeh 覆盖 process_all 排空回调新发布事件，以及分发线程重入
  */
 
 #include <zephyr/kernel.h>
@@ -32,29 +38,29 @@ LOG_MODULE_REGISTER(test_event_priority);
  * ============================================================================= */
 
 /* 事件类型（与其他套件错开；CONFIG_EVENT_MAX_TYPES=256） */
-#define PRIO_TYPE_CRIT   230U
-#define PRIO_TYPE_NORMAL 231U
-#define PRIO_TYPE_LOW    232U
+#define PRIO_TYPE_CRIT            230U
+#define PRIO_TYPE_NORMAL          231U
+#define PRIO_TYPE_LOW             232U
 
 /* 饿死界 = 最大优先级差(10-0) x AGING_STEP + 宽容窗口（qemu 100Hz tick 抖动） */
-#define PRIO_STARVE_BOUND_MS (10U * CONFIG_EVENT_PRIORITY_AGING_STEP_MS + 500U)
+#define PRIO_STARVE_BOUND_MS      (10U * CONFIG_EVENT_PRIORITY_AGING_STEP_MS + 500U)
 
 /* LOW(10) 有效优先级归 0 并与新到 CRITICAL 平局所需等待（>= 10 x AGING_STEP） */
-#define PRIO_AGING_FULL_MS (10U * CONFIG_EVENT_PRIORITY_AGING_STEP_MS + 50U)
+#define PRIO_AGING_FULL_MS        (10U * CONFIG_EVENT_PRIORITY_AGING_STEP_MS + 50U)
 
 /* 负控窗口：小于一个 AGING_STEP，等效于「aging 关闭」（如 AGING_STEP=60000） */
-#define PRIO_FRESH_WINDOW_MS 50U
+#define PRIO_FRESH_WINDOW_MS      50U
 
 /* 并发守恒测试的发布数量 */
-#define PRIO_CONSERVE_THREAD_N 20
-#define PRIO_CONSERVE_ISR_N    10U
+#define PRIO_CONSERVE_THREAD_N    20
+#define PRIO_CONSERVE_ISR_N       10U
 
 /* ISR 与优先级批出队并发回归：每批释放 32 个容量，ISR 应不因重排窗口被拒。 */
 #define PRIO_ISR_REORDER_CAPACITY 128U
 #define PRIO_ISR_REORDER_BATCHES  500U
-#define PRIO_ISR_REORDER_OUT       32U
+#define PRIO_ISR_REORDER_OUT      32U
 
-#define PRIO_RECORD_MAX 512U
+#define PRIO_RECORD_MAX           512U
 
 static atomic_t g_rec_count;
 static uint8_t  g_rec_priority[PRIO_RECORD_MAX];
@@ -70,6 +76,7 @@ static event_t        g_isr_reorder_event;
 static atomic_t       g_isr_reorder_attempts;
 static atomic_t       g_isr_reorder_successes;
 static atomic_t       g_isr_reorder_failures;
+static atomic_t       g_prio_extra_published;
 
 /** @brief ISR 回调：直接向正在批排序的本地队列入队，记录真实返回值。 */
 static void isr_reorder_timer_fn(struct k_timer* timer) {
@@ -97,6 +104,35 @@ static void prio_record_cb(const event_t* event, void* user_data) {
         g_rec_type[idx] = event->type;
     }
     atomic_inc(&g_rec_count);
+}
+
+/** @brief 第一次回调再发布一条同类型事件，用来验证 process_all 会继续取批 */
+static void prio_publish_extra_cb(const event_t* event, void* user_data) {
+    prio_record_cb(event, user_data);
+    if (atomic_cas(&g_prio_extra_published, 0, 1)) {
+        event_t extra = {0};
+
+        extra.type = event->type;
+        extra.priority = EVENT_PRIORITY_LOW;
+        extra.timestamp = k_uptime_get_32();
+        (void) event_publish(&extra);
+    }
+}
+
+/** @brief 分发线程上再次进入 process_all，验证不会踩外层批缓冲 */
+static void prio_reenter_process_all_cb(const event_t* event, void* user_data) {
+    prio_record_cb(event, user_data);
+    if (!atomic_cas(&g_prio_extra_published, 0, 1)) {
+        return;
+    }
+
+    event_t extra = {0};
+
+    extra.type = (uint8_t) PRIO_TYPE_NORMAL;
+    extra.priority = EVENT_PRIORITY_NORMAL;
+    extra.timestamp = k_uptime_get_32();
+    (void) event_publish(&extra);
+    (void) event_dispatcher_process_all(0);
 }
 
 /** @brief 统一复位：重启事件系统 + 分发器（仅 init，不 start；提档计数清零） */
@@ -683,6 +719,58 @@ ZTEST(test_event_priority, test_priority_isr_publish_conservation) {
     published = (uint32_t) (atomic_get(&g_conserve_thread_ok) + atomic_get(&g_conserve_isr_ok));
     zassert_true(ztest_wait_until(pred_delivered_caught_up, NULL, 2000), "投递数应追上成功发布数");
     zassert_equal((uint32_t) atomic_get(&g_conserve_delivered), published, "成功发布总数应等于投递总数（守恒）");
+
+    zassert_equal(event_dispatcher_stop(), EVENT_OK, NULL);
+    zassert_equal(event_system_shutdown(), EVENT_OK, NULL);
+}
+
+/**
+ * @brief 回调里新发布的事件应在同一次 process_all 内被排空
+ */
+ZTEST(test_event_priority, test_priority_process_all_drains_callback_publish) {
+    uint32_t sub = 0U;
+
+    prio_test_reset();
+    atomic_set(&g_prio_extra_published, 0);
+    zassert_equal(event_register_type((event_type_t) PRIO_TYPE_LOW, "prio_extra"), EVENT_OK, NULL);
+    zassert_equal(event_subscribe((event_type_t) PRIO_TYPE_LOW, prio_publish_extra_cb, NULL, &sub), EVENT_OK, NULL);
+    zassert_equal(event_system_start(), EVENT_OK, NULL);
+
+    prio_publish((uint8_t) PRIO_TYPE_LOW, EVENT_PRIORITY_LOW);
+    zassert_equal(event_dispatcher_process_all(0), 2U, "回调新发布的事件应计入同一次 process_all");
+    zassert_equal(atomic_get(&g_rec_count), 2, NULL);
+    zassert_equal(event_dispatcher_process_all(0), 0U, "队列应已空");
+
+    zassert_equal(event_system_shutdown(), EVENT_OK, NULL);
+}
+
+/** @brief 谓词：记录回调至少发生两次 */
+static bool pred_rec_at_least_two(void* unused) {
+    ARG_UNUSED(unused);
+    return atomic_get(&g_rec_count) >= 2;
+}
+
+/**
+ * @brief 分发线程回调里再次 process_all：两条事件都投递，且不破坏外层批缓冲
+ */
+ZTEST(test_event_priority, test_priority_process_all_reenter_from_dispatcher) {
+    uint32_t sub_low = 0U;
+    uint32_t sub_norm = 0U;
+
+    prio_test_reset();
+    atomic_set(&g_prio_extra_published, 0);
+    zassert_equal(event_register_type((event_type_t) PRIO_TYPE_LOW, "prio_re_low"), EVENT_OK, NULL);
+    zassert_equal(event_register_type((event_type_t) PRIO_TYPE_NORMAL, "prio_re_norm"), EVENT_OK, NULL);
+    zassert_equal(event_subscribe((event_type_t) PRIO_TYPE_LOW, prio_reenter_process_all_cb, NULL, &sub_low), EVENT_OK,
+                  NULL);
+    zassert_equal(event_subscribe((event_type_t) PRIO_TYPE_NORMAL, prio_reenter_process_all_cb, NULL, &sub_norm),
+                  EVENT_OK, NULL);
+    zassert_equal(event_system_start(), EVENT_OK, NULL);
+    zassert_equal(event_dispatcher_start(), EVENT_OK, NULL);
+
+    prio_publish((uint8_t) PRIO_TYPE_LOW, EVENT_PRIORITY_LOW);
+    zassert_true(ztest_wait_until(pred_rec_at_least_two, NULL, 2000), "重入 process_all 后两条事件都应投递");
+    zassert_equal(event_queue_depth(event_system_get_queue()), 0U, "重入路径应把回调发布的事件取走");
 
     zassert_equal(event_dispatcher_stop(), EVENT_OK, NULL);
     zassert_equal(event_system_shutdown(), EVENT_OK, NULL);

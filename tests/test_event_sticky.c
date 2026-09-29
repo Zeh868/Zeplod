@@ -2,11 +2,17 @@
  * @file test_event_sticky.c
  * @brief Sticky 事件锁存与订阅重放（CONFIG_EVENT_STICKY）单元测试
  * @author zeh (china_qzh@163.com)
- * @version 1.0
- * @date 2026-09-27
+ * @version 1.1
+ * @date 2026-09-29
  *
  * 仅当 CONFIG_EVENT_STICKY=y 时由 tests/CMakeLists.txt 编入；
  * 运行需叠加 tests/prj_event_ext.conf（CONF_FILE 三段叠加）。
+ *
+ * @par 修改日志:
+ *
+ * Date Version Author Description
+ * 2026-09-27 1.0 zeh 初始版本
+ * 2026-09-29 1.1 zeh 覆盖类型 255 占槽，以及 pending DISABLE 期间再次 enable
  */
 
 #include <zephyr/kernel.h>
@@ -20,28 +26,28 @@
 LOG_MODULE_REGISTER(test_event_sticky);
 
 /* 本套件专用事件类型（各用例先 shutdown 再注册，避免与其他套件残留注册冲突） */
-#define STICKY_TYPE_A 233U
-#define STICKY_TYPE_B 234U
-#define STICKY_TYPE_C 235U
-#define STICKY_TYPE_D 236U
-#define STICKY_TYPE_E 237U
-#define STICKY_TYPE_F 238U
+#define STICKY_TYPE_A              233U
+#define STICKY_TYPE_B              234U
+#define STICKY_TYPE_C              235U
+#define STICKY_TYPE_D              236U
+#define STICKY_TYPE_E              237U
+#define STICKY_TYPE_F              238U
 
 /** 重放跟踪槽容量外加一个线程，用于验证归还行为。 */
 #define STICKY_REPLAY_THREAD_COUNT 9U
 #define STICKY_TOGGLE_ITERATIONS   100U
 
 /** 大负载用例长度：超过内联容量（48B）且低于 4KB 锁存上界 */
-#define STICKY_LARGE_LEN 200U
+#define STICKY_LARGE_LEN           200U
 
 /** too-large 用例长度：4.1KB 超过 4096B 锁存上界（发布本身仍合法） */
-#define STICKY_TOO_LARGE_LEN 4200U
+#define STICKY_TOO_LARGE_LEN       4200U
 
 /** ISR 发布后等待定时器触发的余量（毫秒） */
-#define STICKY_ISR_WAIT_MS 50U
+#define STICKY_ISR_WAIT_MS         50U
 
 /** 回调负载快照缓冲（须覆盖 STICKY_LARGE_LEN 用例） */
-#define STICKY_SINK_BUF_LEN 256U
+#define STICKY_SINK_BUF_LEN        256U
 
 /** 泄漏断言基线快照（未开 CONFIG_EVENT_DEBUG_MEM 时恒 0，断言退化为不校验） */
 #if defined(CONFIG_EVENT_DEBUG_MEM) && (CONFIG_EVENT_DEBUG_MEM == 1)
@@ -81,7 +87,9 @@ static struct k_thread g_sticky_disable_thread;
 static K_THREAD_STACK_DEFINE(g_sticky_enable_stack, 1024);
 static K_THREAD_STACK_DEFINE(g_sticky_disable_stack, 1024);
 static struct k_sem g_sticky_toggle_start;
-static atomic_t g_sticky_toggle_enable_error;
+static atomic_t     g_sticky_toggle_enable_error;
+static atomic_t     g_sticky_reenable_disable_ret;
+static atomic_t     g_sticky_reenable_enable_ret;
 
 /* =============================================================================
  * 测试辅助
@@ -258,6 +266,16 @@ static void sticky_replay_disable_cb(const event_t* event, void* user_data) {
     atomic_set(&g_replay_api_ret, (atomic_val_t) event_sticky_disable(event->type));
 }
 
+/** @brief 仅重放那一次：disable 后立刻 enable，验证满池时复用原槽而不是 NOT_FOUND */
+static void sticky_replay_reenable_cb(const event_t* event, void* user_data) {
+    ARG_UNUSED(user_data);
+    if (!atomic_cas(&g_replay_arm, 1, 0)) {
+        return;
+    }
+    atomic_set(&g_sticky_reenable_disable_ret, (atomic_val_t) event_sticky_disable(event->type));
+    atomic_set(&g_sticky_reenable_enable_ret, (atomic_val_t) event_sticky_enable(event->type));
+}
+
 /* =============================================================================
  * 锁存与重放语义
  * ============================================================================= */
@@ -271,8 +289,7 @@ static void sticky_replay_disable_cb(const event_t* event, void* user_data) {
 ZTEST(a_event_sticky_cold, test_sticky_cold_init_nonzero_type_can_enable) {
     zassert_equal(event_system_init(), EVENT_OK, NULL);
     zassert_equal(event_register_type(STICKY_TYPE_F, "stk_cold"), EVENT_OK, NULL);
-    zassert_equal(event_sticky_enable(STICKY_TYPE_F), EVENT_OK,
-                  "首次 init 必须将 BSS 槽复位为空闲标记");
+    zassert_equal(event_sticky_enable(STICKY_TYPE_F), EVENT_OK, "首次 init 必须将 BSS 槽复位为空闲标记");
     zassert_equal(event_sticky_disable(STICKY_TYPE_F), EVENT_OK, NULL);
 }
 
@@ -746,10 +763,10 @@ ZTEST(test_event_sticky, test_sticky_disable_inside_replay_pending_release) {
 ZTEST(test_event_sticky, test_sticky_too_large_latch_miss_keeps_old_edge) {
     /* static：4.1KB 超出 ZTEST 线程栈（3072B），不得放栈上 */
     static uint8_t big[STICKY_TOO_LARGE_LEN];
-    uint32_t sub_id = 0U;
-    uint32_t latched = 0U;
-    uint32_t miss_before = 0U;
-    uint32_t miss_after = 0U;
+    uint32_t       sub_id = 0U;
+    uint32_t       latched = 0U;
+    uint32_t       miss_before = 0U;
+    uint32_t       miss_after = 0U;
 
     sticky_test_reset();
     sticky_sink_reset();
@@ -792,12 +809,12 @@ ZTEST(test_event_sticky, test_sticky_enable_disable_concurrent_mapping_consisten
     k_sem_init(&g_sticky_toggle_start, 0, 2);
     atomic_set(&g_sticky_toggle_enable_error, 0);
 
-    enable_tid = k_thread_create(&g_sticky_enable_thread, g_sticky_enable_stack,
-                                 K_THREAD_STACK_SIZEOF(g_sticky_enable_stack), sticky_enable_worker, NULL, NULL,
-                                 NULL, 5, 0, K_NO_WAIT);
-    disable_tid = k_thread_create(&g_sticky_disable_thread, g_sticky_disable_stack,
-                                  K_THREAD_STACK_SIZEOF(g_sticky_disable_stack), sticky_disable_worker, NULL, NULL,
-                                  NULL, 5, 0, K_NO_WAIT);
+    enable_tid =
+        k_thread_create(&g_sticky_enable_thread, g_sticky_enable_stack, K_THREAD_STACK_SIZEOF(g_sticky_enable_stack),
+                        sticky_enable_worker, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+    disable_tid =
+        k_thread_create(&g_sticky_disable_thread, g_sticky_disable_stack, K_THREAD_STACK_SIZEOF(g_sticky_disable_stack),
+                        sticky_disable_worker, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
     zassert_not_null(enable_tid, NULL);
     zassert_not_null(disable_tid, NULL);
     k_sem_give(&g_sticky_toggle_start);
@@ -839,11 +856,83 @@ ZTEST(test_event_sticky, test_sticky_replay_track_released_after_thread_exit) {
         zassert_equal(k_thread_join(tid, K_SECONDS(2)), 0, "replay worker %u timeout", i);
     }
     zassert_equal(atomic_get(&g_sticky_replay_worker_error), 0, NULL);
-    zassert_equal(atomic_get(&g_sticky_replay_callbacks), STICKY_REPLAY_THREAD_COUNT,
-                  "每个线程只能得到一次外层重放");
-    zassert_equal(atomic_get(&g_sticky_replay_recursive_callbacks), 0,
-                  "跟踪槽归还后递归重放防御必须仍然生效");
+    zassert_equal(atomic_get(&g_sticky_replay_callbacks), STICKY_REPLAY_THREAD_COUNT, "每个线程只能得到一次外层重放");
+    zassert_equal(atomic_get(&g_sticky_replay_recursive_callbacks), 0, "跟踪槽归还后递归重放防御必须仍然生效");
     zassert_equal(event_sticky_disable(STICKY_TYPE_A), EVENT_OK, NULL);
+}
+
+/**
+ * @brief 类型 255 不得与空闲哨兵别名：它占用真实槽，统计可见，且不会被后续 enable 偷走
+ */
+ZTEST(test_event_sticky, test_sticky_type_255_occupies_real_slot) {
+    uint32_t latched = 0U;
+    uint32_t miss = 0U;
+    uint32_t sub_id = 0U;
+
+    sticky_test_reset();
+    sticky_sink_reset();
+    zassert_equal(event_register_type(255, "stk_255"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_A, "stk_255_a"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_B, "stk_255_b"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_C, "stk_255_c"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_D, "stk_255_d"), EVENT_OK, NULL);
+
+    zassert_equal(event_sticky_enable(255), EVENT_OK, NULL);
+    sticky_publish_u32(255, 0x255U);
+    zassert_true(event_sticky_is_latched(255), "类型 255 发布后应锁存");
+    event_sticky_get_stats(&latched, &miss);
+    zassert_equal(latched, 1U, "类型 255 的锁存必须计入统计，不能被当成空闲槽");
+
+    zassert_equal(event_subscribe(255, sticky_capture_cb, &g_sink, &sub_id), EVENT_OK, NULL);
+    zassert_equal(g_sink.last_u32, 0x255U, "类型 255 的锁存沿应能重放");
+
+    zassert_equal(event_sticky_enable(STICKY_TYPE_A), EVENT_OK, NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_B), EVENT_OK, NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_C), EVENT_OK, NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_D), EVENT_ERR_NOT_FOUND, "255 已占一槽，第 5 个类型应失败");
+    zassert_true(event_sticky_is_latched(255), "后续 enable 不得偷走类型 255 的槽");
+
+    zassert_equal(event_sticky_disable(255), EVENT_OK, NULL);
+    zassert_false(event_sticky_is_latched(255), NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_D), EVENT_OK, "释放 255 的槽后应可复用");
+    sticky_drain(1U);
+}
+
+/**
+ * @brief 槽池已满时，重放回调里 disable 后立刻 enable 必须复用原槽
+ */
+ZTEST(test_event_sticky, test_sticky_reenable_during_pending_disable_reclaims_slot) {
+    uint32_t sub_id = 0U;
+
+    sticky_test_reset();
+    sticky_sink_reset();
+    zassert_equal(event_register_type(STICKY_TYPE_A, "stk_re_a"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_B, "stk_re_b"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_C, "stk_re_c"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_D, "stk_re_d"), EVENT_OK, NULL);
+    zassert_equal(event_register_type(STICKY_TYPE_E, "stk_re_e"), EVENT_OK, NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_A), EVENT_OK, NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_B), EVENT_OK, NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_C), EVENT_OK, NULL);
+    zassert_equal(event_sticky_enable(STICKY_TYPE_D), EVENT_OK, NULL);
+
+    sticky_publish_u32(STICKY_TYPE_A, 0xA1U);
+    atomic_set(&g_replay_arm, 1);
+    atomic_set(&g_sticky_reenable_disable_ret, -1);
+    atomic_set(&g_sticky_reenable_enable_ret, -1);
+    zassert_equal(event_subscribe(STICKY_TYPE_A, sticky_replay_reenable_cb, NULL, &sub_id), EVENT_OK, NULL);
+    zassert_equal((event_status_t) atomic_get(&g_sticky_reenable_disable_ret), EVENT_OK, NULL);
+    zassert_equal((event_status_t) atomic_get(&g_sticky_reenable_enable_ret), EVENT_OK,
+                  "满池且 disable 尚未收尾时，再次 enable 应复用原槽");
+    zassert_equal(event_sticky_enable(STICKY_TYPE_E), EVENT_ERR_NOT_FOUND, "复用原槽后池子仍应是满的");
+
+    sticky_publish_u32(STICKY_TYPE_A, 0xA2U);
+    zassert_true(event_sticky_is_latched(STICKY_TYPE_A), "复用后的槽应能重新锁存");
+    zassert_equal(event_sticky_disable(STICKY_TYPE_B), EVENT_OK, NULL);
+    zassert_equal(event_sticky_disable(STICKY_TYPE_C), EVENT_OK, NULL);
+    zassert_equal(event_sticky_disable(STICKY_TYPE_D), EVENT_OK, NULL);
+    zassert_equal(event_sticky_disable(STICKY_TYPE_A), EVENT_OK, NULL);
+    sticky_drain(2U);
 }
 
 ZTEST_SUITE(a_event_sticky_cold, NULL, NULL, NULL, NULL, NULL);

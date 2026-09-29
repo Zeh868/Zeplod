@@ -12,18 +12,20 @@
  * - 支持 ISR 上下文发布事件
  * - 动态事件数据分配
  * @author zeh (china_qzh@163.com)
- * @version 1.4
- * @date 2026-04-01
+ * @version 1.5
+ * @date 2026-09-29
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-05-09       1.0            zeh            修正文档与注释
- * 2026-09-18       1.1            zeh            event_subscribe @note 登记槽满错误码延期引入 EVENT_ERR_NO_RESOURCE 的计划
- * 2026-09-27       1.2            zeh            新增订阅级过滤 API（subscribe_filtered/set_filter/get_skip_count，CONFIG_EVENT_SUBSCRIBER_FILTER）
- * 2026-09-27       1.3            zeh            新增 sticky 事件 API（enable/clear/disable/is_latched/get_stats，CONFIG_EVENT_STICKY）
- * 2026-09-27       1.4            zeh            sticky enable/clear/disable 补 NOT_RUNNING 返回语义（gate 关闭与 timer 口径统一，m-7）
+ * 2026-09-18       1.1            zeh            event_subscribe @note 登记槽满错误码延期引入 EVENT_ERR_NO_RESOURCE
+ * 的计划 2026-09-27       1.2            zeh            新增订阅级过滤
+ * API（subscribe_filtered/set_filter/get_skip_count，CONFIG_EVENT_SUBSCRIBER_FILTER） 2026-09-27       1.3 zeh 新增
+ * sticky 事件 API（enable/clear/disable/is_latched/get_stats，CONFIG_EVENT_STICKY） 2026-09-27       1.4            zeh
+ * sticky enable/clear/disable 补 NOT_RUNNING 返回语义（gate 关闭与 timer 口径统一，m-7） 2026-09-29       1.5 zeh
+ * sticky 空闲槽不再占用类型 255；pending DISABLE 期间再次 enable 复用原槽
  *
  */
 
@@ -272,8 +274,8 @@ BUILD_ASSERT(sizeof(subscriber_entry_t) == 16U, "subscriber_entry_t grew: filter
  * 每个已注册的事件类型对应一个此结构，包含该类型的所有订阅者信息。
  */
 typedef struct {
-    event_type_t       type;                                      /**< 事件类型 ID */
-    uint8_t            sticky_slot;                               /**< sticky 槽下标；EVENT_STICKY_IDX_NONE(0xFF)=未启用（CONFIG_EVENT_STICKY） */
+    event_type_t       type;        /**< 事件类型 ID */
+    uint8_t            sticky_slot; /**< sticky 槽下标；EVENT_STICKY_IDX_NONE(0xFF)=未启用（CONFIG_EVENT_STICKY） */
     char               name_storage[CONFIG_EVENT_TYPE_NAME_MAX];  /**< 类型名存储（register 时拷贝） */
     const char*        name;                                      /**< 指向 name_storage，未注册时为 NULL */
     atomic_t           registered;                                /**< 1=已注册（ISR/线程可无锁读取） */
@@ -520,8 +522,8 @@ event_status_t event_subscribe_filtered(event_type_t type, event_callback_t call
  * @note 可在分发器运行中调用；并发分发线程会在其快照中看到替换前或替换后的
  *       完整 (filter, filter_user_data) 配对，不会看到撕裂组合
  */
-event_status_t event_set_subscriber_filter(uint32_t subscriber_id, event_type_t type,
-                                           event_subscriber_filter_t filter, void* filter_user_data);
+event_status_t event_set_subscriber_filter(uint32_t subscriber_id, event_type_t type, event_subscriber_filter_t filter,
+                                           void* filter_user_data);
 
 /**
  * @brief 获取被订阅级过滤器跳过的分发次数（自上次统计复位起累计）

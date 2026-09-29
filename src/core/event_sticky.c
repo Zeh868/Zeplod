@@ -26,14 +26,16 @@
  *   回调返回后才释放旧负载指针，保证回调读到的 payload 恒有效。
  * - 每线程重放深度计数防御回调内重入订阅导致的递归重放。
  * @author zeh (china_qzh@163.com)
- * @version 1.1
- * @date 2026-09-27
+ * @version 1.2
+ * @date 2026-09-29
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-09-27       1.0            zeh            初始版本（B2：sticky 锁存/重放/统计/生命周期收尾）
- * 2026-09-27       1.1            zeh            锁存改两段式：入队前拷贝副本修 use-after-free（C-1）；gate 关闭返回 NOT_RUNNING
+ * 2026-09-27       1.1            zeh            锁存改两段式：入队前拷贝副本修 use-after-free（C-1）；gate 关闭返回
+ * NOT_RUNNING 2026-09-29       1.2            zeh            空闲槽标记避开类型 255；pending DISABLE 期间再次 enable
+ * 复用原槽
  *
  */
 
@@ -45,15 +47,15 @@
 LOG_MODULE_DECLARE(event_system, CONFIG_SYS_LOG_LEVEL);
 
 /** 锁存负载长度上界（字节）：与最大数据 slab 块（4KB）对齐，超出拒锁存计 miss */
-#define EVENT_STICKY_PAYLOAD_MAX 4096U
+#define EVENT_STICKY_PAYLOAD_MAX   4096U
 
-/** 槽空闲标记（事件类型 ID 0-255 均合法，故以 0xFF 表示空闲） */
-#define EVENT_STICKY_OWNER_NONE 0xFFU
+/** 槽空闲标记。事件类型 ID 0-255 均合法，不能再用 0xFF 充当空闲哨兵 */
+#define EVENT_STICKY_OWNER_NONE    0xFFFFU
 
 /** 重放深度跟踪表容量：并发处于重放回调中的线程数上界，表满时防御退化为放行 */
 #define EVENT_STICKY_REPLAY_TRACKS 8
 
-/** 重放排空后的收尾动作（仅 sticky 锁内读写；DISABLE 优先级高于 CLEAR，不降级） */
+/** 重放排空后的收尾动作（仅 sticky 锁内读写；clear 不得把 DISABLE 降级为 CLEAR） */
 typedef enum {
     EVENT_STICKY_PENDING_NONE = 0, /**< 无待收尾动作 */
     EVENT_STICKY_PENDING_CLEAR,    /**< 重放排空后仅清锁存沿，保留槽与能力 */
@@ -72,7 +74,7 @@ typedef struct {
     event_t          shell;          /**< 锁存沿元数据壳（超内联负载时 data.ptr 以 payload 为准） */
     void*            payload;        /**< 超内联负载私有副本；NULL=内联于 shell 或空负载 */
     uint32_t         len;            /**< 锁存负载长度（字节） */
-    uint8_t          owner_type;     /**< 持有本槽的事件类型；EVENT_STICKY_OWNER_NONE=槽空闲 */
+    uint16_t         owner_type;     /**< 持有本槽的事件类型；EVENT_STICKY_OWNER_NONE=槽空闲 */
     bool             latched;        /**< true=当前持有有效锁存沿（is_latched 无锁读） */
     uint32_t         replay_readers; /**< 正以本槽快照执行回调的重放者数 */
     sticky_pending_t pending;        /**< 重放排空后的收尾动作 */
@@ -442,8 +444,7 @@ void event_sticky_discard(event_sticky_staged_t* staged) {
 }
 
 /** @brief 拍快照、锁外回调、收尾 pending 的重放主体（深度防御由调用方负责） */
-static void sticky_replay_do(event_type_entry_t* entry, event_type_t type, event_callback_t callback,
-                             void* user_data) {
+static void sticky_replay_do(event_type_entry_t* entry, event_type_t type, event_callback_t callback, void* user_data) {
     event_t snap;
 
     sticky_lock_acquire();
@@ -552,7 +553,10 @@ event_status_t event_sticky_enable(event_type_t type) {
 
         if (slot->owner_type == type) {
             if (slot->pending == EVENT_STICKY_PENDING_DISABLE) {
-                continue; /* disable 推迟收尾中：该槽即将归还，视同不可用 */
+                /* 重放尚未结束：撤销归还。disable 已作废锁存沿，排空后只释放负载、保留槽位。
+                 * 此处降级 pending 是 enable 重新占槽，不是 clear 抢在 disable 之前。 */
+                slot->pending = EVENT_STICKY_PENDING_CLEAR;
+                slot->latched = false;
             }
             claimed = (int32_t) i;
             break;

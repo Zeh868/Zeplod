@@ -2,16 +2,18 @@
  * @file event_system_lifecycle.c
  * @brief 事件系统生命周期（init/start/stop/shutdown）
  * @author zeh (china_qzh@163.com)
- * @version 1.3
- * @date 2026-05-28
+ * @version 1.4
+ * @date 2026-09-29
  *
  * @par 修改日志:
  *
  *    Date         Version        Author          Description
  * 2026-05-28       1.0            zeh            初始版本
- * 2026-09-18       1.1            zeh            拆分 init/stop/shutdown 超长函数（门控/资源准备/停止流程提取为辅助函数）
- * 2026-09-27       1.2            zeh            init 复位 sticky 索引、shutdown 清理 sticky 槽与锁存负载（stop 不动锁存）
- * 2026-09-27       1.3            zeh            shutdown 在队列销毁前取消全部定时器池槽并释放负载（B3）
+ * 2026-09-18       1.1            zeh            拆分 init/stop/shutdown
+ * 超长函数（门控/资源准备/停止流程提取为辅助函数） 2026-09-27       1.2            zeh            init 复位 sticky
+ * 索引、shutdown 清理 sticky 槽与锁存负载（stop 不动锁存） 2026-09-27       1.3            zeh            shutdown
+ * 在队列销毁前取消全部定时器池槽并释放负载（B3） 2026-09-29       1.4            zeh            init
+ * 时一次性初始化定时器池，避免领槽路径 k_timer_init
  */
 
 #include <zephyr/logging/log.h>
@@ -175,6 +177,10 @@ static event_status_t event_system_init_resources(void) {
 #if defined(CONFIG_EVENT_STICKY)
     /* BSS 冷启动时 owner_type 为 0，必须显式复位为空闲标记。 */
     event_sticky_init_all();
+#endif
+#if defined(CONFIG_EVENT_TIMER_POOL)
+    /* k_timer 只接线一次；须在任何提交之前完成 */
+    event_timer_pool_init();
 #endif
 
     g_event_system.event_queue = &g_event_msgq;
