@@ -178,7 +178,7 @@ zeplod/
 │   ├── targets/                      # qemu
 │   └── examples/                     # gpio_uart、module_ipc
 ├── app.overlay                       # 通用设备树覆盖
-├── west.yml                          # West 清单（默认 4.3.0-rc3）
+├── west.yml                          # West 清单（revision 为 v4.3.0）
 ├── zephyr_config.env                 # 本地路径（由 template 复制生成，勿提交密钥）
 ├── zephyr_config.env.template
 ├── Doxyfile                          # API 文档生成配置
@@ -227,8 +227,7 @@ zeplod/
 │   ├── 50-测试与CI/                  # 单元测试、CI 配置
 │   ├── 60-调试与排错/                # 烧录调试、故障排除、脚本说明
 │   ├── 70-发布与产品化/              # 版本管理、发布检查、OTA、安全
-│   ├── 80-贡献与维护/                # 贡献指南、代码规范
-│   └── 90-学习资源/                  # 嵌入式 AI、个人发展、项目评审
+│   └── 80-贡献与维护/                # 贡献指南、AI 协作、代码规范
 └── src/
     ├── core/                         # 事件系统核心
     │   ├── event_system.{c,h}        # 发布-订阅、类型管理
@@ -285,7 +284,7 @@ zeplod/
 
 | 步骤 | 内容 |
 |------|------|
-| 1 | **west.yml**：将 `revision` 与团队 Zephyr 版本对齐（默认 **4.3.0-rc3**，与 CI 一致）；私有镜像可改 `url`。 |
+| 1 | **west.yml**：将 `revision` 与团队 Zephyr 版本对齐（当前 **v4.3.0**，与 CI 一致）；共享仓库须使用团队可访问的 URL。 |
 | 2 | **zephyr_config.env**：由 `zephyr_config.env.template` 复制并填写路径；**勿提交**（已在 `.gitignore` 中忽略）。 |
 | 3 | **CMake**：根目录 `CMakeLists.txt` 中 `project(...)` 名称改为你的产品工程名。 |
 | 4 | **版本与说明**：按需修改 `APP_VERSION`、README 标题与产品描述。 |
@@ -303,7 +302,7 @@ zeplod/
 - Python 3.8+
 - West（Zephyr 构建工具）
 
-CI（`.github/workflows/ci.yml`）当前使用 Zephyr **4.3.0-rc3** 构建镜像；本地建议使用相同或兼容的 Zephyr 版本，以减少配置差异。
+CI（`.github/workflows/ci.yml`）当前使用 Zephyr **4.3.0** 构建镜像；本地建议使用相同或兼容的 Zephyr 版本，以减少配置差异。
 
 ### 项目类型：独立应用程序 (Freestanding Application)
 
@@ -371,7 +370,7 @@ export ZEPHYR_SDK_INSTALL_DIR=/path/to/zephyr-sdk
 # 构建目标开发板
 west build -b <your_board> .
 
-# 构建 native_sim（用于主机测试）
+# Linux/WSL2：构建 native_sim（用于主机测试）
 west build -b native_sim .
 
 # 使用特定配置文件（可合并多个）
@@ -431,10 +430,10 @@ west build -b vendor/board_name .
 ### 事件系统
 
 核心事件系统提供：
-- **事件类型**：256 个唯一事件类型（0-255）
+- **事件类型**：默认 128 个（ID 0-127，可配置到 256）
 - **事件优先级**：低、普通、高、关键（数值越小优先级越高）
 - **订阅者**：每个事件类型最多 16 个订阅者
-- **队列**：可配置的事件队列（默认 32 个事件）
+- **队列**：可配置的事件队列（默认 64 个事件）
 - **Slab 内存池**：优先级分层（CRITICAL/HIGH/NORMAL）和大数据块（256B/1KB/4KB）
 - **实时安全 API**：`_rt` 后缀 API 完全从 Slab 池分配，O(1) 确定时间
 
@@ -701,15 +700,16 @@ if (leaks > 0) {
 使用 `tests/` 下的 ztest，与主应用共享 `src/` 实现（不链接 `app_main`、示例业务模块）；默认 **开启** `CONFIG_THREAD_IPC_SERVICE` 并编入 `ipc_service` 做烟测，堆大小已加大（见 `tests/prj.conf`）。
 
 ```bash
-# native_sim 平台
+# Linux/WSL2：native_sim 平台
 west build -b native_sim tests/ --build-dir build_tests
 west build -t run --build-dir build_tests
 
-# native_sim 平台
+# Linux/WSL2：native_sim 全量配置
 west build -b native_sim tests/ --build-dir build_tests_sim
 west build -t run --build-dir build_tests_sim
 ```
 
+macOS 不支持 `native_sim`，请使用 [QEMU 仿真运行指南](docs/zh-CN/10-环境与构建/14-QEMU仿真运行指南.md)。
 需设置 `ZEPHYR_BASE` 或提供根目录 `zephyr_config.env`。详见 tests/README.md。
 
 ## 许可证

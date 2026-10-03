@@ -1665,22 +1665,22 @@ static int register_all_modules(void)
 
 ### References
 
-- [Detailed Module System Usage Guide](../30-核心模块/32-模块系统详细使用说明.md)
-- [Detailed Event System Usage Guide](../30-核心模块/31-事件系统详细使用说明.md)
-- [Developer Getting Started Guide](../00-入门/04-开发者入门指南.md)
+- [Detailed Module System Usage Guide](../30-core-modules/32-module-system-guide.md)
+- [Detailed Event System Usage Guide](../30-core-modules/31-event-system-guide.md)
+- [Developer Getting Started Guide](../00-getting-started/04-developer-guide.md)
 - [Zephyr RTOS Official Documentation](https://docs.zephyrproject.org/)
 
 ### Glossary
 
 | Term | English | Definition |
 |------|---------|------------|
-| 模块 | Module | Software unit with clearly defined interfaces |
-| 接口 | Interface | Service contract provided by module to outside |
-| 依赖 | Dependency | Relationship between modules, A depends on B means A needs B |
-| 耦合 | Coupling | Degree of association between modules |
-| 内聚 | Cohesion | Degree of association between elements within a module |
-| 封装 | Encapsulation | Hide implementation details |
-| 抽象 | Abstraction | Ignore details, focus on essence |
+| Module | Module | Software unit with clearly defined interfaces |
+| Interface | Interface | Service contract provided by module to outside |
+| Dependency | Dependency | Relationship between modules, A depends on B means A needs B |
+| Coupling | Coupling | Degree of association between modules |
+| Cohesion | Cohesion | Degree of association between elements within a module |
+| Encapsulation | Encapsulation | Hide implementation details |
+| Abstraction | Abstraction | Ignore details, focus on essence |
 
 ---
 

@@ -1,10 +1,10 @@
 > Language: [中文](../../zh-CN/70-发布与产品化/72-Zephyr版本与CI说明.md) | **English**
 
-# Zephyr Version and CI说明
+# Zephyr Version and CI Guide
 
 To reduce discrepancies between "works locally, fails in CI" or vice versa, it is recommended to align your **local environment** and **continuous integration** to the same mainline.
 
-**Related Documents**: [Documentation Index.md](../00-getting-started/02-documentation-index.md) · [Version Management.md](71-version-management.md) (`APP_VERSION` and firmware display).
+**Related Documents**: [Documentation Index.md](../00-getting-started/02-doc-index.md) · [Version Management.md](71-version-management.md) (`APP_VERSION` and firmware display).
 
 ## Zephyr Version Used in CI
 
@@ -23,7 +23,7 @@ Before merging or releasing, if upgrading Zephyr version in CI, also sync:
 4. If using GitLab, sync **`ZEPHYR_VERSION`** in **`.gitlab-ci.yml`** (consistent with GitHub).
 5. Any hardcoded version numbers in this repository's `README.md` regarding prerequisites/CI (if applicable).
 
-**Steps to enable/maintain CI on hosted platforms** (including troubleshooting failures): **[CI Platform Configuration Guide.md](../50-testing-ci/52-ci-platform-configuration-guide.md)**.
+**Steps to enable/maintain CI on hosted platforms** (including troubleshooting failures): **[CI Platform Configuration Guide.md](../50-testing-ci/52-ci-platform-setup.md)**.
 
 ## West Workspace (Optional)
 

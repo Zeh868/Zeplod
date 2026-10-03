@@ -1,4 +1,4 @@
-> Language: [中文](../../zh-CN/50-测试与CI/54.md) | **English**
+> Language: [中文](../../zh-CN/50-测试与CI/54-看门狗测试指南.md) | **English**
 
 # Hardware Watchdog Test Guide
 

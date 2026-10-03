@@ -7,7 +7,9 @@
 
 本文说明如何在 **Windows / Linux / macOS** 上使用 Zephyr 自带的 **QEMU 板型** 编译并运行本工程，无需真实开发板。适用于快速验证启动流程、日志、模块初始化等逻辑。
 
-> **与 `native_sim` 的区别**：`native_sim` / `native_posix` 在 PC 上以 POSIX 方式仿真内核，**Windows 原生环境不支持**（见 [51-单元测试与持续集成说明.md](../50-测试与CI/51-单元测试与持续集成说明.md)）。**QEMU 仿真**则模拟真实 CPU 架构，**Windows 11 可直接运行**（需安装 QEMU）。
+> **与 `native_sim` 的区别**：`native_sim` / `native_posix` 是 Linux/WSL2 主机路径，
+> **Windows 原生和 macOS 不支持**（见 [51-单元测试与持续集成说明.md](../50-测试与CI/51-单元测试与持续集成说明.md)）。
+> **QEMU 仿真**模拟真实 CPU 架构，可用于 Windows、macOS 与 Linux（需安装 QEMU）。
 
 ---
 
@@ -253,7 +255,7 @@ SMP 板级 defconfig 通常关闭 `CONFIG_QEMU_ICOUNT`（与多核计时仿真�
 
 ## 6. 单元测试（ztest）QEMU 仿真
 
-Windows 原生环境无法运行 `native_sim` / `native_posix`，但可通过 **`ZEPHYR_TEST_BOARD`** 将 `tests/` 下的 ztest 用例编译到 QEMU 板型上运行，无需 WSL。Linux / macOS 上也可用同样方式在 QEMU 上跑测试。
+Windows 原生和 macOS 无法运行 `native_sim` / `native_posix`，但可通过 **`ZEPHYR_TEST_BOARD`** 将 `tests/` 下的 ztest 用例编译到 QEMU 板型上运行。Linux 也可用同样方式在 QEMU 上跑测试。
 
 > 测试配置、覆盖范围与编写约定见 **[51-单元测试与持续集成说明.md](../50-测试与CI/51-单元测试与持续集成说明.md)** 与 **`tests/README.md`**。
 

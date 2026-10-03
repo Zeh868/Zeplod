@@ -29,6 +29,7 @@ Task entry: [05-task-navigation.md](05-task-navigation.md) · Full index: [02-do
 | `boards/*.overlay`, `boards/overlay.dts` | [44](../40-app-development/44-devicetree-memory-config.md), [14](../10-environment-build/14-qemu-simulation-guide.md) | QEMU board overlays |
 | `prj.conf` / `conf/` fragments | [42](../40-app-development/42-config-options.md), [14](../10-environment-build/14-qemu-simulation-guide.md), [15](../10-environment-build/15-creating-new-app-guide.md) | Kconfig fragments |
 | `tests/` | [51](../50-testing-ci/51-unit-testing-ci.md), `tests/README.md` | ztest, Twister |
+| `AGENTS.md` | [83](../80-contributing/83-ai-collaboration-guide.md), [81](../80-contributing/81-contributing-code-style.md) | Mandatory agent rules and human workflow |
 
 ---
 

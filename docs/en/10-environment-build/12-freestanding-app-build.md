@@ -190,7 +190,7 @@ west build -b vendor/board_name .
 
 ### Devicetree Overlay
 
-Overlays automatically merged by Zephyr must have **`.overlay`** suffix, and are resolved by **`configuration_files.cmake`** based on directory and board name (see **[Device Tree and Memory Configuration Guide.md](../40-application-development/44-device-tree-and-memory-configuration-guide.md)** for details). Common usage:
+Overlays automatically merged by Zephyr must have **`.overlay`** suffix, and are resolved by **`configuration_files.cmake`** based on directory and board name (see **[Device Tree and Memory Configuration Guide.md](../40-app-development/44-devicetree-memory-config.md)** for details). Common usage:
 
 | File | Description |
 |------|-------------|
@@ -266,7 +266,7 @@ Follow your team's workflow.
 
 ## Troubleshooting
 
-###提示 `ZEPHYR_BASE` 未设置
+### Prompt: `ZEPHYR_BASE` Is Not Set
 
 ```text
 FATAL_ERROR: ZEPHYR_BASE not set and zephyr_config.env not found.
@@ -308,4 +308,4 @@ west build -b <board> .
 - [Freestanding Applications](https://docs.zephyrproject.org/latest/application/index.html#zephyr-freestanding-app)
 - [Custom Board Definitions](https://docs.zephyrproject.org/latest/application/index.html#custom-board-definition)
 - [Important Build Variables](https://docs.zephyrproject.org/latest/application/index.html#important-build-vars)
-- This repository: **[Device Tree and Memory Configuration Guide.md](../40-application-development/44-device-tree-and-memory-configuration-guide.md)**
+- This repository: **[Device Tree and Memory Configuration Guide.md](../40-app-development/44-devicetree-memory-config.md)**

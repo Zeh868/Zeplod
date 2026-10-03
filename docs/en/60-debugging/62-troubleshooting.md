@@ -4,7 +4,7 @@
 
 This document summarizes **frequently encountered issues** and their solutions during development with this repository, helping beginners troubleshoot independently. For board-level hardware differences, always refer to the **Zephyr Official Documentation** and chip reference manuals.
 
-**Related Documents**: [Documentation Index.md](../00-getting-started/02-docs-index.md) · [Environment Setup Guide.md](../10-getting-started/11-environment-setup.md) · [Standalone Build Guide.md](../10-getting-started/12-standalone-build.md) · [Device Tree and Memory Config.md](../40-application-dev/44-device-tree-memory.md)
+**Related Documents**: [Documentation Index.md](../00-getting-started/02-doc-index.md) · [Environment Setup Guide.md](../10-environment-build/11-environment-setup.md) · [Standalone Build Guide.md](../10-environment-build/12-freestanding-app-build.md) · [Device Tree and Memory Config.md](../40-app-development/44-devicetree-memory-config.md)
 
 ---
 
@@ -46,9 +46,9 @@ This document summarizes **frequently encountered issues** and their solutions d
 
 **Resolution**:
 
-1. Read **[Device Tree and Memory Config.md](../40-application-dev/44-device-tree-memory.md)**: Verify the overlay is applied and main RAM has been extended to the chip's allowed range.  
+1. Read **[Device Tree and Memory Config.md](../40-app-development/44-devicetree-memory-config.md)**: Verify the overlay is applied and main RAM has been extended to the chip's allowed range.
    **Note**: When building **`nucleo_l4r5zi`**, if a **`boards/nucleo_l4r5zi.overlay`** exists, Zephyr **typically no longer** auto-merges the root **`app.overlay`**; if that board-level overlay only has settings without SRAM extension, linking uses the default ~**192KB** RAM, which can easily **overflow** when combined with **64KB heap**, NVS, etc. This repository has **640KB SRAM** and **settings-partition** in the same **`boards/nucleo_l4r5zi.overlay`**.  
-2. In **`prj.conf`**, reduce **`CONFIG_HEAP_MEM_POOL_SIZE`**, thread stack sizes, queue depths, etc. as appropriate (see **[Project Config Options.md](../40-application-dev/42-project-config.md)**).  
+2. In **`prj.conf`**, reduce **`CONFIG_HEAP_MEM_POOL_SIZE`**, thread stack sizes, queue depths, etc. as appropriate (see **[Project Config Options.md](../40-app-development/42-config-options.md)**).
 3. After modifying overlay or `prj.conf`, use **`west build ... -p always`** or **`west build -t pristine`** to rebuild.
 
 ### 2.2 Devicetree / overlay parse error
@@ -59,14 +59,14 @@ This document summarizes **frequently encountered issues** and their solutions d
 
 - **`/delete-node/`** must be at the **overlay file top level**, not inside `/ { }`.  
 - Auto-merged overlays must use the **`.overlay`** suffix; **`.dts`** files are not auto-merged as application overlays unless specified via **`DTC_OVERLAY_FILE`**.  
-See **[Device Tree and Memory Config.md](../40-application-dev/44-device-tree-memory.md)** for details.
+See **[Device Tree and Memory Config.md](../40-app-development/44-devicetree-memory-config.md)** for details.
 
 ### 2.3 `Board 'xxx' not found`
 
 **Resolution**:
 
 - Use Zephyr's built-in board names (e.g., **`nucleo_l4r5zi`**), or ensure custom boards are placed in the **`BOARD_ROOT`** corresponding directory and **`CMakeLists.txt`** has **`list(APPEND BOARD_ROOT ...)`**.  
-See **[Standalone Build Guide.md](../10-getting-started/12-standalone-build.md)** for details.
+See **[Standalone Build Guide.md](../10-environment-build/12-freestanding-app-build.md)** for details.
 
 ### 2.4 Changes don't take effect after config modification
 
@@ -88,7 +88,7 @@ See **[Flash and Debug Quickstart.md](61-flash-debug-quickstart.md)** for more d
 
 ### 3.2 Unit tests can't run on PC
 
-**Resolution**: This repository's tests target **`native_posix`** by default and require a successfully configured Zephyr build environment on the host. Commands and directories are in **`tests/README.md`** and **[Unit Testing and CI Guide.md](../50-testing-ci/51-unit-testing-ci.md)**.
+**Resolution**: This repository's tests target **`native_sim`** by default on Linux/WSL; native Windows uses `qemu_riscv32`. Commands and directories are in **`tests/README.md`** and the **[Unit Testing and CI Guide](../50-testing-ci/51-unit-testing-ci.md)**.
 
 ---
 
@@ -96,7 +96,7 @@ See **[Flash and Debug Quickstart.md](61-flash-debug-quickstart.md)** for more d
 
 ### 4.1 Old documentation filenames won't open
 
-This repository previously renamed some files under **`docs/`**. The old-to-new name mapping is at the end of **[Documentation Index.md](../00-getting-started/02-docs-index.md)** under "Old Filename Reference".
+This repository previously renamed some files under **`docs/`**. The old-to-new name mapping is at the end of the **[Documentation Index.md](../00-getting-started/02-doc-index.md)** under "Old Filename Reference".
 
 ### 4.2 What is `docs/zephyr.pdf`?
 

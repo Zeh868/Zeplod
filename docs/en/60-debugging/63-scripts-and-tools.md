@@ -34,7 +34,7 @@ Scripts use **`project_layout.ps1` / `project_layout.sh` / `project_layout.py`**
 
 1. Prepare `zephyr_config.env` from `zephyr_config.env.template` (under **`framework/`** in APP repos).
 2. Install west/CMake/Python/Zephyr SDK.
-3. For `native_sim/native_posix`, run on Linux/WSL (native Windows is blocked by script checks).
+3. For `native_sim/native_posix`, run on Linux/WSL2. macOS and native Windows use QEMU.
 
 ### 2.1 Command prefix by layout
 
@@ -151,7 +151,7 @@ python scripts/check_script_docs.py
 
 ## 4. Platform Notes
 
-- `native_sim/native_posix` are POSIX-host targets.
+- `native_sim/native_posix` are Linux/WSL2 host targets; macOS and native Windows use QEMU.
 - On Windows, use **QEMU** for the main app (`run_qemu.ps1`) or unit tests (`ZEPHYR_TEST_BOARD=qemu_riscv32` + `run_tests.ps1` — see [14-qemu-simulation-guide.md](../10-environment-build/14-qemu-simulation-guide.md) §6), or WSL for host POSIX tests.
 - CI includes preflight, encoding checks, coverage gates, sanitizers, and twister.
 

@@ -24,8 +24,8 @@ This checklist guides the complete process of project version releases, ensuring
 - [ ] **Run all unit tests and pass**
 
   ```bash
-  # Run native_posix unit tests
-  west build -b native_posix tests/ --build-dir build_tests
+  # Linux/WSL: run the CI-aligned native_sim tests (Zephyr 4.3.0)
+  west build -b native_sim tests/ --build-dir build_tests
   west build -t run --build-dir build_tests
   ```
 
@@ -86,9 +86,9 @@ This checklist guides the complete process of project version releases, ensuring
   # Check output for no warnings
   ```
 
-- [ ] **Update CHANGELOG.md**
+- [ ] **Prepare release notes**
 
-  Add new version entry at the top of `CHANGELOG.md`:
+  This repository does not currently maintain a standalone changelog. Prepare the version notes in the GitHub/GitLab Release, for example:
 
   ```markdown
   ## [1.1.0] - 2026-04-01
@@ -181,10 +181,10 @@ This checklist guides the complete process of project version releases, ensuring
 - [ ] **Confirm all platform builds pass**
   - [ ] `nucleo_l4r5zi` build passes
   - [ ] `nucleo_h743zi` build passes
-  - [ ] `native_posix` build passes
+  - [ ] `native_sim` build passes
 
 - [ ] **Confirm unit tests pass**
-  - [ ] `native_posix` test task passes
+  - [ ] `native_sim` test task passes
   - [ ] Test coverage meets expectations
 
 - [ ] **Confirm documentation generates successfully**
@@ -213,7 +213,7 @@ git status
 
 ```bash
 # 1. Run unit tests
-west build -b native_posix tests/ --build-dir build_tests
+west build -b native_sim tests/ --build-dir build_tests
 west build -t run --build-dir build_tests
 
 # 2. Build target board (verify no compilation errors)
@@ -239,9 +239,9 @@ git status
 # Should show APP_VERSION, Doxyfile, README.md modified
 ```
 
-### Step 4: Update CHANGELOG
+### Step 4: Prepare Release Notes
 
-Edit `CHANGELOG.md`, add new version record at the top:
+Prepare the new version record in the Release draft:
 
 ```markdown
 ## [1.1.0] - 2026-04-01
@@ -272,13 +272,13 @@ Edit `CHANGELOG.md`, add new version record at the top:
 
 ```bash
 # 1. Add all changed files
-git add APP_VERSION Doxyfile README.md CHANGELOG.md docs/
+git add APP_VERSION Doxyfile README.md docs/
 
 # 2. Commit changes
 git commit -m "chore: Prepare for v1.1.0 release
 
 - Updated version to 1.1.0
-- Updated CHANGELOG.md
+- Prepared release notes
 - Updated documentation"
 
 # 3. Push to remote
@@ -309,7 +309,7 @@ Major updates:
 - Optimized memory configuration process
 - Fixed small RAM board issues
 
-See CHANGELOG.md for details"
+See the Release notes for details"
 
 # 2. Verify tag
 git tag -l
@@ -384,7 +384,7 @@ gh release create v1.1.0 --generate-notes
 # 4. Or manually specify title and notes
 gh release create v1.1.0 \
   --title "v1.1.0" \
-  --notes-file CHANGELOG.md
+  --notes "Paste the reviewed release notes here"
 
 # 5. Upload build artifacts
 gh release upload v1.1.0 \
@@ -447,7 +447,7 @@ gh release upload v1.1.0 release_artifacts/*
 3. **Fill in release info**
    - **Tag name**: `v1.1.0`
    - **Release name**: `v1.1.0`
-   - **Description**: Paste CHANGELOG content
+   - **Description**: Paste the reviewed release notes
 
 4. **Click "Create release"**
 
@@ -455,7 +455,7 @@ gh release upload v1.1.0 release_artifacts/*
 
 ```bash
 # Create Release using glab
-glab release create v1.1.0 --notes-file CHANGELOG.md
+glab release create v1.1.0 --notes "Paste the reviewed release notes here"
 ```
 
 ### Method 3: Auto-create in `.gitlab-ci.yml`
@@ -469,7 +469,7 @@ release:
   release:
     tag_name: $CI_COMMIT_TAG
     name: "Release $CI_COMMIT_TAG"
-    description: "See CHANGELOG.md for details"
+    description: "See the release notes for details"
     assets:
       links:
         - name: "Firmware ELF"
@@ -568,7 +568,7 @@ git checkout main
 git pull origin main
 
 # 2. Run tests
-west build -b native_posix tests/ --build-dir build_tests
+west build -b native_sim tests/ --build-dir build_tests
 west build -t run --build-dir build_tests
 
 # 3. Format code (choose command for your system):
@@ -604,10 +604,10 @@ clang-tidy src/**/*.c -- -Isrc -I$ZEPHYR_BASE/include
 # 5. Update version
 python scripts/bump_version.py 1.1.0
 
-# 6. Update CHANGELOG.md (edit manually)
+# 6. Prepare release notes
 
 # 7. Commit changes
-git add APP_VERSION Doxyfile README.md CHANGELOG.md docs/
+git add APP_VERSION Doxyfile README.md docs/
 git commit -m "chore: Prepare for v1.1.0 release"
 git push origin main
 
@@ -645,7 +645,7 @@ Pre-Release Preparation:
 [ ] Code formatting complete
 [ ] Static analysis passes
 [ ] No compilation warnings
-[ ] CHANGELOG.md updated
+[ ] Release notes prepared
 [ ] Documentation updated
 [ ] API docs generated
 [ ] CI builds pass

@@ -4,7 +4,7 @@
 
 This manual explains how **Devicetree Overlays take effect**, how **main RAM (`zephyr,sram`) affects linking and heap**, and typical handling of **multiple non-contiguous memory blocks** in Zephyr, within this project (`zeplod`) and Zephyr's general mechanisms. Applicable to Zephyr 4.x; build system uses CMake-generated linker scripts.
 
-**Reading tips**: If you haven't understood **`west build`**, `prj.conf` and **`ZEPHYR_BASE`**, please first read **[Documentation Index.md](../00-getting-started/02-documentation-index.md)** and **[Standalone Application Build Guide.md](../10-environment-and-build/12-standalone-build-guide.md)**; this manual focuses on board-level and linking details, read chapters as needed.
+**Reading tips**: If you haven't understood **`west build`**, `prj.conf` and **`ZEPHYR_BASE`**, first read the **[Documentation Index.md](../00-getting-started/02-doc-index.md)** and **[Standalone Application Build Guide.md](../10-environment-build/12-freestanding-app-build.md)**; this manual focuses on board-level and linking details, so read chapters as needed.
 
 ---
 
@@ -17,7 +17,7 @@ This manual explains how **Devicetree Overlays take effect**, how **main RAM (`z
 5. [Main RAM: `zephyr,sram` and Linker Script](#5-main-ram-zephyrsram-and-linker-script)
 6. [This Project: STM32L4R5ZI and `app.overlay`](#6-this-projectstm32l4r5zi-and-appoverlay)
 7. [Non-Contiguous or Multiple Physical RAM Blocks](#7-non-contiguous-or-multiple-physical-ram-blocks)
-8. [配合 Kconfig](#8配合-kconfig)
+8. [Working with Kconfig](#8-working-with-kconfig)
 9. [Verification and Debugging](#9-verification-and-debugging)
 10. [FAQ](#10-faq)
 11. [Configuration Examples](#11-configuration-examples) (including [11.8 Scattered Memory Example](#example-scattered-memory))
@@ -160,7 +160,7 @@ This makes linker **`RAM`** **640KB**, consistent with **`west build`** end **Me
 
 ---
 
-## 8. 配合 Kconfig
+## 8. Working with Kconfig
 
 - **`CONFIG_HEAP_MEM_POOL_SIZE`**: Kernel heap size, **should not exceed** actual available space in main `RAM` region after deducting `.bss`/stacks etc. (assess with map file).
 - **`CONFIG_SRAM_SIZE`**, **`CONFIG_SRAM_BASE_ADDRESS`**: Generated from Devicetree, **do not** manually override in `prj.conf` unless clearly understanding consequences.
@@ -456,7 +456,7 @@ CONFIG_EVENT_DISPATCHER_STACK_SIZE=1536
 CONFIG_THREAD_IPC_SERVICE_STACK_SIZE=1024
 ```
 
-And tighten related items in **[Project Configuration Guide.md](42-config-options.md)**; after changes务必 **`west build ... -p always`** and check **map** to confirm margin.
+Also tighten related items in the **[Project Configuration Guide.md](42-config-options.md)**; after changes, always run **`west build ... -p always`** and check the **map file** to confirm the remaining margin.
 
 ---
 
@@ -486,7 +486,7 @@ west build -b nucleo_l4r5zi . -- -DCONF_FILE="prj.conf;conf/profiles/balanced.co
 
 **Cannot** combine like L4R5 main SRAM into one continuous `reg` from CPU view, **cannot** expect `k_malloc` to automatically allocate across both segments.
 
-#### Device Tree (示意 overlay)
+#### Devicetree (Example Overlay)
 
 Below addresses and sizes are **fictional illustration**, actual must follow **datasheet**; node names, labels need to be compatible with board DTS (to avoid conflict with existing `&sram0` can use `delete-node` then rebuild).
 
@@ -534,7 +534,7 @@ All C examples below assume overlay's second segment node **`sram_aux`** matches
 
 #### Method 1: Independent `k_heap` on Second Segment (Recommended for Application Start)
 
-思路: Use **`DT_REG_ADDR` / `DT_REG_SIZE`** to read second segment physical address and length, **entire segment** handed to **`k_heap_init`**, then use **`k_heap_alloc` / `k_heap_free`**, independent from default **`k_malloc`**.
+Approach: use **`DT_REG_ADDR` / `DT_REG_SIZE`** to read the second segment's physical address and length, pass the **entire segment** to **`k_heap_init`**, then use **`k_heap_alloc` / `k_heap_free`**, independently of the default **`k_malloc`** heap.
 
 **`prj.conf`**: Generally **no need** to additionally enable `SHARED_MULTI_HEAP` (kernel **`k_heap`** already available with **`CONFIG_HEAP`** etc., per your current Zephyr `Kconfig`).
 
@@ -579,7 +579,7 @@ void my_aux_free(void *ptr)
 **Notes**:
 
 - **`UINT_TO_POINTER`**: See `<zephyr/sys/util.h>`, converts `uintptr_t` to accessible pointer (if macro name changes with version, can use `(void *)DT_REG_ADDR(...)`, note integer and pointer width consistency).
-- **Whole segment as heap pool**: `k_heap` maintains metadata on this memory, **do not** write to that range for other purposes (unless缩小 `bytes` to leave reserved area).
+- **Whole segment as heap pool**: `k_heap` maintains metadata in this memory; **do not** write to that range for other purposes unless you reduce `bytes` to leave a reserved area.
 - **MPU / Bus**: Second segment must already be **accessible** by CPU; if default inaccessible after power-on, need SoC/board or **`MPU`** configuration, otherwise access causes Fault.
 - **Alignment**: For **DMA**, besides allocation alignment, also need to meet peripheral and Cache requirements (e.g., **`cache_data_flush_range`** etc., per chip).
 
@@ -587,7 +587,7 @@ void my_aux_free(void *ptr)
 
 #### Method 2: Shared Multi-Heap (Multi-region, "attribute"-based heap selection)
 
-适用于希望与 Zephyr **`shared_multi_heap_*`** API对齐, 或当 SoC 已注册 **EXTERNAL / NON_CACHEABLE** 等区域时。需 **`CONFIG_SHARED_MULTI_HEAP=y`** (auto-selected with **`CONFIG_MULTI_HEAP`**).
+Use this when aligning with Zephyr's **`shared_multi_heap_*`** APIs, or when the SoC already registers regions such as **EXTERNAL / NON_CACHEABLE**. It requires **`CONFIG_SHARED_MULTI_HEAP=y`** (automatically selects **`CONFIG_MULTI_HEAP`**).
 
 **`prj.conf`**:
 
@@ -636,7 +636,7 @@ Reference Zephyr tree example: **`samples/boards/espressif/spiram_test`** (`shar
 
 #### Method 3: Linker Segment——Put global/static objects into named region
 
-若 DTS 中 **`zephyr,memory-region = "SRAM_AUX"`** 且 **`LINKER_DT_REGIONS()`** participated in linking (depends on SoC and Zephyr version), linker generates **memory region** and **section** corresponding to **`SRAM_AUX`**. Can put read-only/read-write data into this segment, for example (**section name must match generated name**, commonly uppercase/underscore form of attribute string, check **`build/zephyr/zephyr.map`**):
+If DTS contains **`zephyr,memory-region = "SRAM_AUX"`** and **`LINKER_DT_REGIONS()`** participates in linking (depending on the SoC and Zephyr version), the linker generates a **memory region** and **section** for **`SRAM_AUX`**. You can place read-only/read-write data in this segment; the section name must match the generated name, commonly the uppercase/underscore form of the property value. Check **`build/zephyr/zephyr.map`**:
 
 ```c
 /* Example: large static buffer placed in SRAM_AUX (name per actual map / devicetree_regions) */
@@ -644,7 +644,7 @@ __attribute__((section(".SRAM_AUX")))
 static uint8_t s_dma_static_pool[4096];
 ```
 
-More robust approach: use **`#include <zephyr/linker/devicetree_regions.h>`**'s **`LINKER_DT_NODE_REGION_NAME(DT_NODELABEL(sram_aux))`** etc. macros to generate region/section names consistent with DTS, and consult current Zephyr documentation **"Linker script generation / Devicetree memory regions"**. If linking error can't find segment name,说明 SoC didn't connect **`zephyr,memory-region`** to final **`linker.ld`**, fall back to **Method 1** using address to build **`k_heap`**.
+A more robust approach is to use macros such as **`LINKER_DT_NODE_REGION_NAME(DT_NODELABEL(sram_aux))`** from **`#include <zephyr/linker/devicetree_regions.h>`** to generate region/section names consistent with DTS, and consult the current Zephyr documentation for linker script generation and Devicetree memory regions. If the linker cannot find the segment name, the SoC did not connect **`zephyr,memory-region`** to the final **`linker.ld`**; fall back to **Method 1** and build a **`k_heap`** from the address.
 
 ---
 
@@ -671,7 +671,7 @@ Typical pattern for **scattered memory**: **one segment as `zephyr,sram` + other
 
 - [Zephyr Application Development — Devicetree](https://docs.zephyrproject.org/latest/build/dts/index.html)
 - [Zephyr Devicetree — Overlays](https://docs.zephyrproject.org/latest/build/dts/index.html) ("Overlays" chapter in docs)
-- This repository: **[Developer Getting Started Guide.md](../00-getting-started/04-developer-getting-started-guide.md)**, **[Project Configuration Guide.md](42-config-options.md)**
+- This repository: **[Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md)**, **[Project Configuration Guide.md](42-config-options.md)**
 - STM32L4R5: ST **RM0432** memory map
 
 ---

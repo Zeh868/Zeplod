@@ -1285,7 +1285,7 @@ for (uint32_t i = 0; i < n; i++) {
 
 **Embedded system characteristics:**
 - Allocation requests relatively regular (events, module data)
-- Care more about allocation speed than极致 utilization
+- Care more about allocation speed than maximum utilization
 - Periodic fragmentation coalescing alleviates fragmentation issues
 
 ---

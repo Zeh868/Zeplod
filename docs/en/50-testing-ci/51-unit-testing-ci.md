@@ -1,4 +1,4 @@
-> Language: [中文](../../zh-CN/50-测试与CI/51.md) | **English**
+> Language: [中文](../../zh-CN/50-测试与CI/51-单元测试与持续集成说明.md) | **English**
 
 # Unit Testing and Continuous Integration Guide
 
@@ -6,13 +6,13 @@ This document describes how to build and run **ztest unit tests** in this reposi
 
 **To enable CI from scratch, view pipelines, or modify Zephyr versions and board types on GitHub/GitLab**: See **[CI Platform Setup Guide.md](52-ci-platform-setup.md)**.
 
-**Prerequisites**: [Environment Setup Guide.md](../10-getting-started/11-environment-setup.md) · [Developer Quick Start.md](../00-onboarding/04-developer-quick-start.md) - "Testing" section
+**Prerequisites**: [Environment Setup Guide.md](../10-environment-build/11-environment-setup.md) · [Developer Guide.md](../00-getting-started/04-developer-guide.md) - "Testing" section
 
 ---
 
 ## 1. Unit Tests (`tests/`)
 
-- **Purpose**: Run core logic on a **host simulation board** (**`native_sim`** on Zephyr 4.x; **`native_posix`** in CI with Zephyr 3.6).
+- **Purpose**: Run core logic on a **host simulation board**. This repository and its Zephyr 4.3.0 CI use **`native_sim`**.
 - **Details** (`prj.conf`, `prj_native_sim.conf`, writing cases, gcov): See **`tests/README.md`**.
 - **Recommended** (auto board selection):
 
@@ -30,10 +30,10 @@ west build -b native_sim tests/ --build-dir build_tests
 west build -t run --build-dir build_tests
 ```
 
-- **CI-aligned** (Zephyr 3.6 container):
+- **CI-aligned** (Zephyr 4.3.0 container):
 
 ```bash
-west build -b native_posix tests/ --build-dir build_tests
+west build -b native_sim tests/ --build-dir build_tests
 west build -t run --build-dir build_tests
 ```
 
@@ -64,7 +64,7 @@ As of 2026-04-10, tests cover the following core modules:
 
 ### 1.2 Running Tests on Hardware
 
-If you need to compile and run tests on real hardware (instead of `native_posix` emulation), see:
+If you need to compile and run tests on real hardware (instead of `native_sim` emulation), see:
 
 👉 **[Hardware Testing Guide.md](53-hardware-testing.md)**
 
@@ -87,7 +87,7 @@ Both typically include (subject to actual YAML):
 | Job Type | Typical Content |
 |----------|----------------|
 | **Code Quality** | **`shellcheck`** (`scripts/*.sh`), **`pre-commit run --all-files`** (including **clang-format**, YAML, trailing whitespace, etc., consistent with **`.pre-commit-config.yaml`**) |
-| **Build** | Main project and **`tests/`** on **`native_posix`** (Zephyr 3.6 CI image); ARM matrix smoke builds. Use **`native_sim`** locally on Zephyr 4.x |
+| **Build** | Main project and **`tests/`** on **`native_sim`** (Zephyr 4.3.0 CI image), plus ARM matrix smoke builds |
 
 **Version Alignment**: Zephyr container version used by CI is documented in **`Zephyr Version and CI Guide.md`**; local **`ZEPHYR_BASE`** is recommended to be compatible with CI main version line to reduce "passed locally, failed on CI".
 
@@ -104,9 +104,12 @@ Both typically include (subject to actual YAML):
 
 ### 4.1 Generating Coverage Reports
 
+The following host-coverage path is for Linux/WSL2. macOS must use the
+[QEMU Simulation Guide](../10-environment-build/14-qemu-simulation-guide.md) instead.
+
 ```bash
 # Build tests with coverage
-west build -b native_posix tests/ --build-dir build_tests -- -DCMAKE_C_FLAGS="--coverage"
+west build -b native_sim tests/ --build-dir build_tests -- -DCMAKE_C_FLAGS="--coverage"
 
 # Run tests
 west build -t run --build-dir build_tests
@@ -164,7 +167,7 @@ ZTEST_SUITE(your_module, NULL, NULL, NULL, NULL, NULL);
 
 ```bash
 # Build tests
-west build -b native_posix tests/ --build-dir build_tests
+west build -b native_sim tests/ --build-dir build_tests
 
 # Edit tests/CMakeLists.txt, temporarily comment out other test files, keep only the one to run
 # Then rebuild and run
@@ -177,6 +180,6 @@ west build -t run --build-dir build_tests
 
 - **`tests/README.md`**
 - **[Hardware Testing Guide.md](53-hardware-testing.md)** - Run tests on real hardware
-- **[Zephyr Version and CI Guide.md](../70-release-and-production/72-zephyr-version-ci-guide.md)**
+- **[Zephyr Version and CI Guide.md](../70-release-productization/72-zephyr-version-ci.md)**
 - [Zephyr Testing](https://docs.zephyrproject.org/latest/develop/test/ztest.html)
 - [Zephyr Twister](https://docs.zephyrproject.org/latest/develop/test/twister.html)

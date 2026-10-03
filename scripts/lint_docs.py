@@ -67,6 +67,7 @@ BILINGUAL_MAPPING: dict[str, str] = {
     "70-发布与产品化/75-安全与密钥管理说明.md": "70-release-productization/75-security-key-management.md",
     "80-贡献与维护/81-参与贡献与代码规范.md": "80-contributing/81-contributing-code-style.md",
     "80-贡献与维护/82-文档改进建议.md": "80-contributing/82-doc-improvements.md",
+    "80-贡献与维护/83-AI协作开发指南.md": "80-contributing/83-ai-collaboration-guide.md",
 }
 
 

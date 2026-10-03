@@ -17,7 +17,7 @@
 | **overlay** | "Patch file" for development board Devicetree | Extend SRAM, add peripherals | [Devicetree & Memory Config](../40-app-development/44-devicetree-memory-config.md) |
 | **prj.conf** | Project "config file" (enables features) | Like menuconfig | [Config Options](../40-app-development/42-config-options.md) |
 | **Kconfig** | "Menu definition" for config options | Defines what prj.conf can set | [Config Options](../40-app-development/42-config-options.md) |
-| **native_posix** | Run Zephyr simulation on PC | Test logic without hardware | [5-Minute Quick Start](01-quick-start.md) |
+| **native_sim** | Run Zephyr simulation on Linux/WSL | Test logic without hardware | [Quick Start](01-quick-start.md) |
 | **CMake** | Cross-platform build system | Zephyr uses it to generate build files | - |
 | **Devicetree** | "Description file" for hardware configuration | Tells system what hardware exists | [Devicetree & Memory Config](../40-app-development/44-devicetree-memory-config.md) |
 | **DTS** | Devicetree Source (hardware tree source) | `.dts` or `.overlay` files | [Devicetree & Memory Config](../40-app-development/44-devicetree-memory-config.md) |
@@ -47,7 +47,7 @@
 |------|----------------------|------------------|-----------|
 | **Nucleo** | STMicroelectronics development board series | Common test boards (e.g., nucleo_l4r5zi) | [Flash & Debug Guide](../60-debugging/61-flash-debug-quickstart.md) |
 | **UART** | Serial communication | Print logs to computer | [Flash & Debug Guide](../60-debugging/61-flash-debug-quickstart.md) |
-| **GPIO** | General Purpose Input/Output | Control LEDs, read buttons | [From Zero to Blink LED](From Zero to Blink LED.md) |
+| **GPIO** | General Purpose Input/Output | Control LEDs, read buttons | [Zephyr Application Development Guide](../40-app-development/41-zephyr-app-development.md) |
 | **SRAM** | Static Random Access Memory | Runtime memory for programs | [Devicetree & Memory Config](../40-app-development/44-devicetree-memory-config.md) |
 | **Flash** | Flash storage (program code storage) | Firmware storage location | [OTA & Storage Guide](../70-release-productization/74-ota-storage-guide.md) |
 | **RAM overflow** | Memory insufficient error | Linker error | [Troubleshooting](../60-debugging/62-troubleshooting.md) |

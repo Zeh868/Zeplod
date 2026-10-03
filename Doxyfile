@@ -17,7 +17,8 @@ OUTPUT_DIRECTORY       = docs/api
 # 输入设置
 # ===========================================================================
 
-INPUT                  = src \
+INPUT                  = include/zeplod \
+                         src \
                          README.md \
                          docs
 
@@ -30,6 +31,7 @@ RECURSIVE              = YES
 EXCLUDE                = build \
                          .git \
                          docs/api \
+                         docs/superpowers \
                          docs/zh-CN/30-核心模块/31-事件系统详细使用说明.md \
                          docs/zh-CN/30-核心模块/32-模块系统详细使用说明.md \
                          docs/zh-CN/40-应用开发/42-项目配置项说明.md \
@@ -304,6 +306,8 @@ WARN_FORMAT            = "$file:$line: $text"
 WARN_LOGFILE           =
 
 # 警告错误限制
+# Historical/internal documentation still produces non-fatal warnings. CI therefore keeps the
+# global switch disabled while parsing public headers explicitly through INPUT.
 WARN_AS_ERROR          = NO
 
 # 静默模式

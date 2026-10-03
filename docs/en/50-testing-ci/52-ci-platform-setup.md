@@ -1,10 +1,10 @@
-> Language: [中文](../../zh-CN/50-测试与CI/52.md) | **English**
+> Language: [中文](../../zh-CN/50-测试与CI/52-CI平台配置保姆级手册.md) | **English**
 
 # CI Platform Setup Guide (GitHub / GitLab)
 
 This document is for readers **first** configuring **Continuous Integration (CI)** for this repository (or projects based on this template) on hosted platforms: explaining **what the CI pipeline does, how to enable it step-by-step on GitHub Actions and GitLab CI, view results, modify versions and board types**, and **common issues**.
 
-**Related Documents**: [Zephyr Version and CI Guide.md](../70-release-and-production/72-zephyr-version-ci-guide.md) · [Unit Testing and CI Guide.md](51-unit-testing-ci.md) · [Security and Key Management Guide.md](../70-release-and-production/75-security-key-management.md)
+**Related Documents**: [Zephyr Version and CI Guide.md](../70-release-productization/72-zephyr-version-ci.md) · [Unit Testing and CI Guide.md](51-unit-testing-ci.md) · [Security and Key Management Guide.md](../70-release-productization/75-security-key-management.md)
 
 ---
 
@@ -19,7 +19,7 @@ Regardless of using GitHub or GitLab, the core approach of this template is cons
 | **Documentation** | **Doxygen** generates `**docs/api/`** (if `**Doxyfile**` exists) | Only needs **doxygen** / **graphviz** |
 | **Release (GitHub only, current config)** | Collects build artifacts and creates **Release** when `**v***` tag is pushed | See below "GitHub · Tag Release" |
 
-**Single Source of Version Number**: `**ZEPHYR_VERSION`** in workflow (e.g., `3.6.0`) should match container tag `**zephyr-build:v3.6.0**` and `**revision: v3.6.0**` in root `**west.yml`**; change all three together when upgrading. See **[Zephyr Version and CI Guide.md](../70-release-and-production/72-zephyr-version-ci-guide.md)** for details.
+**Single Source of Version Number**: `**ZEPHYR_VERSION`** in the workflow (currently `4.3.0`) should match container tag `**zephyr-build:v4.3.0**` and `**revision: v4.3.0**` in root `**west.yml`**; change all three together when upgrading. See **[Zephyr Version and CI Guide](../70-release-productization/72-zephyr-version-ci.md)** for details.
 
 ---
 
@@ -52,7 +52,7 @@ Config file path: `**.github/workflows/ci.yml**`. Follow the "zero to running" s
 
 1. Push any commit to `**main**` or `**develop**`, or create a **Pull Request** to `**main**` - this triggers `**.github/workflows/ci.yml`** based on `on:` configuration.
 2. Open repository tab **Actions**, you should see workflow run records for **"Zephyr Build CI"**.
-3. Click into a run, expand **Job** list on left (e.g., **Code Quality**, **Build (Native POSIX)**, **Unit Tests**, etc.), click to view **logs**; red indicates failure, expand failed step to see error at end.
+3. Click into a run, expand the **Job** list (for example **Code Quality**, **Build (native_sim)**, and **Unit Tests (native_sim)**), then inspect the failed step logs.
 
 ### 2.4 Common Failures and Self-Troubleshooting
 
@@ -69,7 +69,7 @@ Config file path: `**.github/workflows/ci.yml**`. Follow the "zero to running" s
 1. **Change Zephyr Version**
    - Open `**.github/workflows/ci.yml**`, modify `**env: ZEPHYR_VERSION**` at top.
    - Synchronously modify `**revision:**` in root `**west.yml**` (recommend `**vX.Y.Z**` tag).
-   - Synchronously update **[Zephyr Version and CI Guide.md](../70-release-and-production/72-zephyr-version-ci-guide.md)** and **README** notes if they have hardcoded versions.
+   - Synchronously update **[Zephyr Version and CI Guide.md](../70-release-productization/72-zephyr-version-ci.md)** and **README** notes if they have hardcoded versions.
 2. **Change ARM Smoke Board Types**
    - Add/remove board names in `**build-arm**`'s `**matrix.board`**; names must be Zephyr-supported `**BOARD**` values.
 3. **Change Trigger Branches**
@@ -96,7 +96,7 @@ This template **does not require** custom Secrets by default for building. Add i
 - Pulling Zephyr from a **private** Git mirror (need to construct URL with Secret in script, **do not** print to logs);
 - Publishing to non-GitHub artifact repositories (needs separate job and Token).
 
-See **[Security and Key Management Guide.md](../70-release-and-production/75-security-key-management.md)** for key management principles.
+See **[Security and Key Management Guide.md](../70-release-productization/75-security-key-management.md)** for key management principles.
 
 ---
 
@@ -173,10 +173,10 @@ Path: **Settings → CI/CD → Variables**.
 
 ## 6. Recommended Self-Check (After CI Changes)
 
-1. Local `**west build -b native_posix .`** and `**west build -b native_posix tests/**` + `**run**` pass.
+1. Local **`west build -b native_sim .`** and **`west build -b native_sim tests/`** + **`run`** pass on Linux/WSL.
 2. `**revision**` in `**west.yml**` matches `**ZEPHYR_VERSION**` / image.
 3. After push, platform shows **all pipelines passed** (or known allowed failures are noted in MR).
 
 ---
 
-*If you add/remove Jobs or board matrix, recommended to sync update descriptions in **[Unit Testing and CI Guide.md](51-unit-testing-ci.md)** and **[Zephyr Version and CI Guide.md](../70-release-and-production/72-zephyr-version-ci-guide.md)**.*
+*If you add/remove jobs or board matrix entries, update the descriptions in the **[Unit Testing and CI Guide.md](51-unit-testing-ci.md)** and **[Zephyr Version and CI Guide.md](../70-release-productization/72-zephyr-version-ci.md)**.*

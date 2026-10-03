@@ -2,7 +2,7 @@
 
 # Guide for Integrating Thread IPC Service in Module Development
 
-This document explains how to embed **Thread IPC Service** in **business modules** (配合本工程的 **`module_manager`**), implement "request-response" style services within modules, and optionally联动 with **Event System** and **Event Bridge**.
+This document explains how to embed **Thread IPC Service** in **business modules** (together with this project's **`module_manager`**), implement request-response services within modules, and optionally integrate them with the **Event System** and **Event Bridge**.
 
 ---
 

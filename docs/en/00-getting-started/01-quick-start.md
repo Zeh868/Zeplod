@@ -2,215 +2,118 @@
 
 # 5-Minute Quick Start
 
-**Goal**: See the project running in 5 minutes (no development board required, runs on PC simulation)
+**Goal**: build and run Zeplod without a development board in five minutes, assuming a working Zephyr 4.3.x environment.
 
-**Audience**: Anyone who wants to quickly understand what this project can do
+> If Zephyr, the SDK, West, or their dependencies are not installed, complete the
+> [Environment Setup Guide](../10-environment-build/11-environment-setup.md) first. Initial downloads are not part of the five minutes.
 
----
-
-## Prerequisites (2 minutes)
-
-Confirm you have the following two items installed:
-
-### 1. Python 3.8+
+## Prerequisite check
 
 ```bash
-# Verify command
 python --version
-# or
-python3 --version
-```
-
-**Not installed?** → https://www.python.org/downloads/
-
-### 2. Git
-
-```bash
-# Verify command
-git --version
-```
-
-**Not installed?** → https://git-scm.com/downloads
-
----
-
-## Step 1: Clone the Repository (1 minute)
-
-```bash
-# Clone to local
-git clone https://github.com/your-username/zeplod.git
-cd zeplod
-```
-
----
-
-## Step 2: Install West (1 minute)
-
-```bash
-# Install Zephyr build tools
-pip install west
-```
-
-**Verify installation**:
-```bash
 west --version
+cmake --version
 ```
 
----
+Use one of these supported paths:
 
-## Step 3: Configure Zephyr Paths (2 minutes)
+- **Linux / WSL2 (recommended)**: use Zephyr's `native_sim` board.
+- **Native Windows**: install QEMU and use the repository's `qemu_riscv32` PowerShell path.
+- **macOS**: install QEMU and use `qemu_riscv32`. macOS and native Windows do not support `native_sim` or `native_posix`.
 
-### Option A: You already have a Zephyr environment
+## Step 1: get the source
 
 ```bash
-# Copy template file
-copy zephyr_config.env.template zephyr_config.env
+git clone https://github.com/QZehao/Zeplod.git
+cd Zeplod
 ```
 
-Then edit `zephyr_config.env` and fill in your paths:
+## Step 2: configure local paths
+
+Create the local file from the template and set your Zephyr and SDK paths:
+
+```powershell
+# Windows PowerShell
+Copy-Item zephyr_config.env.template zephyr_config.env
+.\scripts\setup_env.ps1
+```
 
 ```bash
-# Edit this file, fill in your Zephyr path
-ZEPHYR_SDK_INSTALL_DIR=C:/zephyr-sdk
-ZEPHYR_BASE=D:/zephyrproject/zephyr
+# Linux / macOS / WSL
+cp zephyr_config.env.template zephyr_config.env
+# Edit zephyr_config.env, then load it
+source scripts/setup_env.sh
 ```
 
-### Option B: You don't have a Zephyr environment yet
+`zephyr_config.env` is machine-local and must not be committed. If repository history still tracks it, use the template as the
+reference until maintainers clean up that repository state.
 
-**Quick approach**: Skip hardware-related features for now and experience `native_posix` (PC simulation) only.
+## Step 3: build and run
 
-The project requires Zephyr SDK for full builds. If you just want a quick experience:
-
-1. **Read the documentation**: See [docs/en/00-getting-started/02-doc-index.md](02-doc-index.md) to understand the project structure
-2. **Browse example code**: Look at source code under `src/`
-3. **Install Zephyr and try again**: Refer to [docs/en/10-environment-build/11-environment-setup.md](../10-environment-build/11-environment-setup.md)
-
-> **Tip**: Full environment setup takes about 1-2 hours (including download time). Plan accordingly.
-
----
-
-## Step 4: Build and Run (2 minutes)
-
-### Build (using native_posix, no development board required)
+### Linux / WSL2: native_sim
 
 ```bash
-# Build PC simulation version
-west build -b native_posix .
+west build -b native_sim . -p always
+west build -t run
 ```
 
-**Success indicator**: You should see this output
-```
-Built zephyr/zephyr.exe
+### Native Windows: QEMU
+
+```powershell
+.\scripts\run_qemu.ps1 -Board qemu_riscv32
 ```
 
-### Run
+The script builds with `prj.conf;conf/targets/qemu.conf` and starts QEMU. See the
+[QEMU Simulation Guide](../10-environment-build/14-qemu-simulation-guide.md) for more boards and options.
+
+### macOS: QEMU
 
 ```bash
-# Windows
-.\build\zephyr\zephyr.exe
-
-# Linux/macOS
-./build/zephyr/zephyr
+west build -b qemu_riscv32 -d build_qemu . -p always -- \
+  -DCONF_FILE="prj.conf;conf/targets/qemu.conf"
+west build -t run --build-dir build_qemu
 ```
 
----
+A successful run shows Zephyr startup information, the Zeplod banner, and a shell prompt. Commit hashes, timestamps, and log levels
+vary per build, so this guide does not present a fabricated fixed transcript.
 
-## What Do You See?
+## Step 4: inspect the application
 
-After successful execution, you should see output similar to:
+Run these commands in the shell:
 
-```
-*** Booting Zephyr OS zephyr 3.6.0 ***
-[INFO] app: Application starting...
-[INFO] module_manager: Module manager initialized
-[INFO] event_system: Event system ready
-[INFO] app: System status: OK
-app>
-```
-
-### Try Shell Commands
-
-At the `app>` prompt, enter:
-
-```bash
-# View application status
+```text
 app status
-
-# View module information
 app modules
-
-# View event statistics
 app events
-
-# View help
 app help
+version
 ```
 
-**Example output**:
-```
-app> app status
-Application: zeplod
-Version: 1.0.0
-Status: Running
-Uptime: 00:00:15
-```
+They display application state, registered modules, event statistics, help, and version/build information.
 
----
+## What this proves
 
-## What's Next?
+- Zephyr, the SDK, West, and local paths work together.
+- The application configures, compiles, and links for host simulation or QEMU.
+- Zeplod's automatic initialization chain and shell start successfully.
 
-### Continue Learning
+This is not hardware validation. Peripherals, flashing, RAM layout, and board overlays still require target-board testing.
 
-| I want to... | Read this | Estimated time |
-|--------------|-----------|----------------|
-| **Set up the full environment properly** | [docs/en/10-environment-build/11-environment-setup.md](../10-environment-build/11-environment-setup.md) | 1-2 hours |
-| **Understand how to develop with this project** | [docs/en/00-getting-started/04-developer-guide.md](04-developer-guide.md) | 1 hour |
-| **Run on real development hardware** | [docs/en/60-debugging/61-flash-debug-quickstart.md](../60-debugging/61-flash-debug-quickstart.md) | 30 minutes |
-| **Control hardware (LED)** | <!-- TODO:等待从零到 Blink LED.md 创建 --> | 30 minutes |
-| **Understand the overall architecture** | [docs/en/00-getting-started/02-doc-index.md](02-doc-index.md) | 20 minutes |
+## Next steps
 
-### Common Issues
+| Goal | Read next |
+|---|---|
+| Understand the repository and workflow | [Developer Guide](04-developer-guide.md) |
+| Navigate by task | [Task Navigation](05-task-navigation.md) |
+| Use the event system | [Event System Guide](../30-core-modules/31-event-system-guide.md) |
+| Add a module or use the GPIO example | [Module System Guide](../30-core-modules/32-module-system-guide.md) |
+| Flash real hardware | [Flash and Debug Quick Start](../60-debugging/61-flash-debug-quickstart.md) |
+| Diagnose a build or runtime problem | [Troubleshooting](../60-debugging/62-troubleshooting.md) |
 
-**Q: Build fails, saying Zephyr SDK not found?**  
-A: You need to install Zephyr SDK first. Refer to [docs/en/10-environment-build/11-environment-setup.md](../10-environment-build/11-environment-setup.md)
+## Common problems
 
-**Q: `west` command not found?**  
-A: Make sure you've run `pip install west` and that Python's `Scripts` directory is in your PATH
+**West or the SDK is not found**: check the virtual environment, `ZEPHYR_BASE`, and `ZEPHYR_SDK_INSTALL_DIR` in the environment guide.
 
-**Q: Want to run on real hardware?**  
-A: You need a full Zephyr SDK installation. Refer to [docs/en/10-environment-build/11-environment-setup.md](../10-environment-build/11-environment-setup.md), then read [docs/en/60-debugging/61-flash-debug-quickstart.md](../60-debugging/61-flash-debug-quickstart.md)
+**Windows or macOS reports that a POSIX board cannot run**: use the QEMU command above; Windows can also run `native_sim` from WSL2.
 
----
-
-## Project Overview
-
-```
-zeplod/
-├── src/
-│   ├── core/           # Core Event System
-│   ├── services/       # System services (logging, memory, watchdog)
-│   ├── modules/        # Business modules
-│   └── app/            # Application entry point
-├── tests/              # Unit tests
-├── docs/               # Complete documentation
-└── scripts/            # Utility scripts
-```
-
-**Key Features**:
-- **Event-Driven**: Modules communicate via events (Publish-Subscribe pattern)
-- **Modular**: Each feature is an independent module, easy to extend
-- **Thread-Safe**: Complete synchronization mechanisms
-- **Logging System**: Tiered logging for easy debugging
-- **Shell Commands**: Built-in debugging commands
-
----
-
-## Reference Resources
-
-- [Complete Documentation Index](02-doc-index.md) - Master index for all manuals
-- [Zephyr Official Documentation](https://docs.zephyrproject.org/) - Zephyr RTOS authoritative guide
-- [Project README](../../../README.md) - Project overview and features
-
----
-
-**Note**: This quick start only demonstrates PC simulation. Full features (hardware control, low power, OTA, etc.) require real development hardware and a complete Zephyr environment.
+**A configuration change has no effect**: use `-p always`, or run `west build -t pristine` before rebuilding.

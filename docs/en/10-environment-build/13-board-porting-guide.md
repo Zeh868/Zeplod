@@ -8,16 +8,16 @@ This document describes the configuration and modification work required when a 
 
 ## Table of Contents
 
-- [适用场景](#适用场景)
-- [迁移前准备](#迁移前准备)
-- [步骤 1：确认 Zephyr 板型支持](#步骤-1-确认-zephyr-板型支持)
-- [步骤 2：添加或修改板型配置文件](#步骤-2-添加或修改板型配置文件)
-- [步骤 3：调整设备树覆盖](#步骤-3-调整设备树覆盖)
-- [步骤 4：调整内存与分区配置](#步骤-4-调整内存与分区配置)
-- [步骤 5：更新项目配置文件](#步骤-5-更新项目配置文件)
-- [步骤 6：更新 CI/CD 配置](#步骤-6-更新-cicd-配置)
-- [步骤 7：验证与调试](#步骤-7-验证与调试)
-- [常见问题](#常见问题)
+- [Applicable Scenarios](#applicable-scenarios)
+- [Preparation](#preparation)
+- [Step 1: Confirm Zephyr Board Support](#step-1-confirm-zephyr-board-support)
+- [Step 2: Add or Modify Board Configuration](#step-2-add-or-modify-board-configuration)
+- [Step 3: Adjust Devicetree Overlays](#step-3-adjust-devicetree-overlays)
+- [Step 4: Adjust Memory and Partition Configuration](#step-4-adjust-memory-and-partition-configuration)
+- [Step 5: Update Project Configuration](#step-5-update-project-configuration)
+- [Step 6: Update CI/CD Configuration](#step-6-update-cicd-configuration)
+- [Step 7: Verify and Debug](#step-7-verify-and-debug)
+- [Common Issues](#common-issues)
 
 ---
 
@@ -855,7 +855,7 @@ Complete the following checklist:
 
 ---
 
-## Appendix A: Complete Migration实战示例
+## Appendix A: Complete Migration Example
 
 ### A.1 Scenario: Migrating from Nucleo L4R5ZI to Nucleo H743ZI
 
@@ -1105,8 +1105,8 @@ arm-none-eabi-size build/zephyr/zephyr.elf
 - [Zephyr Board Documentation](https://docs.zephyrproject.org/latest/boards/index.html)
 - [Zephyr Device Tree Guide](https://docs.zephyrproject.org/latest/build/dts/index.html)
 - [Zephyr Build System](https://docs.zephyrproject.org/latest/build/west/build-flash-debug.html)
-- [Device Tree and Memory Configuration Guide](../40-application-development/44-device-tree-and-memory-configuration-guide.md)
-- [Flash and Debug Quick Guide](../60-debugging-troubleshooting/61-flash-and-debug-quick-guide.md)
+- [Device Tree and Memory Configuration Guide](../40-app-development/44-devicetree-memory-config.md)
+- [Flash and Debug Quick Guide](../60-debugging/61-flash-debug-quickstart.md)
 
 ---
 

@@ -2,9 +2,9 @@
 
 # Zephyr Application Development and Service Guide
 
-This document is for developers **writing application code on Zephyr**, covering commonly used kernel capabilities, device and configuration workflows, and considerations when writing **system-level services** (background threads, timers, synchronization, resource management). For details, refer to the current Zephyr version's official documentation; this repository's specific wrappers are documented in **[System Services Usage Guide.md](../30-core-modules/36-系统服务使用说明.md)** and **[Event System Detailed Usage Guide.md](../30-core-modules/31-事件系统详细使用说明.md)**.
+This document is for developers **writing application code on Zephyr**, covering commonly used kernel capabilities, device and configuration workflows, and considerations when writing **system-level services** (background threads, timers, synchronization, resource management). For details, refer to the current Zephyr version's official documentation; this repository's specific wrappers are documented in the **[System Services Usage Guide.md](../30-core-modules/36-system-services-guide.md)** and **[Event System Detailed Usage Guide.md](../30-core-modules/31-event-system-guide.md)**.
 
-**Prerequisites**: [Environment Setup Guide.md](../10-environment-and-build/11-environment-setup-guide.md) · [Standalone Application Build Guide.md](../10-environment-and-build/12-standalone-build-guide.md) · [Device Tree and Memory Configuration Manual.md](44-devicetree-memory-config.md) (as needed)
+**Prerequisites**: [Environment Setup Guide.md](../10-environment-build/11-environment-setup.md) · [Standalone Application Build Guide.md](../10-environment-build/12-freestanding-app-build.md) · [Device Tree and Memory Configuration Manual.md](44-devicetree-memory-config.md) (as needed)
 
 **Kernel Data Structure Details and Code Examples**: See **[§6 Zephyr Kernel Data Structures (`struct`) and Examples](#6-zephyr-kernel-data-structures-struct-and-examples)** below.
 
@@ -52,7 +52,7 @@ This document is for developers **writing application code on Zephyr**, covering
 - **`k_timer`**: Periodic/one-shot callbacks based on kernel timer; callback context rules per documentation.
 - **Timeouts**: Many blocking APIs accept **`k_timeout_t`** (e.g., `K_MSEC(n)`, `K_FOREVER`); design timeout paths to avoid deadlock.
 
-This template's **`sys_timer`** wraps Zephyr timer capabilities; see **[System Services Usage Guide.md](../30-core-modules/36-系统服务使用说明.md)**.
+This template's **`sys_timer`** wraps Zephyr timer capabilities; see the **[System Services Usage Guide.md](../30-core-modules/36-system-services-guide.md)**.
 
 ---
 
@@ -62,13 +62,13 @@ This template's **`sys_timer`** wraps Zephyr timer capabilities; see **[System S
 - **`k_heap`**: Can create independent heap on static buffer or specified memory region (multi-segment RAM scenarios).
 - **Stack overflow**: Enable **`CONFIG_THREAD_STACK_INFO`**, `CONFIG_THREAD_NAME` etc. for debugging; configure thread stacks appropriately.
 
-This template's **`sys_memory`** provides multiple pools and statistics; see **[System Services Usage Guide.md](../30-core-modules/36-系统服务使用说明.md)**.
+This template's **`sys_memory`** provides multiple pools and statistics; see the **[System Services Usage Guide.md](../30-core-modules/36-system-services-guide.md)**.
 
 ---
 
 ## 6. Zephyr Kernel Data Structures (`struct`) and Examples
 
-Below are the most commonly used **kernel object types** at the application layer (all **`struct`**, obtained via static allocation or macro definitions). API names follow Zephyr 3.x/4.x主线; if your version has different signatures, refer to **`include/zephyr/kernel.h`** and official documentation.
+Below are the most commonly used **kernel object types** at the application layer (all **`struct`**, obtained via static allocation or macro definitions). API names follow the Zephyr 3.x/4.x mainline; if your version has different signatures, refer to **`include/zephyr/kernel.h`** and official documentation.
 
 ### 6.1 Quick Reference Table
 
@@ -441,7 +441,7 @@ This application's extended options explained in **[Project Configuration Guide.
 | `k_mutex_lock()` | ❌ Forbidden | May block/schedule |
 | `k_malloc()` | ⚠️ Avoid | May not be reentrant |
 
-> Technical detail: Spinlock only disables interrupts without triggering scheduling, while Mutex may block and trigger scheduling. See **[Framework Core Technology Implementation Details.md](../20-architecture/23-framework-core-technology-implementation-details.md#24-isr-safe-publishing)**.
+> Technical detail: Spinlock only disables interrupts without triggering scheduling, while Mutex may block and trigger scheduling. See **[Framework Core Technology Implementation Details.md](../20-architecture/23-framework-internals.md#24-isr-safe-publishing)**.
 
 ---
 
@@ -453,7 +453,7 @@ This application's extended options explained in **[Project Configuration Guide.
 2. **Resource ownership**: Heap, static buffers, handle lifecycle clarity; stop paths must **release/unregister** (if applicable).
 3. **Thread model**: Single-threaded serial processing vs multi-threaded; if multi-threaded sharing state, **unified mutex or message queue**, avoid naked global lock-free.
 4. **Event system collaboration**: Slow business goes through **publish-subscribe**, don't block IPC/network in callbacks.
-5. **Configurability**: Expose stack size, queue depth, timeout via **`Kconfig`**,便于 different board types to trim.
+5. **Configurability**: Expose stack size, queue depth, and timeout via **`Kconfig`** so different boards can trim resource use.
 
 ---
 
@@ -461,11 +461,11 @@ This application's extended options explained in **[Project Configuration Guide.
 
 | Topic | Document |
 |-------|----------|
-| This template's `sys_*` | [System Services Usage Guide.md](../30-core-modules/36-系统服务使用说明.md) |
-| Events and modules | [Event System Detailed Usage Guide.md](../30-core-modules/31-事件系统详细使用说明.md) · [Module System Detailed Usage Guide.md](../30-core-modules/32-模块系统详细使用说明.md) |
-| Thread IPC | [Thread_IPC Service Usage Guide.md](../30-core-modules/33-线程IPC服务使用说明.md) |
+| This template's `sys_*` | [System Services Usage Guide.md](../30-core-modules/36-system-services-guide.md) |
+| Events and modules | [Event System Detailed Usage Guide.md](../30-core-modules/31-event-system-guide.md) · [Module System Detailed Usage Guide.md](../30-core-modules/32-module-system-guide.md) |
+| Thread IPC | [Thread IPC Service Usage Guide.md](../30-core-modules/33-thread-ipc-service-guide.md) |
 | Memory layout / overlay | [Device Tree and Memory Configuration Manual.md](44-devicetree-memory-config.md) |
-| OTA / Storage / PM | [OTA and Storage Extension Guide.md](../70-release-and-productization/74-OTA-and-storage-extension-guide.md) |
+| OTA / Storage / PM | [OTA and Storage Extension Guide.md](../70-release-productization/74-ota-storage-guide.md) |
 
 ---
 

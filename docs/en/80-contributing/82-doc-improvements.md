@@ -2,6 +2,11 @@
 
 # Documentation Improvement Suggestions (Newcomer Friendliness)
 
+> **Status: historical improvement record.** This document is retained for decision traceability;
+> its gap list and command examples are not the current source of truth. Use the
+> [documentation index](../00-getting-started/02-doc-index.md),
+> [task navigation](../00-getting-started/05-task-navigation.md), and CI configuration instead.
+
 This document analyzes **shortcomings** of documents under `docs/` and proposes **specific improvement suggestions** to help newcomers get started faster.
 
 **Analysis Date**: 2026-04-01  
@@ -42,7 +47,6 @@ This document analyzes **shortcomings** of documents under `docs/` and proposes 
 **Target readers**: People who want to quickly see what this project can do
 
 **Content outline**:
-```markdown
 # 5-Minute Quick Experience
 
 ## Prerequisites (only 2 needed)
@@ -73,9 +77,8 @@ west build -b native_posix .
 - Shell command demonstration
 
 ## Next Steps
-- Read [Environment Setup Guide.md](../10-Environment/11-Environment-Setup-Guide.md) for complete environment setup
-- Read [Developer Getting Started Guide.md](../00-Getting-Started/04-Developer-Getting-Started.md) to start development
-```
+- Read [Environment Setup Guide.md](../10-environment-build/11-environment-setup.md) for complete environment setup
+- Read [Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md) to start development
 
 **Priority**: 🔴 High (newcomer first touchpoint)
 
@@ -86,7 +89,6 @@ west build -b native_posix .
 **Target readers**: Visual learners who want to understand overall architecture
 
 **Content outline**:
-```markdown
 # Project Architecture Visualization Guide
 
 ## 1. Directory Structure at a Glance
@@ -113,7 +115,6 @@ west build -b native_posix .
 ```
 [Memory diagram: Flash | RAM | Heap | Stack | Partitions]
 ```
-```
 
 **Priority**: 🟡 Medium (helps understanding, but doesn't block quick start)
 
@@ -124,7 +125,7 @@ west build -b native_posix .
 **Target readers**: Newcomers controlling hardware for the first time
 
 **Content outline**:
-```markdown
+
 # From Zero to Blinking LED
 
 ## Goal
@@ -155,9 +156,8 @@ west flash
 - How to check serial output
 
 ## Extended Reading
-- [Device Tree and Memory Configuration Guide.md](../40-Application-Development/44-Device-Tree-Memory-Config-Guide.md)
-- [Module System Detailed Usage Guide.md](../30-Core-Modules/32-Module-System-Detailed-Usage.md)
-```
+- [Device Tree and Memory Configuration Guide.md](../40-app-development/44-devicetree-memory-config.md)
+- [Module System Detailed Usage Guide.md](../30-core-modules/32-module-system-guide.md)
 
 **Priority**: 🔴 High (hardware "Hello World")
 
@@ -168,7 +168,7 @@ west flash
 **Target readers**: Quick lookup when encountering unfamiliar terms
 
 **Content outline**:
-```markdown
+```
 # Terminology Quick Reference
 
 ## Build Related
@@ -210,7 +210,7 @@ west flash
 - Windows user's PowerShell execution policy issue buried later
 
 **Improvement suggestions**:
-```diff
+~~~~diff
 + ## 0. Pre-installation Checklist (5 minutes)
 + Before starting, confirm the following are installed:
 + - [ ] Python 3.8+ (verify: `python --version`)
@@ -244,7 +244,7 @@ west flash
 +
 + ### Option B: Manual clone
 + [Existing content]
-```
+~~~~
 
 **Priority**: 🟡 Medium
 
@@ -257,7 +257,7 @@ west flash
 - Missing "minimal viable modification" example
 
 **Improvement suggestions**:
-```diff
+~~~~diff
   ## Quick Start
 
 + ### 30-second Build Test
@@ -278,7 +278,7 @@ west flash
   ### 1. Environment Configuration
 
   [Existing content]
-```
+~~~~
 
 **Priority**: 🟢 Low
 
@@ -291,22 +291,22 @@ west flash
 - Newcomers don't know how long each path takes
 
 **Improvement suggestions**:
-```diff
+~~~~diff
   ### Path A: First Compile This Project (Zero Basics)
 
-  0. (If **copying this repository as a new project**) First read **[README.md](../../../README.md)** "Initialize New Project from Template (Checklist)" and **[Developer Getting Started Guide.md](../00-Getting-Started/04-Developer-Getting-Started.md#post-template-copy-checklist)**, complete alignment of west, CMake, CI board, etc.
-  1. **[Environment Setup Guide.md](../10-Environment/11-Environment-Setup-Guide.md)** — Install Zephyr SDK, West, CMake, Python; configure **`zephyr_config.env`**; verify **`west build`** passes.
+  0. (If **copying this repository as a new project**) First read **[README.md](../../../README.md)** "Initialize New Project from Template (Checklist)" and **[Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md#post-template-copy-checklist)**, complete alignment of west, CMake, CI board, etc.
+  1. **[Environment Setup Guide.md](../10-environment-build/11-environment-setup.md)** — Install Zephyr SDK, West, CMake, Python; configure **`zephyr_config.env`**; verify **`west build`** passes.
 +    ⏱️ Estimated time: 1-2 hours first time (including downloads), 10 minutes thereafter
 +
-  2. **[Standalone App Build Guide.md](../10-Environment/12-Standalone-App-Build-Guide.md)** — Understand "standalone app" directory structure, **`ZEPHYR_BASE`**, common **`west build`** parameters; custom board and overlay conventions.
+  2. **[Standalone App Build Guide.md](../10-environment-build/12-freestanding-app-build.md)** — Understand "standalone app" directory structure, **`ZEPHYR_BASE`**, common **`west build`** parameters; custom board and overlay conventions.
 +    ⏱️ Estimated time: 30 minutes
 +
-  3. If **changing development board**: **[Board Migration Guide.md](../10-Environment/13-Board-Migration-Guide.md)** — Complete board migration process, device tree adjustment, memory configuration, CI updates.
+  3. If **changing development board**: **[Board Migration Guide.md](../10-environment-build/13-board-porting-guide.md)** — Complete board migration process, device tree adjustment, memory configuration, CI updates.
 +    ⏱️ Estimated time: 1 hour (first time)
 +
-  4. **[Developer Getting Started Guide.md](../00-Getting-Started/04-Developer-Getting-Started.md)** — Project directory, `prj.conf` / `Kconfig` division of responsibilities, shortest flow for adding modules and events.
+  4. **[Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md)** — Project directory, `prj.conf` / `Kconfig` division of responsibilities, shortest flow for adding modules and events.
 +    ⏱️ Estimated time: 1 hour
-```
+~~~~
 
 **Priority**: 🟢 Low (but thoughtful)
 
@@ -319,7 +319,7 @@ west flash
 - Windows-specific issues not prominent enough
 
 **Improvement suggestions**:
-```diff
+~~~~diff
 + ## Quick Index (by Error Message)
 +
 + | Error Message | Possible Cause | Solution |
@@ -334,7 +334,7 @@ west flash
   ### 1.1 `ZEPHYR_BASE not set` / Cannot Find Zephyr
 
   [Existing content]
-```
+~~~~
 
 **Priority**: 🟡 Medium
 
@@ -344,7 +344,7 @@ west flash
 
 ### 1. Add "Newcomers Start Here" in Root README
 
-```markdown
+```
 ## 🚀 Newcomers Start Here
 
 | I want to... | Read this doc | Estimated Time |
@@ -364,10 +364,9 @@ west flash
 
 Add Mermaid diagram to "Architecture Overview" section in root README:
 
-```markdown
 ## Architecture Overview
 
-```mermaid
+<pre>
 graph TB
     subgraph Application Layer
         App[app_main.c]
@@ -390,8 +389,7 @@ graph TB
     Events --> Zephyr
     IPC --> Zephyr
     Zephyr --> Drivers
-```
-```
+</pre>
 
 **Priority**: 🟢 Low (but cool)
 
@@ -401,26 +399,24 @@ graph TB
 
 Create in `.github/` or `docs/`:
 
-```markdown
 # Newcomer Starter Kit Checklist
 
 ## Day 1
 - [ ] Clone repository
 - [ ] Run "5-Minute Quick Experience"
-- [ ] Read [Documentation Index.md](../00-Getting-Started/02-Documentation-Index.md)
+- [ ] Read [Documentation Index.md](../00-getting-started/02-doc-index.md)
 
 ## Week 1
-- [ ] Complete [Environment Setup Guide.md](../10-Environment/11-Environment-Setup-Guide.md)
+- [ ] Complete [Environment Setup Guide.md](../10-environment-build/11-environment-setup.md)
 - [ ] Successfully compile `native_posix`
 - [ ] Successfully compile target development board
 - [ ] Flash and see serial output
 
 ## Month 1
-- [ ] Complete [From Zero to Blinking LED.md](From-Zero-to-Blinking-LED.md)
+- [ ] Complete the proposed `From Zero to Blinking LED.md` guide
 - [ ] Add your first module
 - [ ] Understand how the event system works
 - [ ] Participate in one code review
-```
 
 **Priority**: 🟢 Low (but helpful for long-term onboarding)
 
@@ -464,7 +460,7 @@ Create in `.github/` or `docs/`:
 ## 2026-05-09 Revision Record
 
 This revision migrated the entire `docs/` tree to `docs/zh-CN/` and created new `docs/en/` English version.
-For detailed plan, see [docs/superpowers/specs/2026-05-09-docs-bilingual-revamp-design.md](../../../docs/superpowers/specs/2026-05-09-docs-bilingual-revamp-design.md) (local file, not committed).
+The original bilingual revamp plan was a local working note and is not part of this repository; the current index and mapping scripts are authoritative.
 
 This sync covers the following code changes:
 - Event system: Multi-level SLAB memory pool + cascade fallback

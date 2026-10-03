@@ -30,9 +30,9 @@ The Event System is a core component of the Zephyr RTOS framework, providing a h
 
 | Feature | Description |
 |---------|-------------|
-| Max Event Types | 256 |
-| Max Subscribers Per Type | `CONFIG_EVENT_MAX_SUBSCRIBERS` (default 8) |
-| Event Queue Size | 32 (configurable) |
+| Max Event Types | `CONFIG_EVENT_MAX_TYPES` (default 128) |
+| Max Subscribers Per Type | `CONFIG_EVENT_MAX_SUBSCRIBERS` (default 16) |
+| Event Queue Size | 64 (configurable) |
 | Dispatcher Priority | 5 (configurable) |
 | ISR-Safe Publishing | Supported |
 | **Slab Memory Pool** | Priority-tiered + large data block pool |
@@ -332,7 +332,7 @@ Detailed explanations of Event System related Kconfig items are in **[Project Co
 ```kconfig
 CONFIG_EVENT_SYSTEM=y
 CONFIG_EVENT_QUEUE_SIZE=64
-CONFIG_EVENT_MAX_SUBSCRIBERS=8
+CONFIG_EVENT_MAX_SUBSCRIBERS=16
 CONFIG_EVENT_DISPATCHER_STACK_SIZE=2048
 CONFIG_EVENT_DISPATCHER_PRIORITY=5
 CONFIG_EVENT_STRUCT_SIZE_64=y

@@ -24,7 +24,7 @@ This document compares memory usage and applicable scenarios of four configurati
 
 | Config Item | Standard | Balanced | Minimal | Tiny |
 |-------------|----------|----------|---------|------|
-| `CONFIG_EVENT_MAX_TYPES` | 256 | 128 | 64 | **8** |
+| `CONFIG_EVENT_MAX_TYPES` | 128 | 128 | 64 | **8** |
 | `CONFIG_EVENT_MAX_SUBSCRIBERS` | 16 | 8 | 4 | **1** |
 | `CONFIG_EVENT_QUEUE_SIZE` | 64 | 32 | 16 | **4** |
 | `CONFIG_EVENT_DISPATCHER_STACK_SIZE` | 2048 | 1536 | 1024 | **256** |

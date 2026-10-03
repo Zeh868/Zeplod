@@ -4,7 +4,7 @@
 
 This document describes the System Services under **`src/services/`**: **Logging** (`sys_log`), **Memory Pool** (`sys_memory`), **Software Timer** (`sys_timer`), **Watchdog** (`sys_watchdog`), and optional **Diagnostics** (`sys_diag`). They sit **between Zephyr kernel and business modules**, providing unified capabilities for the Event System, Module Manager, etc.
 
-**Related**: **[Zephyr Application Development and Services Guide.md](../40-app-development/41-zephyr-app-development.md)** (Zephyr general kernel and service patterns) · **[Project Configuration Options.md](../40-app-development/42-config-options.md)** §3 · **[Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md)** · Doxygen **`docs/api/html`** (generation method in **[Scripts and Tools Guide.md](../../zh-CN/60-调试与排错/63-脚本与工具说明.md)**)
+**Related**: **[Zephyr Application Development and Services Guide.md](../40-app-development/41-zephyr-app-development.md)** (Zephyr general kernel and service patterns) · **[Project Configuration Options.md](../40-app-development/42-config-options.md)** §3 · **[Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md)** · Doxygen **`docs/api/html`** (generation method in **[Scripts and Tools Guide.md](../60-debugging/63-scripts-and-tools.md)**)
 
 ---
 
@@ -249,7 +249,7 @@ void demo_sys_wdt(void)
 
 **Usage Recommendations**:
 
-- When needing to联动 with **Event Bus**, only do lightweight work in callback, post to module thread via **`event_publish_*`**.
+- When integrating with the **Event Bus**, do only lightweight work in the callback and post to the module thread via **`event_publish_*`**.
 - Precision and jitter affected by kernel tick and load; hard real-time needs combined hardware timer and peripheral documentation evaluation.
 
 ---
@@ -259,7 +259,7 @@ void demo_sys_wdt(void)
 - **Modes**: `wdt_mode_t` (`WDT_MODE_SOFTWARE` / `WDT_MODE_HARDWARE` / `WDT_MODE_DUAL`).
 - **Configuration**: Timeout, feed margin (`feed_margin_ms`), pre-timeout user callback, etc.
 - **Status**: `wdt_status_t` (`WDT_STATUS_STOPPED` / `WDT_STATUS_RUNNING` / `WDT_STATUS_PAUSED` / `WDT_STATUS_EXPIRED` / `WDT_STATUS_ERROR`).
-- **Feeding**: Periodically call feeding interface in main loop or health task; deep sleep and low power scenarios need to check PM notes in **[OTA and Storage Expansion Guide.md](../../zh-CN/70-发布与产品化/74-OTA与存储扩展指南.md)** to avoid accidental reset.
+- **Feeding**: Periodically call the feeding interface in the main loop or health task; for deep sleep and low-power scenarios, check the PM notes in the **[OTA and Storage Expansion Guide.md](../70-release-productization/74-ota-storage-guide.md)** to avoid accidental reset.
 
 ### sys_watchdog API
 
@@ -290,10 +290,10 @@ void demo_sys_wdt(void)
 
 ## 6. Configuration Options Quick Reference
 
-**`CONFIG_SYS_*`** explanations for above services are centralized in **[Project Configuration Options.md](../40-app-development/42-config-options.md) §3 (System Services)**. If behavior is abnormal after modifying `prj.conf`, first check **[Troubleshooting.md](../../zh-CN/60-调试与排错/62-常见问题与故障排除.md)**, then check **map** and logs.
+**`CONFIG_SYS_*`** explanations for above services are centralized in **[Project Configuration Options.md](../40-app-development/42-config-options.md) §3 (System Services)**. If behavior is abnormal after modifying `prj.conf`, first check **[Troubleshooting.md](../60-debugging/62-troubleshooting.md)**, then check the **map file** and logs.
 
 ---
 
 ## 7. API Details
 
-Function-level descriptions, parameters, and return values follow source comments and **Doxygen-generated `docs/api/html`**; generation command in **[Scripts and Tools Guide.md](../../zh-CN/60-调试与排错/63-脚本与工具说明.md)**.
+Function-level descriptions, parameters, and return values follow source comments and **Doxygen-generated `docs/api/html`**; the generation command is in the **[Scripts and Tools Guide.md](../60-debugging/63-scripts-and-tools.md)**.

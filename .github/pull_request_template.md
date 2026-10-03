@@ -16,8 +16,8 @@
 
 <!-- 删去不适用项 -->
 
-- [ ] 本地 **`west build`**（目标板或 **`native_posix`**）通过
-- [ ] 若改公共逻辑： **`tests/`**（**`west build -b native_posix tests/`** + **`run`**）通过
+- [ ] 本地 **`west build`**（目标板或 Linux/WSL 下的 **`native_sim`**）通过
+- [ ] 若改公共逻辑：**`tests/`**（`native_sim`；Windows 原生用 `qemu_riscv32`）通过
 - [ ] 未提交 **`zephyr_config.env`**、密钥或大体积无关二进制
 - [ ] 已阅读 **[docs/zh-CN/80-贡献与维护/81-参与贡献与代码规范.md](../docs/zh-CN/80-贡献与维护/81-参与贡献与代码规范.md)** 并与 CI 预期一致
 

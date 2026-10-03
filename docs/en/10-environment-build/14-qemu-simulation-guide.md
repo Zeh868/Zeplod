@@ -4,7 +4,9 @@
 
 This guide explains how to **build and run** this project on Zephyr **QEMU boards** on **Windows / Linux / macOS** without physical hardware. Use it to verify boot flow, logging, and module initialization quickly.
 
-> **vs. `native_sim`**: `native_sim` / `native_posix` run the kernel as a POSIX host process and **do not work on native Windows** (see [51-unit-testing-ci.md](../50-testing-ci/51-unit-testing-ci.md)). **QEMU** emulates a real CPU architecture and **runs on Windows 11** when QEMU is installed.
+> **vs. `native_sim`**: `native_sim` / `native_posix` are Linux/WSL2 host paths and
+> **do not work on native Windows or macOS** (see [51-unit-testing-ci.md](../50-testing-ci/51-unit-testing-ci.md)).
+> **QEMU** emulates a real CPU architecture and works on Windows, macOS, and Linux when installed.
 
 ---
 
@@ -219,7 +221,7 @@ SMP board defconfigs usually disable `CONFIG_QEMU_ICOUNT` (incompatible with SMP
 
 ## 6. Unit tests (ztest) on QEMU
 
-Native Windows cannot run `native_sim` / `native_posix`, but you can build and run the **`tests/`** ztest suite on a QEMU board via **`ZEPHYR_TEST_BOARD`** — no WSL required. Linux / macOS can use the same approach.
+Native Windows and macOS cannot run `native_sim` / `native_posix`, but they can build and run the **`tests/`** ztest suite on a QEMU board via **`ZEPHYR_TEST_BOARD`**. Linux can use the same QEMU approach.
 
 > Test layout, coverage, and authoring rules: **[51-unit-testing-ci.md](../50-testing-ci/51-unit-testing-ci.md)** and **`tests/README.md`**.
 

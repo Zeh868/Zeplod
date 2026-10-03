@@ -1,8 +1,8 @@
-> Language: [中文](../../zh-CN/50-测试与CI/53.md) | **English**
+> Language: [中文](../../zh-CN/50-测试与CI/53-硬件测试运行指南.md) | **English**
 
 # Hardware Testing Guide
 
-This document describes how to compile and run test cases on **real hardware**, rather than only in `native_posix` emulator.
+This document describes how to compile and run test cases on **real hardware**, rather than only in the `native_sim` emulator.
 
 ---
 
@@ -10,11 +10,11 @@ This document describes how to compile and run test cases on **real hardware**, 
 
 | Test Type | Target Platform | Purpose |
 |-----------|----------------|---------|
-| **Unit Tests (native_posix)** | PC (Linux/macOS/WSL) | Quickly verify core logic, event system, module manager, and other pure software functions |
+| **Unit Tests (native_sim)** | PC (Linux/WSL) | Quickly verify core logic, event system, module manager, and other pure software functions |
 | **Hardware Tests (real boards)** | ARM Cortex-M / RISC-V, etc. | Verify peripheral drivers, interrupts, timers, watchdog, and other hardware-related functions |
 | **Integration Tests** | Real boards | Verify module collaboration, IPC communication, multi-threading concurrency, and other system-level functions |
 
-**Recommended Flow**: First run unit tests on `native_posix` → Then flash to hardware to verify peripheral-related functions.
+**Recommended Flow**: First run unit tests on `native_sim` → Then flash to hardware to verify peripheral-related functions.
 
 ---
 
@@ -33,7 +33,7 @@ Common board examples:
 - `nucleo_f429zi` (STM32F429)
 - `nucleo_f767zi` (STM32F767)
 - `disco_l475_iot1` (STM32L475)
-- `native_posix` (PC emulation)
+- `native_sim` (Linux/WSL host simulation)
 
 ### 2.2 Building Test Firmware
 
@@ -400,5 +400,5 @@ west flash --build-dir build_f767
 - [Zephyr Twister Test Framework](https://docs.zephyrproject.org/latest/develop/test/twister.html)
 - [Zephyr Device Tree Guide](https://docs.zephyrproject.org/latest/build/dts/intro.html)
 - Repository [Unit Testing and CI Guide.md](51-unit-testing-ci.md)
-- Repository [Board Porting Guide.md](../10-getting-started/13-board-porting-guide.md)
-- Repository [Flashing and Debugging Quick Guide.md](../60-debugging/61-flashing-debugging-guide.md)
+- Repository [Board Porting Guide.md](../10-environment-build/13-board-porting-guide.md)
+- Repository [Flashing and Debugging Quick Guide.md](../60-debugging/61-flash-debug-quickstart.md)

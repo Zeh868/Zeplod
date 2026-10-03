@@ -75,13 +75,6 @@ docs/
 
 ---
 
-## Language Switch
-
-This is the **English** documentation tree. For **Chinese** documentation, switch to:
-- [docs/zh-CN/00-入门/02-文档索引.md](../../zh-CN/00-入门/02-文档索引.md)
-
----
-
 ## Where Should Beginners Start?
 
 The five paths below are organized by common use cases. **You don't need to read every document** — skip anything irrelevant to your current task.
@@ -89,7 +82,7 @@ The five paths below are organized by common use cases. **You don't need to read
 ### Path A: First Compile of This Project (Zero Basics)
 
 0. (If copying this repo **as a new project**) First read **[README.md](../../../README.md)** for "Initialize New Project from Template (Checklist)" and **[04-developer-guide.md](04-developer-guide.md#checklist-after-copying-from-template)**, complete west, CMake, CI board alignment.
-1. **[01-quick-start.md](01-quick-start.md)** — Run on PC in 5 minutes (`native_posix`), no development board needed.
+1. **[01-quick-start.md](01-quick-start.md)** — Run on a Linux/WSL PC with `native_sim`; use QEMU on native Windows.
 2. **[11-environment-setup.md](../10-environment-build/11-environment-setup.md)** — Install Zephyr SDK, West, CMake, Python; configure **`zephyr_config.env`**; verify **`west build`** passes.
 3. **[12-freestanding-app-build.md](../10-environment-build/12-freestanding-app-build.md)** — Understand "Freestanding App" directory structure, **`ZEPHYR_BASE`**, **`west build`** common parameters; custom board and overlay conventions.
 4. If **changing development boards**: **[13-board-porting-guide.md](../10-environment-build/13-board-porting-guide.md)** — Complete board porting flow, Devicetree adjustment, memory config, CI updates.
@@ -128,7 +121,7 @@ For a **separate Git repo** with zeplod under `framework/` (e.g. zephyr_gateway)
 
 ### Path D: Run Unit Tests, Understand CI
 
-1. **`tests/README.md`** — ztest directory, **`native_posix`** run commands, test case templates.
+1. **`tests/README.md`** — ztest directory, **`native_sim`** / QEMU commands, and test templates.
 2. **[51-unit-testing-ci.md](../50-testing-ci/51-unit-testing-ci.md)** — Relationship with main app, GitHub Actions responsibilities, version alignment tips.
 3. **[52-ci-platform-setup.md](../50-testing-ci/52-ci-platform-setup.md)** — Step-by-step instructions for enabling CI on **GitHub / GitLab**, viewing pipelines, changing versions and boards, troubleshooting failures.
 4. Run tests on hardware: **[53-hardware-testing.md](../50-testing-ci/53-hardware-testing.md)**; watchdog special: **[54-watchdog-test-guide.md](../50-testing-ci/54-watchdog-test-guide.md)**.
@@ -138,6 +131,7 @@ For a **separate Git repo** with zeplod under `framework/` (e.g. zephyr_gateway)
 1. **[81-contributing-code-style.md](../80-contributing/81-contributing-code-style.md)** — PR workflow, clang-format, pre-commit, CI expectations, **Commit format specification**.
 2. When security-related, pair with **[75-security-key-management.md](../70-release-productization/75-security-key-management.md)**.
 3. For improving documentation, refer to **[82-doc-improvements.md](../80-contributing/82-doc-improvements.md)**.
+4. For AI-assisted development, read **[83-ai-collaboration-guide.md](../80-contributing/83-ai-collaboration-guide.md)** and follow root `AGENTS.md`.
 
 ### Path F: Architecture Learning, Internal Evolution
 
@@ -233,11 +227,12 @@ For a **separate Git repo** with zeplod under `framework/` (e.g. zephyr_gateway)
 |----------|--------------|----------------|
 | **[81-contributing-code-style.md](../80-contributing/81-contributing-code-style.md)** | Issue/PR, style, CI self-check | Contributors, reviewers |
 | **[82-doc-improvements.md](../80-contributing/82-doc-improvements.md)** | Documentation gap analysis and improvement suggestions | Documentation maintainers |
+| **[83-ai-collaboration-guide.md](../80-contributing/83-ai-collaboration-guide.md)** | Roles, task packets, verification, safety, and escalation | Developers using coding agents |
 
 ### Other
 
 - **`docs/api/html/index.html`** — Doxygen-generated **C API** documentation (run `scripts/generate_docs.ps1` or `generate_docs.sh` to generate).
-- **`tests/README.md`** — **Detailed** explanation of unit tests (`native_posix`) (complements `51-unit-testing-ci.md`).
+- **`tests/README.md`** — **Detailed** unit-test instructions (`native_sim` / QEMU), complementing `51-unit-testing-ci.md`.
 - Root directory **`README.md`** — Project overview and features.
 
 ---
@@ -259,7 +254,7 @@ For a **separate Git repo** with zeplod under `framework/` (e.g. zephyr_gateway)
 
 ## Old Filename Reference (For Bookmarks Pointing to Old Names)
 
-> **2026-05 Bilingual Revamp:** This release moved `docs/<NN-category>/...` to `docs/zh-CN/<NN-category>/...`, with English versions at `docs/en/<NN-English-category>/...` (filled in during P3). If your local bookmarks contain links like `docs/00-入门/01-5分钟快速体验.md`, they are now broken; please prepend `zh-CN/` to the path.
+> **2026-05 Bilingual Revamp:** This release moved the legacy category directories under `docs/zh-CN/`, with English versions under `docs/en/`. Legacy bookmarks need the language directory added to the path.
 
 Documents were reorganized by topic in May 2026 into `docs/zh-CN/<NN-category>/NN-filename.md` format. Below is a commonly-used old-to-new path reference:
 
@@ -299,6 +294,7 @@ Documents were reorganized by topic in May 2026 into `docs/zh-CN/<NN-category>/N
 | `Security & Key Management.md` | [70-Release & Productization/75-security-key-management.md](../70-release-productization/75-security-key-management.md) |
 | `Contributing & Code Style.md` | [80-Contributing/81-contributing-code-style.md](../80-contributing/81-contributing-code-style.md) |
 | `Documentation Improvements.md` | [80-Contributing/82-doc-improvements.md](../80-contributing/82-doc-improvements.md) |
+| `AI-Assisted Development Guide.md` | [80-Contributing/83-ai-collaboration-guide.md](../80-contributing/83-ai-collaboration-guide.md) |
 
 Even older filenames (before first organization):
 

@@ -4,7 +4,7 @@
 
 This guide covers how to install **Zephyr SDK**, **West**, **CMake**, **Python**, how to fill in **`zephyr_config.env`**, and how to verify that the project can be built with **`west build`**. **The entire text starts from scratch**; if you only need to look up a specific step, use the table of contents to jump directly.
 
-**Recommendation**: If this is your first time, please read "Path A: First Build of This Project" in **[Documentation Index.md](../00-getting-started/02-documentation-index.md)** before following this guide step by step.
+**Recommendation**: If this is your first time, please read "Path A: First Build of This Project" in **[Documentation Index.md](../00-getting-started/02-doc-index.md)** before following this guide step by step.
 
 ## Prerequisites
 
@@ -97,15 +97,18 @@ echo $ZEPHYR_SDK_INSTALL_DIR
 ### Step 4: Build the Project
 
 ```bash
-# Clean build (optional)
-west build -b native_posix . --clean
+# Linux/WSL2: clean native_sim build (optional)
+west build -b native_sim . --clean
 
-# Build for native_posix (testing)
-west build -b native_posix .
+# Linux/WSL: build for native_sim (testing)
+west build -b native_sim .
 
 # Build for target development board
 west build -b <your_board> .
 ```
+
+macOS can use `setup_env.sh` to activate the environment, but it cannot run `native_sim`.
+For a hardware-free path, use the [QEMU Simulation Guide](14-qemu-simulation-guide.md).
 
 ## Troubleshooting
 
@@ -184,7 +187,7 @@ west build -b <your_board> . --clean
 | `ZEPHYR_BASE` | Path to Zephyr source root directory | `D:/zephyrproject/zephyr` |
 | `ZEPHYR_SDK_INSTALL_DIR` | Path to Zephyr SDK | `C:/zephyr-sdk` |
 | `QEMU_BIN_PATH` | QEMU binaries directory (`west build -t run`) | `C:/Program Files/qemu` |
-| `DEFAULT_BOARD` | Default build board | `native_posix` |
+| `DEFAULT_BOARD` | Default build board | `native_sim` (Linux/WSL2 only; override with a QEMU board on macOS) |
 | `BUILD_DIR` | Build output directory | `build` |
 
 See **[14-qemu-simulation-guide.md](14-qemu-simulation-guide.md)** for QEMU build and run commands.

@@ -93,7 +93,7 @@ Typical order:
 
 1. **`app_init_apply_cb`**: Print version, zero application control block, write default `app_config_t` (from `app_config.h` macros).
 2. **`sys_log_init` / `sys_mem_init`** (controlled by `APP_CONFIG_ENABLE_*` macros).
-3. **`event_system_init`** → **`event_dispatcher_init`** → **`sys_timer_init`** → **`sys_wdt_init`** (按宏开关).
+3. **`event_system_init`** → **`event_dispatcher_init`** → **`sys_timer_init`** → **`sys_wdt_init`** (subject to their configuration switches).
 4. **`module_manager_init`**.
 5. **Business modules** call **`SYS_INIT(..., APP_INIT_PRIO_MODULE_*)`** within their **`.c`** files to call **`module_manager_register()`** (examples in `example_module_a.c`, `example_module_ipc.c`, etc.). Modules with dependencies should use **larger** `APP_INIT_PRIO_*` values (registered later), e.g., `example_module_multi_dep` after A/B.
 6. **`app_init_finalize`**: Set "application initialized" flag, record startup timestamp.
@@ -109,7 +109,7 @@ On failure (e.g., `event_dispatcher_init` returns non-`EVENT_OK`), the correspon
 
 1. Add **`SYS_INIT(your_module_auto_register, POST_KERNEL, APP_INIT_PRIO_…)`** at the end of the module **`.c`** file, and in the callback prepare **`config`** and call **`module_manager_register(your_module_get_interface(), &cfg, &id)`**.
 2. Add **`APP_INIT_PRIO_MODULE_YOURS`** in **`app_config.h`**, with a value between **`APP_INIT_PRIO_MODULE_MGR`** and **`APP_INIT_PRIO_APP_FINAL`**; if depending on other modules, **value should be larger** than the depended module's priority (executes later).
-3. **No need** to modify **`app_main.c`**'s centralized registration list ( **`app_register_modules()``** has been removed).
+3. **No need** to modify **`app_main.c`**'s centralized registration list (**`app_register_modules()`** has been removed).
 
 Unit test project (**`tests/`**) does not link **`app_main.c`**, and can still explicitly call **`module_manager_init()`** / **`module_manager_register()`** in test cases.
 
@@ -1494,7 +1494,7 @@ DECLARE_MODULE_INTERFACE_WITH_DEPS(my_module, my_deps);
 
 **Pitfall 3: Callback Reentry Trap**
 
-Calling `module_manager_register` or subscribing to new events within a module event callback chain may trigger internal list capacity expansion (realloc), causing iterator invalidation:
+Calling **module_manager_register** or subscribing to new events within a module event callback chain may trigger internal list capacity expansion (realloc), causing iterator invalidation:
 
 ```c
 // ❌ Dangerous example
@@ -1557,10 +1557,10 @@ void debug_stats(void)
 ### Example Modules
 
 The project includes the following example modules:
-- `example_module_gpio` - GPIO control module
-- `example_module_uart` - UART communication module
-- `example_module_a` - General purpose example module
-- `example_module_b` - General purpose example module
+- **example_module_gpio** - GPIO control module
+- **example_module_uart** - UART communication module
+- **example_module_a** - General purpose example module
+- **example_module_b** - General purpose example module
 
 ### Related Documentation
 

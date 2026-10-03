@@ -207,7 +207,7 @@ Details: [63-scripts-and-tools.md](../60-debugging/63-scripts-and-tools.md).
 | Garbled Chinese on Windows | Updated `run_qemu.ps1` UTF-8 setup — [14-qemu §8.11](14-qemu-simulation-guide.md) |
 | Scripts use framework mode | Fix `add_subdirectory(framework)` in top CMakeLists |
 
-More: [62-common-issues.md](../60-debugging/62-common-issues.md).
+More: [62-troubleshooting.md](../60-debugging/62-troubleshooting.md).
 
 ---
 

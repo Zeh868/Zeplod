@@ -4,7 +4,7 @@
 
 This guide covers how to flash firmware to a development board, view serial logs, and get started with debugging—assuming you have **already successfully run `west build`**. Specific commands may vary slightly depending on your OS and debugger (ST-Link, J-Link, etc.). Refer to the **[Zephyr Official Documentation](https://docs.zephyrproject.org/latest/develop/west/build-flash-debug.html)** for details.
 
-**Prerequisite Reading**: [Environment Setup Guide.md](../10-getting-started/11-environment-setup.md) · [Standalone Build Guide.md](../10-getting-started/12-standalone-build.md)
+**Prerequisite Reading**: [Environment Setup Guide.md](../10-environment-build/11-environment-setup.md) · [Standalone Build Guide.md](../10-environment-build/12-freestanding-app-build.md)
 
 ---
 
@@ -28,7 +28,7 @@ Common Notes:
 
 - **ST Nucleo** boards with onboard ST-Link typically work after installing the **ST driver**; if it fails, check USB, driver, and the Zephyr documentation for the board's **Runner** info.  
 - For **J-Link**, **DAPLink**, etc., install the corresponding tools and ensure they are in your `PATH`.  
-- Multi-image / partitioned schemes (e.g., MCUboot) require following the **[OTA and Storage Guide.md](../70-release/74-ota-storage-guide.md)** and official MCUboot documentation—**do not** rely on a single `west flash` to cover all partitions.
+- Multi-image / partitioned schemes (e.g., MCUboot) require following the **[OTA and Storage Guide.md](../70-release-productization/74-ota-storage-guide.md)** and official MCUboot documentation—**do not** rely on a single `west flash` to cover all partitions.
 
 ---
 

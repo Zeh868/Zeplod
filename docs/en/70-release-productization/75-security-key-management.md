@@ -4,7 +4,7 @@
 
 This article explains from a **repository and process** perspective: what content **must not** be committed to Git, how keys should be managed in OTA/signing scenarios, and precautions for local configurations like **`zephyr_config.env`**. **Does not replace** Zephyr/MCUboot official security whitepaper; mass production security requires threat modeling and independent audit.
 
-**Related**: **[OTA and Storage Expansion Guide.md](74-ota-storage-guide.md)** · **[Contributing and Code Standards.md](../80-contribution-maintenance/81-contributing-and-code-standards.md)**
+**Related**: **[OTA and Storage Expansion Guide.md](74-ota-storage-guide.md)** · **[Contributing and Code Standards.md](../80-contributing/81-contributing-code-style.md)**
 
 ---
 

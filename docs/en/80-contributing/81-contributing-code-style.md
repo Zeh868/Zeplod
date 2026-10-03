@@ -4,7 +4,7 @@
 
 This document explains how to **submit changes** (Issue / Pull Request) to this repository, as well as expectations for **code style, linting tools, and CI**, so that contributors and reviewers are aligned.
 
-**Related**: Root **[README.md](../../../README.md)** "Contributing" section · **[Unit Testing and CI Guide.md](../50-测试与CI/51-单元测试与持续集成说明.md)** · **[Zephyr Version and CI Guide.md](../70-发布与产品化/72-Zephyr版本与CI说明.md)**
+**Related**: Root **[README.md](../../../README.md)** "Contributing" section · **[Unit Testing and CI Guide.md](../50-testing-ci/51-unit-testing-ci.md)** · **[Zephyr Version and CI Guide.md](../70-release-productization/72-zephyr-version-ci.md)**
 
 ---
 
@@ -24,10 +24,12 @@ For large changes, open an **Issue** first to discuss direction and avoid confli
 
 | Item | Description |
 |------|-------------|
-| **Build** | At minimum **`west build -b <your-target-board> .`** passes; if changing common code, also build **`native_posix`** + **`tests/`** (see **`tests/README.md`**). |
+| **Build** | At minimum **`west build -b <your-target-board> .`** passes; for common-code changes, also build **`native_sim`** + **`tests/`** on Linux/WSL (see **`tests/README.md`**). Use QEMU on native Windows. |
 | **Format** | C code conforms to repository **`.clang-format`** (see next section). |
 | **Test** | Related **ztest** cases pass; new logic should ideally include test coverage. |
-| **Documentation** | If changing `Kconfig`, public APIs, or behavior, update **`docs/`** accordingly (at minimum **[Project Configuration Guide.md](../40-应用开发/42-项目配置项说明.md)** or topic手册) and necessary comments. |
+| **Documentation** | If changing `Kconfig`, public APIs, or behavior, update **`docs/`** accordingly (at minimum the **[Project Configuration Guide.md](../40-app-development/42-config-options.md)** or the relevant topic guide) and necessary comments. |
+
+For documentation changes, run the commands listed in the Chinese canonical contribution guide and the CI workflow, including strict whole-tree link and language checks.
 
 ---
 
@@ -35,7 +37,7 @@ For large changes, open an **Issue** first to discuss direction and avoid confli
 
 - **Formatting**: Use **clang-format** with the style file at repository root **`.clang-format`**.  
   Example: `clang-format -i src/path/to/file.c`  
-- **Static Analysis (optional)**: **`.clang-tidy`** can be used with **`compile_commands.json`** via IDE or command line (see **[Developer Getting Started Guide.md](../00-入门/04-开发者入门指南.md)**).  
+- **Static Analysis (optional)**: **`.clang-tidy`** can be used with **`compile_commands.json`** via IDE or command line (see the **[Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md)**).
   - **Pre-commit Hook (optional)**: If using **pre-commit**, configuration is in **`.pre-commit-config.yaml`** (install: `pip install pre-commit && pre-commit install`).
 
 ---
@@ -75,7 +77,7 @@ Closes: #123"
 | Type | Description | When to Use |
 |------|-------------|-------------|
 | **`feat`** | New feature | Add new feature, interface, or module |
-| **`fix`** | Bug fix | Fix incorrect behavior or logic漏洞 |
+| **`fix`** | Bug fix | Fix incorrect behavior or logic defects |
 | **`docs`** | Documentation change | Modify README, manuals, comments (no logic change) |
 | **`style`** | Code formatting | Formatting, whitespace, indentation (no logic change) |
 | **`refactor`** | Refactoring | Code structure changes without changing functionality or API |
@@ -117,7 +119,7 @@ docs(ci): update CI board configuration documentation
 - ✅ Start with **lowercase** (unless it's a proper noun)
 - ✅ **No period** at the end
 - ✅ Length ≤50 characters (Git standard)
-- ✅ **Chinese commits**: Use concise Chinese phrases (e.g., "增加堆泄漏检测" not "增加了堆泄漏检测功能")
+- ✅ Keep commit subjects concise and omit filler words.
 
 **Good examples**:
 ```
@@ -128,12 +130,12 @@ docs(app): update app_kv usage example
 
 **Bad examples**:
 ```
-修改                          # Too vague
-修复 bug                      # No scope
-添加功能                      # No indication of what feature
-更新了代码                    # No information
+change                        # Too vague
+fix bug                       # No scope
+add feature                   # No indication of what feature
+update code                   # No information
 feat: add new feature         # No scope, unclear
-FIX: 修复严重问题              # Uppercase, exclamation mark
+FIX: critical fix!            # Uppercase, exclamation mark
 ```
 
 ### 3.5.5 `<body>` Body (Optional)
@@ -208,20 +210,20 @@ git config commit.template .gitmessage
 
 ## 4. Continuous Integration (CI)
 
-GitHub Actions is in **`.github/workflows/ci.yml`**; GitLab is in **`.gitlab-ci.yml`**. For steps to enable and troubleshoot CI on these platforms, see **[CI Platform Configuration Guide.md](../50-测试与CI/52-CI平台配置保姆级手册.md)**. Pipelines typically include:
+GitHub Actions is in **`.github/workflows/ci.yml`**; GitLab is in **`.gitlab-ci.yml`**. For steps to enable and troubleshoot CI on these platforms, see the **[CI Platform Configuration Guide.md](../50-testing-ci/52-ci-platform-setup.md)**. Pipelines typically include:
 
 - **ShellCheck**: Static analysis for **`scripts/*.sh`**.  
 - **pre-commit**: Aligned with **`.pre-commit-config.yaml`** (includes **clang-format**, YAML, trailing whitespace, etc.); locally install with `pip install pre-commit && pre-commit install` to align with CI.  
-- **Build / Test**: **`native_posix`** main project and **`tests/`**, multi-ARM board matrix smoke tests, etc.
+- **Build / Test**: **`native_sim`** main project and **`tests/`**, plus multi-ARM board matrix smoke tests.
 
-Local Zephyr and CI image versions should be aligned; see **[Zephyr Version and CI Guide.md](../70-发布与产品化/72-Zephyr版本与CI说明.md)**. Ensure CI is **green** before merging PRs or explain failure reasons (e.g., known limitations triggered by documentation-only changes).
+Local Zephyr and CI image versions should be aligned; see the **[Zephyr Version and CI Guide.md](../70-release-productization/72-zephyr-version-ci.md)**. Ensure CI is **green** before merging PRs or explain failure reasons (e.g., known limitations triggered by documentation-only changes).
 
 ---
 
 ## 5. Change Scope and Review-friendly Practices
 
-- **Each PR focuses on a single topic**, avoid "顺便重构" unrelated files, for easier review and rollback.  
-- **Do not commit** local paths, secrets, large binaries (for secrets-related topics, see **[Security and Key Management Guide.md](../70-发布与产品化/75-安全与密钥管理说明.md)**).  
+- **Each PR focuses on a single topic**; avoid opportunistic refactors of unrelated files so review and rollback stay manageable.
+- **Do not commit** local paths, secrets, or large binaries (for secrets-related topics, see the **[Security and Key Management Guide.md](../70-release-productization/75-security-key-management.md)**).
 - For changes to **`prj.conf` / `app.overlay`**, if they affect RAM or board-level behavior, please explain **target board** and **verification method** in the PR description.
 
 ---

@@ -30,7 +30,7 @@ For the complete manual list, three learning paths (build / business / release),
 
 When using this repo as a **new product engineering template**, it is recommended to check the following items to avoid path, version, and CI drift over time.
 
-1. **west.yml**: `revision` matches the Zephyr version used by your team (default **v3.6.0**, aligned with **[72-zephyr-version-ci.md](../70-release-productization/72-zephyr-version-ci.md)** and CI mirrors); if using a company internal mirror, modify the `url`.
+1. **west.yml**: keep `revision` aligned with the team Zephyr version (currently **v4.3.0**, matching **[72-zephyr-version-ci.md](../70-release-productization/72-zephyr-version-ci.md)** and CI). Shared repositories must not retain a developer-local `file://` URL.
 2. **zephyr_config.env**: Copy from **`zephyr_config.env.template`**, fill in **`ZEPHYR_BASE`**, **`ZEPHYR_SDK_INSTALL_DIR`**; **do not commit** to Git (repo **`.gitignore`** already includes this file). If it was accidentally committed historically, remove from index: `git rm --cached zephyr_config.env` (then commit again).
 3. **CMake project name**: In root **`CMakeLists.txt`**, change **`project(...)`** to your product name.
 4. **Version and documentation**: Update root **`APP_VERSION`**, **`README.md`** title and product description as needed.
@@ -55,8 +55,8 @@ source scripts/setup_env.sh
 ### 2. Build Project
 
 ```bash
-# Build native_posix (for testing)
-west build -b native_posix .
+# Linux/WSL: build native_sim (for testing)
+west build -b native_sim .
 
 # Build for target development board (example: replace with your board name)
 west build -b nucleo_l4r5zi .
@@ -190,7 +190,7 @@ Configuration is in root directory `.pre-commit-config.yaml` (includes trailing 
 The repo provides `.clang-tidy` (can be tightened or loosened per project). First configure Zephyr build to generate `compile_commands.json`, for example:
 
 ```bash
-west build -b native_posix . -- -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+west build -b native_sim . -- -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 clang-tidy -p build src/core/event_system.c
 ```
 
@@ -215,10 +215,10 @@ Without `compile_commands.json`, you can only use `clang-tidy ... -- -I...` to m
 ### Running Unit Tests
 
 ```bash
-# Build (native_posix)
-west build -b native_posix tests/ --build-dir build_tests
+# Linux/WSL: build native_sim
+west build -b native_sim tests/ --build-dir build_tests
 
-# Run ztest executable (Linux/macOS)
+# Run ztest executable (Linux/WSL2)
 ./build_tests/zephyr/zephyr
 
 # Or one-step
@@ -292,11 +292,7 @@ app log 3
 
 ### Version Update
 
-1. Update version:
-   - `CMakeLists.txt`
-   - `README.md`
-   - `Doxyfile`
-   - `CHANGELOG.md`
+1. Update the root `APP_VERSION` with `python scripts/bump_version.py <version>` and prepare Release notes.
 
 2. Commit changes:
 ```bash
@@ -392,4 +388,4 @@ For Devicetree Overlay auto-discovery order, difference between `app.overlay` an
 - [Documentation Index](02-doc-index.md)
 - [Project README](../../../README.md)
 - [Environment Setup & Configuration Guide](../10-environment-build/11-environment-setup.md)
-- [API Documentation](see scripts/ tools documentation for generation)
+- [API Documentation Generation](../60-debugging/63-scripts-and-tools.md)

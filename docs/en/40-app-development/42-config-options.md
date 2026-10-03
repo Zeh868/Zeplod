@@ -27,9 +27,9 @@ This document documents the meaning of each configuration option in this reposit
 | Configuration Macro | Type | Default | Range | Description |
 |--------------------|------|---------|-------|-------------|
 | `CONFIG_EVENT_SYSTEM` | bool | y | - | Enable event system: publish/subscribe, event queue and dispatch thread. Features depending on event system unavailable when disabled. |
-| `CONFIG_EVENT_MAX_TYPES` | int | 256 | 4-256 | Maximum supported event type count. **Key memory item**: ~288 bytes per type (16 subscriber config). For 32KB SRAM systems, recommend 8 or smaller. |
-| `CONFIG_EVENT_QUEUE_SIZE` | int | 32 | 4-512 | Maximum events in global event queue. **Code default 32**, too large wastes RAM, too small drops events easily. |
-| `CONFIG_EVENT_MAX_SUBSCRIBERS` | int | 8 | 1-64 | **Per event type** maximum subscriber count. Code default 8. |
+| `CONFIG_EVENT_MAX_TYPES` | int | 128 | 4-256 | Maximum event-type ID space. Kconfig estimates about 228 bytes per type with eight subscribers. Product features need IDs through 72; tests using higher IDs set 256 explicitly. |
+| `CONFIG_EVENT_QUEUE_SIZE` | int | 64 | 4-512 | Maximum events in the global queue. Larger values use more RAM; smaller values can drop events. |
+| `CONFIG_EVENT_MAX_SUBSCRIBERS` | int | 16 | 1-64 | Maximum subscribers **per event type**. |
 | `CONFIG_EVENT_DISPATCHER_STACK_SIZE` | int | 2048 | 256-8192 | Event dispatch thread stack size (bytes). Increase when callbacks are deep or local variables large. Minimum can be 256. |
 | `CONFIG_EVENT_DISPATCHER_PRIORITY` | int | 5 | 1-15 | Dispatch thread priority (range 1-15, **smaller value = higher priority**). |
 
@@ -73,7 +73,7 @@ Event system static memory ≈ CONFIG_EVENT_MAX_TYPES × (16 + CONFIG_EVENT_MAX_
 | Minimal | 64 | 2 | 8 | 32B | Disabled | ~2 KB | SRAM 32-64KB |
 | **Tiny** | **8** | **1** | **4** | **32B** | **Disabled** | **~0.5 KB** | **SRAM ≤ 32KB** |
 
-**Note**: Event type registration, subscribe APIs etc. see [Event System Detailed Usage Guide.md](../30-core-modules/31-事件系统详细使用说明.md).
+**Note**: For event type registration and subscription APIs, see the [Event System Detailed Usage Guide.md](../30-core-modules/31-event-system-guide.md).
 
 ---
 
@@ -83,7 +83,7 @@ Event system static memory ≈ CONFIG_EVENT_MAX_TYPES × (16 + CONFIG_EVENT_MAX_
 |--------------------|------|---------|--------------|-------------|
 | `CONFIG_MODULE_MANAGER` | bool | y | — | Enable module manager: register/unregister, `init/start/stop` lifecycle, integration with event subscription. |
 | `CONFIG_MAX_MODULES` | int | 16 | `MODULE_MANAGER` | Upper limit of **slots** for simultaneously registered business modules (range 4-32). |
-| `CONFIG_MODULE_INIT_TIMEOUT_MS` | int | 1000 | `MODULE_MANAGER` | Maximum allowed time (ms, range 100-10000) for single `register()` call to module `init()`. Timeout causes registration failure; 0 means no check (code为准, see `module_manager.h`). |
+| `CONFIG_MODULE_INIT_TIMEOUT_MS` | int | 1000 | `MODULE_MANAGER` | Maximum allowed time (ms, range 100-10000) for a single `register()` call to module `init()`. Timeout causes registration failure; 0 means no check (the code is authoritative; see `module_manager.h`). |
 | `CONFIG_MODULE_MANAGER_RUNTIME_DEPENDENCIES` | bool | n | `MODULE_MANAGER` | When enabled: `module_manager_start_all()` performs topological sorting based on each module's `depends_on` (NULL-terminated module name string array); `module_manager_stop_all()` stops in reverse dependency order on RUNNING set. Illegal dependencies eliminated via fixed-point; cycles or anomalies fallback to priority-only sorting. |
 | `CONFIG_MODULE_MANAGER_DEPENDS_LIST_MAX` | int | 16 | `MODULE_MANAGER_RUNTIME_DEPENDENCIES` | Maximum dependency names to scan in `depends_on` for a **single module** (excluding trailing NULL), prevents infinite loop from incorrectly NULL-terminated list. **Not** total system module count, **not** dependency chain depth. Range 4-64. |
 | `CONFIG_MODULE_MANAGER_START_ALL_ABORT_ON_FAILURE` | bool | n | `MODULE_MANAGER` | When y: `module_manager_start_all()` stops starting subsequent modules after first `start` returns non-0. Recommended with runtime dependencies to prevent dependents from starting when their dependencies fail. |
@@ -93,13 +93,13 @@ Event system static memory ≈ CONFIG_EVENT_MAX_TYPES × (16 + CONFIG_EVENT_MAX_
 | `CONFIG_EXAMPLE_MODULE_UART_USE_ZEPHYR_CONSOLE` | bool | y | `EXAMPLE_MODULE_UART` | When y: use `DEVICE_DT_GET(DT_CHOSEN(zephyr_console))`; when n: use `device_get_binding(CONFIG_EXAMPLE_MODULE_UART_DEVICE_NAME)`. |
 | `CONFIG_EXAMPLE_MODULE_UART_DEVICE_NAME` | string | `UART_0` | `EXAMPLE_MODULE_UART` | Device name string when above is n. |
 
-**Note**: `module_interface_t.depends_on`, `DECLARE_MODULE_*` macros and examples see [Module System Detailed Usage Guide.md](../30-core-modules/32-模块系统详细使用说明.md). GPIO/UART overlay config examples see repository root **`conf/examples/gpio_uart.conf`**.
+**Note**: For `module_interface_t.depends_on`, `DECLARE_MODULE_*` macros, and examples, see the [Module System Detailed Usage Guide.md](../30-core-modules/32-module-system-guide.md). GPIO/UART overlay examples are in **`conf/examples/gpio_uart.conf`**.
 
 ---
 
 ## 3. System Services Configuration
 
-Each **`sys_*`** module's responsibilities and usage notes see **[System Services Usage Guide.md](../30-core-modules/36-系统服务使用说明.md)**. Below options for application-side services (logging, memory pool, watchdog, etc.) to read; specific implementation as per source code.
+For each **`sys_*`** module's responsibilities and usage notes, see the **[System Services Usage Guide.md](../30-core-modules/36-system-services-guide.md)**. The options below cover application-side services such as logging, memory pools, and watchdogs; source code remains authoritative.
 
 **`sys_log` destination**: controlled by `sys_log_config_t.destinations` (**`sys_log_dest_mask_t`**) bitwise selecting `SYS_LOG_DEST_CONSOLE`, `SYS_LOG_DEST_MEMORY`, `SYS_LOG_DEST_RTT` (requires **`CONFIG_SEGGER_RTT`**), `SYS_LOG_DEST_UART`; mask 0 falls back to "console + memory ring" during init.
 
@@ -136,13 +136,13 @@ Corresponds to menu **"Thread IPC service (in-app)"**, defined in `src/modules/i
 - Default config (64KB SRAM): ~4.7 KB
 - Tiny config (20KB SRAM): ~2.1 KB
 
-**Note**: Architecture and API see **[Thread_IPC Service Usage Guide.md](../30-core-modules/33-线程IPC服务使用说明.md)**, **[Thread_IPC Module Integration Guide.md](../30-core-modules/34-Thread_IPC模块集成指南.md)**.
+**Note**: For architecture and APIs, see the **[Thread IPC Service Usage Guide.md](../30-core-modules/33-thread-ipc-service-guide.md)** and **[Thread IPC Module Integration Guide.md](../30-core-modules/34-thread-ipc-integration-guide.md)**.
 
 ---
 
 ## 5. Application KV Store (optional persistent)
 
-Menu **"Application KV store"** in root **`Kconfig`**. **`CONFIG_APP_KV_PERSIST`** depends on **`CONFIG_FLASH=y`** (on-chip Flash driver,连带 **`FLASH_PAGE_LAYOUT`** / **`FLASH_HAS_DRIVER_ENABLED`**), plus **`CONFIG_SETTINGS`**, **`CONFIG_SETTINGS_NVS`** etc. NVS is Zephyr internal **choice** backend, application **Kconfig cannot use `select`**, must explicitly enable in **`prj.conf` / fragment** in order; typical combination see **`conf/features/app_kv_persist.conf`**. Targets without Flash (e.g., **`native_posix`**) should not merge persistent config.
+The **"Application KV store"** menu is in the root **`Kconfig`**. **`CONFIG_APP_KV_PERSIST`** depends on **`CONFIG_FLASH=y`** (including **`FLASH_PAGE_LAYOUT`** / **`FLASH_HAS_DRIVER_ENABLED`**), plus **`CONFIG_SETTINGS`**, **`CONFIG_SETTINGS_NVS`**, and related options. NVS is an internal Zephyr **choice** backend, so application **Kconfig cannot use `select`**; enable the options explicitly and in order in **`prj.conf` / fragments**. See **`conf/features/app_kv_persist.conf`** for a typical combination. Targets without Flash (for example **`native_sim`**) should not merge the persistence fragment.
 
 If **`Deprecated symbol FLASH_CODE_PARTITION_ADDRESS_INVALID`** appears: on ARM + XIP with non-zero Flash base, if **`/chosen` does not set `zephyr,code-partition`**, Kconfig treats partition address as 0 triggering this deprecated symbol. This repository's **`boards/nucleo_l4r5zi.overlay`** already supplements **`&flash0` / `partitions` `ranges`**, adding **`slot0_partition`** and **`zephyr,code-partition`** to eliminate this warning. If also wanting **link stage** to not place firmware in `storage` partition, can additionally specify **`CONFIG_USE_DT_CODE_PARTITION=y`** (depends on above chosen). Other boards follow [Zephyr 4.4 Migration Guide](https://docs.zephyrproject.org/latest/releases/migration-guide-4.4.html) to supplement `ranges` for Flash and `fixed-partitions`. Upstream overview at [zephyr#104862](https://github.com/zephyrproject-rtos/zephyr/issues/104862).
 
@@ -171,7 +171,7 @@ API: **`app_kv_save()`**, **`app_kv_load()`** (see **`app_kv.h`**); error code *
 | `APP_CONFIG_ENABLE_STATS` | When `1`: event dispatcher enables runtime statistics, Shell **`app events`** additionally prints `event_dispatcher_get_stats()`; when `0` only event system global statistics. |
 | `APP_CONFIG_ENABLE_LOG_DUMP` | When `1` Shell **`app log`** calls `sys_log_dump()`; when `0` prompts disabled (can still use via API). |
 
-Runtime dependency ordering is independent of above switches; multi-dependency example requires Kconfig to enable `EXAMPLE_MODULE_MULTI_DEP` and usually keep A/B enabled. Full startup order see [Module System Detailed Usage Guide.md](../30-core-modules/32-模块系统详细使用说明.md) "Application Startup and Initialization Order (Zephyr SYS_INIT)".
+Runtime dependency ordering is independent of the switches above; the multi-dependency example requires Kconfig to enable `EXAMPLE_MODULE_MULTI_DEP` and usually keep A/B enabled. For the full startup order, see "Application Startup and Initialization Order (Zephyr SYS_INIT)" in the [Module System Detailed Usage Guide.md](../30-core-modules/32-module-system-guide.md).
 
 ---
 
@@ -190,7 +190,7 @@ For board-level peripherals, networking, filesystem etc. refer to corresponding 
 
 ## 8. Optional productization modules (factory_mode)
 
-Defined in `src/modules/factory/Kconfig`. See **[46-Factory Mode Module Guide](../30-core-modules/46-factory-mode-module-guide.md)** (zh-CN source). Overlays: **`conf/features/factory_mode.conf`** (production line), **`conf/targets/production.conf`** (factory off by default).
+Defined in `src/modules/factory/Kconfig`. The implementation and public headers are the current sources of truth. Overlays: **`conf/features/factory_mode.conf`** (production line), **`conf/targets/production.conf`** (factory off by default).
 
 | Configuration Macro | Type | Default | Depends | Description |
 |--------------------|------|---------|---------|-------------|
@@ -210,4 +210,4 @@ Defined in `src/modules/factory/Kconfig`. See **[46-Factory Mode Module Guide](.
 
 - When Kconfig source changes, please sync update this page's tables.
 - Details strongly related to modules/events still subject to thematic documents:
-  [Module System Detailed Usage Guide.md](../30-core-modules/32-模块系统详细使用说明.md) · [Event System Detailed Usage Guide.md](../30-core-modules/31-事件系统详细使用说明.md) · [Documentation Index.md](../00-getting-started/02-documentation-index.md)
+  [Module System Detailed Usage Guide.md](../30-core-modules/32-module-system-guide.md) · [Event System Detailed Usage Guide.md](../30-core-modules/31-event-system-guide.md) · [Documentation Index.md](../00-getting-started/02-doc-index.md)

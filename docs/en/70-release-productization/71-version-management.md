@@ -129,15 +129,15 @@ if (VERSION_AT_MOST(2, 0, 0)) {
 
 ## Modifying Version Numbers
 
-### Method 1: Edit CMakeLists.txt
+The repo-root `APP_VERSION` file is the single source of truth for the application version.
+Use the version script to update it and the related documentation references; do not edit
+the derived variables in `CMakeLists.txt` directly:
 
-```cmake
-set(PROJECT_VERSION_MAJOR 1)
-set(PROJECT_VERSION_MINOR 1)
-set(PROJECT_VERSION_PATCH 0)
+```bash
+python scripts/bump_version.py 1.1.0
 ```
 
-### Method 2: Use Git Tags
+At release time, create a Git tag that matches `APP_VERSION`:
 
 ```bash
 # Create version tag
@@ -185,7 +185,7 @@ GitHub Actions automatically records version information on each build:
 
 1. **Update version number before each release** - Follow Semantic Versioning spec
 2. **Use Git tags** - Easy tracking of release versions
-3. **Record changelog** - Update CHANGELOG.md
+3. **Prepare release notes** - This repository does not currently maintain a standalone changelog; record the changes in the Release notes
 4. **Check version compatibility** - Verify versions during module communication
 5. **Preserve version info** - Embed version string in firmware
 

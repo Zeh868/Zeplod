@@ -67,17 +67,21 @@ tests/
 ```
 
 ```bash
-# Linux / macOS / WSL
+# Linux / macOS / WSL2：仅激活环境
 source scripts/setup_env.sh
 ```
 
 ### 推荐：使用脚本（自动激活环境 + 选择板型）
 
-**Linux / macOS / WSL：**
+**Linux / WSL2：**
 
 ```bash
 ./scripts/run_tests.sh
 ```
+
+**macOS：** 不支持 `native_sim` / `native_posix`。请按
+[QEMU 仿真运行指南](../docs/zh-CN/10-环境与构建/14-QEMU仿真运行指南.md)使用
+`qemu_riscv32` 的直接 `west build` / `west build -t run` 命令。
 
 **Windows（PowerShell）：**
 
@@ -112,7 +116,7 @@ west build -b native_sim tests/ --build-dir build_tests \
 west build -t run --build-dir build_tests
 ```
 
-快捷脚本（Linux/macOS/WSL）：
+快捷脚本（Linux/WSL2）：
 
 ```bash
 ./scripts/run_tests.sh              # 默认 prj.conf（核心 + data_bus）
@@ -142,7 +146,7 @@ west build -b native_sim tests/ --build-dir build_tests \
 west build -t run --build-dir build_tests
 ```
 
-在 Linux/macOS 上也可直接执行 `build_tests/zephyr/zephyr`。
+在 Linux/WSL2 上也可直接执行 `build_tests/zephyr/zephyr`。
 
 ### 套件间隔离
 
@@ -151,7 +155,7 @@ west build -t run --build-dir build_tests
 ## 生命周期与异步测试约定
 
 - **边界契约表**：见 [LIFECYCLE_CONTRACTS.md](LIFECYCLE_CONTRACTS.md)（cancel、timeout、重复 stop 等返回值）。
-- **线程服务对照**：见 [85-线程服务生命周期约定.md](../docs/zh-CN/80-贡献与维护/85-线程服务生命周期约定.md)（dispatcher / IPC / Data Bus）。
+- **线程服务对照**：见 [线程服务生命周期约定.md](../docs/zh-CN/30-核心模块/38-线程服务生命周期约定.md)（dispatcher / IPC / Data Bus）。
 - **异步等待**：优先使用 [ztest_sync.h](ztest_sync.h)（`ztest_wait_atomic_*`、`ztest_wait_until`）或 `k_sem` / `k_event`；避免仅用裸 `k_msleep()` 判断异步完成。
 - **订阅回调**：使用 [test_event_stubs.h](test_event_stubs.h) 中的 `test_event_noop_callback`，勿使用 `0x1000` 等不可调用地址。
 
@@ -214,7 +218,7 @@ Windows 原生无法运行 `native_sim`，使用 **`scripts/run_qemu.ps1`** 在 
 
 需已安装 **Zephyr SDK**（`riscv64-zephyr-elf-gcov`）与 **gcovr**（`pip install gcovr`）。
 
-### Linux / macOS / WSL（native_sim）
+### Linux / WSL2（native_sim）
 
 将 `native_sim` 或 `native_posix` 替换为当前环境可用板型：
 
@@ -272,8 +276,10 @@ Environment overrides:
 |---|---|---|
 | Linux | Supported | Run `./scripts/run_tests.sh`, `./scripts/run_sanitizers.sh`, `./scripts/run_twister.sh` |
 | WSL (Linux kernel) | Supported | Same as Linux |
+| macOS | Not supported for POSIX arch | Use `qemu_riscv32`; see the QEMU guide |
 | Windows (native) | Not supported for POSIX arch | Use WSL/Linux for host tests, or use hardware board tests |
 
 Notes:
+- `native_sim` is designed and tested for Linux; macOS and native Windows must not select POSIX host boards.
 - `run_tests.ps1`, `run_sanitizers.ps1`, and `run_twister.ps1` now fail fast on native Windows when POSIX boards are selected.
 - Use `ZEPHYR_TEST_BOARD=<hardware_board>` for non-host board builds on Windows.

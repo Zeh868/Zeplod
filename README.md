@@ -175,7 +175,7 @@ zeplod/
 │   ├── targets/                      # qemu
 │   └── examples/                     # gpio_uart, module_ipc
 ├── app.overlay                       # Common device tree overlay
-├── west.yml                          # West manifest (default 4.3.0-rc3)
+├── west.yml                          # West manifest (revision v4.3.0)
 ├── zephyr_config.env                 # Local paths (copied from template, do NOT commit secrets)
 ├── zephyr_config.env.template
 ├── Doxyfile                          # API documentation generation config
@@ -224,8 +224,7 @@ zeplod/
 │   ├── 50-测试与CI/                   # Unit tests, CI config
 │   ├── 60-调试与排错/                 # Flashing, debugging, troubleshooting
 │   ├── 70-发布与产品化/               # Versioning, release checklist, OTA, security
-│   ├── 80-贡献与维护/                 # Contribution guide, code standards
-│   └── 90-学习资源/                   # Embedded AI, career development, project review
+│   └── 80-贡献与维护/                 # Contribution, AI collaboration, code standards
 └── src/
     ├── core/                          # Core event system
     │   ├── event_system.{c,h}         # Publish-subscribe, type management
@@ -282,7 +281,7 @@ After copying or forking this repo, complete the following steps in order for ea
 
 | Step | Content |
 |------|---------|
-| 1 | **west.yml**: Align `revision` with your team's Zephyr version (default **4.3.0-rc3**, same as CI); private mirrors can change `url`. |
+| 1 | **west.yml**: Align `revision` with your team's Zephyr version (currently **v4.3.0**, same as CI); shared repositories must use a URL available to the team. |
 | 2 | **zephyr_config.env**: Copy from `zephyr_config.env.template` and fill in paths; **do NOT commit** (already in `.gitignore`). |
 | 3 | **CMake**: In root `CMakeLists.txt`, change `project(...)` name to your product project name. |
 | 4 | **Version & Description**: Modify `APP_VERSION`, README title and product description as needed. |
@@ -300,7 +299,7 @@ After copying or forking this repo, complete the following steps in order for ea
 - Python 3.8+
 - West (Zephyr build tool)
 
-CI (`.github/workflows/ci.yml`) currently uses Zephyr **4.3.0-rc3** build image; locally, use the same or compatible Zephyr version to reduce configuration differences.
+CI (`.github/workflows/ci.yml`) currently uses the Zephyr **4.3.0** build image; locally, use the same or a compatible Zephyr version to reduce configuration differences.
 
 ### Project Type: Freestanding Application
 
@@ -368,7 +367,7 @@ export ZEPHYR_SDK_INSTALL_DIR=/path/to/zephyr-sdk
 # Build for target board
 west build -b <your_board> .
 
-# Build for native_sim (for host testing)
+# Linux/WSL2: build for native_sim (host testing)
 west build -b native_sim .
 
 # Use specific config files (can merge multiple)
@@ -431,10 +430,10 @@ west build -b vendor/board_name .
 ### Event System
 
 The core event system provides:
-- **Event Types**: 256 unique event types (0-255)
+- **Event Types**: 128 by default (IDs 0-127, configurable up to 256)
 - **Event Priorities**: Low, Normal, High, Critical (lower numeric value = higher priority)
 - **Subscribers**: Up to 16 subscribers per event type
-- **Queue**: Configurable event queue (default 32 events)
+- **Queue**: Configurable event queue (default 64 events)
 - **Slab Memory Pools**: Priority-tiered (CRITICAL/HIGH/NORMAL) and large-block (256B/1KB/4KB)
 - **Real-Time Safe APIs**: `_rt` suffix APIs allocate entirely from Slab pool, O(1) deterministic time
 
@@ -701,15 +700,16 @@ if (leaks > 0) {
 Uses ztest under `tests/`, sharing `src/` implementation with main app (does not link `app_main` or example business modules); **enabled** `CONFIG_THREAD_IPC_SERVICE` by default and includes `ipc_service` for smoke testing; heap size increased (see `tests/prj.conf`).
 
 ```bash
-# native_sim platform
+# Linux/WSL2: native_sim platform
 west build -b native_sim tests/ --build-dir build_tests
 west build -t run --build-dir build_tests
 
-# native_sim platform
+# Linux/WSL2: native_sim full configuration
 west build -b native_sim tests/ --build-dir build_tests_sim
 west build -t run --build-dir build_tests_sim
 ```
 
+macOS does not support `native_sim`; use the [QEMU Simulation Guide](docs/en/10-environment-build/14-qemu-simulation-guide.md).
 Requires `ZEPHYR_BASE` or root directory `zephyr_config.env`. See tests/README.md for details.
 
 ## License

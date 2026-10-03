@@ -29,6 +29,7 @@ Full index and learning paths: **[02-doc-index.md](02-doc-index.md)**. Code-to-d
 | Environment / SDK setup | [11](../10-environment-build/11-environment-setup.md) | [12](../10-environment-build/12-freestanding-app-build.md) |
 | Freestanding / BOARD_ROOT | [12](../10-environment-build/12-freestanding-app-build.md) | [44](../40-app-development/44-devicetree-memory-config.md) |
 | Contribute / PR | [81](../80-contributing/81-contributing-code-style.md) | [82](../80-contributing/82-doc-improvements.md) |
+| Use AI / coding agents | [83](../80-contributing/83-ai-collaboration-guide.md) | Root `AGENTS.md` |
 
 ---
 

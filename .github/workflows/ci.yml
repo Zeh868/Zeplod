@@ -103,6 +103,13 @@ jobs:
             --check-code-map \
             --check-parity \
             --strict
+          python3 scripts/lint_docs.py docs \
+            --skip-config-check \
+            --check-residual-chinese \
+            --strict
+          python3 scripts/lint_docs.py tests \
+            --skip-config-check \
+            --strict
 
   preflight:
     name: Preflight Checks
