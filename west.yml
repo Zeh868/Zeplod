@@ -23,7 +23,8 @@ manifest:
   projects:
     - name: zephyr
       path: zephyr
-      # 与 .github/workflows/ci.yml 中 ZEPHYR_VERSION / zephyr-build:v4.4.0 一致。
+      # 与 .github/workflows/ci.yml 中的 Zephyr v4.4.0 一致。
+      # CI 镜像是 ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4。
       # 本机构建仍用 zephyr_config.env 里的 ZEPHYR_BASE，不必依赖这里的 URL。
       url: https://github.com/zephyrproject-rtos/zephyr
       revision: v4.4.0

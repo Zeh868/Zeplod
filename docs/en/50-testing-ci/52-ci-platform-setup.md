@@ -15,11 +15,11 @@ Regardless of using GitHub or GitLab, the core approach of this template is cons
 | Stage | What It Does | Dependencies |
 |-------|-------------|--------------|
 | **Code Quality** | `shellcheck` checks `scripts/*.sh`; `pre-commit run --all-files` (including **clang-format**, YAML, trailing whitespace, etc., see `**.pre-commit-config.yaml**`) | Only needs Ubuntu + tools, **does not need** Zephyr source |
-| **Build / Test** | Executes `**west init -l .**` → `**west update**` → `**west zephyr-export**` inside container `**gcr.io/zephyr-project/zephyr-build:v<version>**`, then `**west build**` (Zephyr's `revision` in root `**west.yml**` should align) | Needs access to GitHub (to pull Zephyr) |
+| **Build / Test** | Executes `**west init -l .**` → `**west update**` → `**west zephyr-export**` inside container `**ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4**`, then `**west build**` (aligned with Zephyr `revision: v4.4.0` in root `**west.yml**`) | Needs access to GitHub (to pull Zephyr) |
 | **Documentation** | **Doxygen** generates `**docs/api/`** (if `**Doxyfile**` exists) | Only needs **doxygen** / **graphviz** |
 | **Release (GitHub only, current config)** | Collects build artifacts and creates **Release** when `**v***` tag is pushed | See below "GitHub · Tag Release" |
 
-**Single Source of Version Number**: `**ZEPHYR_VERSION`** in the workflow (currently `4.4.0`) should match container tag `**zephyr-build:v4.4.0**` and `**revision: v4.4.0**` in root `**west.yml`**; change all three together when upgrading. See **[Zephyr Version and CI Guide](../70-release-productization/72-zephyr-version-ci.md)** for details.
+**Version alignment**: `**ZEPHYR_VERSION**` is Zephyr **`4.4.0`**, and `**west.yml**` `**revision**` is **`v4.4.0`**. The build image is not `v4.4.0`; it is official compatibility level **0.29**, **`ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4`**. GitHub `container.image` must use that literal tag and cannot use `${{ env.ZEPHYR_VERSION }}`. See **[Zephyr Version and CI Guide](../70-release-productization/72-zephyr-version-ci.md)** for details.
 
 ---
 
@@ -122,9 +122,9 @@ GitHub and GitLab are **mutually exclusive choices** but can also **both be used
 ### 3.3 Runner: Shared Runner or Self-Hosted?
 
 - **GitLab.com Shared Runners**: Can use directly within free quota; **no need** to set up your own machine, pipelines appear in **CI/CD → Pipelines** after pushing code.
-- **Self-hosted Runner**: Used when inside company intranet, needing access to private dependencies, or pulling `**gcr.io**` is slow; register Runner in **Settings → CI/CD → Runners** per documentation; admin needs to ensure Runner can access **GitHub** (`**west update**` pulls Zephyr) and **Google Container Registry** (pulls `**zephyr-build**` image).
+- **Self-hosted Runner**: Used when inside company intranet, needing access to private dependencies, or pulling `**ghcr.io**` is slow; register Runner in **Settings → CI/CD → Runners** per documentation; admin needs to ensure Runner can access **GitHub** (`**west update**` pulls Zephyr) and **ghcr.io** (pulls the `**zephyr-build**` image).
 
-If pulling `**gcr.io/zephyr-project/zephyr-build**` fails:
+If pulling `**ghcr.io/zephyrproject-rtos/zephyr-build**` fails:
 
 - Check Runner network and firewall;
 - Or sync the image to an enterprise mirror, then change `**image:**` in `**.gitlab-ci.yml**` to intranet mirror address.
@@ -138,7 +138,7 @@ If pulling `**gcr.io/zephyr-project/zephyr-build**` fails:
 ### 3.5 Modifying GitLab CI Behavior
 
 1. Edit root `**.gitlab-ci.yml**`.
-2. When modifying `**ZEPHYR_VERSION**` at top, must sync `**image: gcr.io/zephyr-project/zephyr-build:v$ZEPHYR_VERSION**` (image tag is `**v` + version number**) with `**west.yml**`.
+2. When changing the Zephyr version, sync `**ZEPHYR_VERSION**`, `**west.yml**` `**revision**`, and image `**ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4**`. The image tag is the Docker image's own version, not `v` plus the Zephyr version.
 3. `**build_arm**` uses `**parallel: matrix**` with `**BOARD**` list; changing board names is same as GitHub's **matrix.board**.
 4. If a Job is temporarily not needed, comment out entire Job section, or add condition `**rules:if: '$CI_PIPELINE_SOURCE == "merge_request_event"'`** (see [GitLab CI documentation](https://docs.gitlab.com/ee/ci/yaml/)).
 
@@ -156,7 +156,7 @@ Path: **Settings → CI/CD → Variables**.
 | Item | GitHub | GitLab |
 |------|--------|--------|
 | Config File | `**.github/workflows/ci.yml**` | `**.gitlab-ci.yml**` |
-| Zephyr Container | `**gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}**` | `**gcr.io/zephyr-project/zephyr-build:v$ZEPHYR_VERSION**` |
+| Zephyr Container | `**ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4**` | `**ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4**` |
 | Application Zephyr Source | `**west.yml**` + `**west update**` | Same |
 | View Results | **Actions** page | **CI/CD → Pipelines** |
 | Quality Gate | **Code Quality** job | **code_quality** job |

@@ -8,12 +8,12 @@
 
 ## CI 使用的 Zephyr 版本
 
-以下两处应使用**同一** Zephyr 主线（镜像标签为 **`v` + 版本号**，如 **`v4.4.0`**）：
+以下两处应使用**同一** Zephyr 主线。当前 Zephyr 版本是 **`v4.4.0`**。官方构建镜像不拿 Zephyr 版本号当标签：Zephyr 4.4 对应镜像兼容级别 **0.29**，当前镜像是 **`ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4`**。GitHub Actions 的 `container.image` 不能写 `${{ env.* }}`。
 
 | 平台 | 配置文件 | 变量 / 镜像 |
 |------|----------|-------------|
-| **GitHub Actions** | `.github/workflows/ci.yml` | `env.ZEPHYR_VERSION`；`image: gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}` |
-| **GitLab CI** | `.gitlab-ci.yml` | `variables.ZEPHYR_VERSION`；`image: gcr.io/zephyr-project/zephyr-build:v$ZEPHYR_VERSION` |
+| **GitHub Actions** | `.github/workflows/ci.yml` | `env.ZEPHYR_VERSION` 为 `4.4.0`；`image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4` |
+| **GitLab CI** | `.gitlab-ci.yml` | `variables.ZEPHYR_VERSION` 为 `4.4.0`；`image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4` |
 
 合并或发版前，若升级 CI 中的 Zephyr 版本，请同步：
 

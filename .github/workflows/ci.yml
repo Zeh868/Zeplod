@@ -37,7 +37,9 @@ on:
     - cron: "0 0 * * 0"
 
 env:
-  # jobs.*.container 不能引用 env.*。镜像标签必须与这里、west.yml 的 revision 一起改。
+  # jobs.*.container 不能引用 env.*。Zephyr 4.4 的官方镜像标签不是 v4.4.0，
+  # 兼容级别是 0.29，当前使用 ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4。
+  # 升级 Zephyr 时同时改 ZEPHYR_VERSION、下面的镜像标签和 west.yml 的 revision。
   ZEPHYR_VERSION: "4.4.0"
   BUILD_TYPE: release
   CORE_COVERAGE_MIN: 80
@@ -143,7 +145,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v4.4.0
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     steps:
@@ -185,7 +187,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v4.4.0
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     steps:
@@ -398,7 +400,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v4.4.0
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     strategy:
@@ -445,7 +447,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v4.4.0
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     steps:
@@ -485,7 +487,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v4.4.0
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     strategy:

@@ -8,12 +8,12 @@ To reduce discrepancies between "works locally, fails in CI" or vice versa, it i
 
 ## Zephyr Version Used in CI
 
-Both locations should use the **same** Zephyr mainline (mirror tag is **`v` + version number**, like **`v4.4.0`**):
+Both locations should use the **same** Zephyr mainline. The current Zephyr version is **`v4.4.0`**. The official build image is not tagged with the Zephyr version: Zephyr 4.4 uses image compatibility level **0.29**, currently **`ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4`**. GitHub Actions `container.image` cannot use `${{ env.* }}`.
 
 | Platform | Config File | Variable / Image |
 |----------|-------------|------------------|
-| **GitHub Actions** | `.github/workflows/ci.yml` | `env.ZEPHYR_VERSION`; `image: gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}` |
-| **GitLab CI** | `.gitlab-ci.yml` | `variables.ZEPHYR_VERSION`; `image: gcr.io/zephyr-project/zephyr-build:v$ZEPHYR_VERSION` |
+| **GitHub Actions** | `.github/workflows/ci.yml` | `env.ZEPHYR_VERSION` is `4.4.0`; `image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4` |
+| **GitLab CI** | `.gitlab-ci.yml` | `variables.ZEPHYR_VERSION` is `4.4.0`; `image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4` |
 
 Before merging or releasing, if upgrading Zephyr version in CI, also sync:
 
