@@ -155,3 +155,36 @@ git diff --check
 - **改动文件**
 - **验证**（实际命令、退出码、关键证据）
 - **未决项**（只列需要用户决策的事项）
+
+## Cursor Cloud specific instructions
+
+云端虚拟机已安装 Zephyr **v4.3.0** 与 Zephyr SDK **0.17.4**，不在本仓库内：
+
+- `ZEPHYR_BASE=/opt/zephyrproject/zephyr`
+- `ZEPHYR_SDK_INSTALL_DIR=/opt/zephyr-sdk-0.17.4`
+- Python 虚拟环境 `/opt/zephyr-venv`，`west` 在 `/usr/local/bin`
+- 登录 shell 与交互 bash 会加载 `/etc/zephyr.env`。非登录 shell 先执行 `source /etc/zephyr.env`
+
+每次启动会把已跟踪的 `zephyr_config.env` 改写成上述 Linux 路径。该文件的仓库副本是维护者 Windows 机器的路径（本机工程目录为 `D:\Projects\shared\Zeplod`）。改写后 `git status` 会显示它被修改，不要提交。
+
+不要在本仓库执行 `west update`。`west.yml` 中的 Zephyr URL 是开发者本机的 `file://D:/Code/...`。
+
+`native_sim` 以 `-m32` 编译，环境已安装 `gcc-multilib` / `g++-multilib` / `libc6-dev-i386`。
+
+主机仿真：
+
+```bash
+source /etc/zephyr.env
+source scripts/setup_env.sh
+west build -b native_sim .
+west build -t run
+```
+
+`zephyr.exe` 会停在 shell。日志中的 `uart connected to pseudotty:` 才是 shell 的 TTY。可在该 TTY 上执行 `app status`、`app modules`、`app events`、`version`。
+
+测试脚本在 Git 中没有可执行位，并且在 `set -o pipefail` 下 `west boards | grep -q` 会因 SIGPIPE 误选已删除的 `native_posix`。环境已导出 `ZEPHYR_TEST_BOARD=native_sim`。运行：
+
+```bash
+source /etc/zephyr.env
+bash scripts/run_tests.sh
+```
