@@ -19,7 +19,7 @@ Regardless of using GitHub or GitLab, the core approach of this template is cons
 | **Documentation** | **Doxygen** generates `**docs/api/`** (if `**Doxyfile**` exists) | Only needs **doxygen** / **graphviz** |
 | **Release (GitHub only, current config)** | Collects build artifacts and creates **Release** when `**v***` tag is pushed | See below "GitHub · Tag Release" |
 
-**Single Source of Version Number**: `**ZEPHYR_VERSION`** in the workflow (currently `4.3.0`) should match container tag `**zephyr-build:v4.3.0**` and `**revision: v4.3.0**` in root `**west.yml`**; change all three together when upgrading. See **[Zephyr Version and CI Guide](../70-release-productization/72-zephyr-version-ci.md)** for details.
+**Single Source of Version Number**: `**ZEPHYR_VERSION`** in the workflow (currently `4.4.0`) should match container tag `**zephyr-build:v4.4.0**` and `**revision: v4.4.0**` in root `**west.yml`**; change all three together when upgrading. See **[Zephyr Version and CI Guide](../70-release-productization/72-zephyr-version-ci.md)** for details.
 
 ---
 

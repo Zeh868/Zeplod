@@ -8,7 +8,7 @@
 
 ## CI 使用的 Zephyr 版本
 
-以下两处应使用**同一** Zephyr 主线（镜像标签为 **`v` + 版本号**，如 **`v4.3.0`**）：
+以下两处应使用**同一** Zephyr 主线（镜像标签为 **`v` + 版本号**，如 **`v4.4.0`**）：
 
 | 平台 | 配置文件 | 变量 / 镜像 |
 |------|----------|-------------|
@@ -19,7 +19,7 @@
 
 1. 本地 `ZEPHYR_BASE` 指向的 Zephyr 仓库检出 **兼容 tag 或分支**。
 2. [Zephyr SDK](https://github.com/zephyrproject-rtos/sdk-ng/releases) 与 [Zephyr 文档](https://docs.zephyrproject.org/) 中该版本要求的工具链版本。
-3. 本仓库 **`west.yml`** 中 **`revision:`**（建议 **tag**，如 **`v4.3.0`**）。
+3. 本仓库 **`west.yml`** 中 **`revision:`**（建议 **tag**，如 **`v4.4.0`**）。
 4. 若使用 GitLab，同步 **`.gitlab-ci.yml`** 中的 **`ZEPHYR_VERSION`**（与 GitHub 一致）。
 5. 本仓库 `README.md` 中关于前提条件 / CI 的说明（若有硬编码版本号）。
 
@@ -29,7 +29,7 @@
 
 若使用根目录 `west.yml` 管理 Zephyr：
 
-- 将 `projects.zephyr.revision` 固定为 **tag**（如 `v4.3.0`）而非浮动的 `main`，便于复现构建。
+- 将 `projects.zephyr.revision` 固定为 **tag**（如 `v4.4.0`）而非浮动的 `main`，便于复现构建。
 - 首次 `west update` 后执行 `west zephyr-export`，与 `zephyr_config.env` 中的 `ZEPHYR_BASE` 一致。
 
 ## 应用版本（固件版本号）

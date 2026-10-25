@@ -32,7 +32,7 @@ on:
     - cron: "0 0 * * 0"
 
 env:
-  ZEPHYR_VERSION: 4.3.0
+  ZEPHYR_VERSION: 4.4.0
   BUILD_TYPE: release
   CORE_COVERAGE_MIN: 80
   EVENT_CORE_COVERAGE_MIN: 78

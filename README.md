@@ -175,7 +175,7 @@ zeplod/
 │   ├── targets/                      # qemu
 │   └── examples/                     # gpio_uart, module_ipc
 ├── app.overlay                       # Common device tree overlay
-├── west.yml                          # West manifest (revision v4.3.0)
+├── west.yml                          # West manifest (revision v4.4.0)
 ├── zephyr_config.env                 # Local paths (copied from template, do NOT commit secrets)
 ├── zephyr_config.env.template
 ├── Doxyfile                          # API documentation generation config
@@ -281,7 +281,7 @@ After copying or forking this repo, complete the following steps in order for ea
 
 | Step | Content |
 |------|---------|
-| 1 | **west.yml**: Align `revision` with your team's Zephyr version (currently **v4.3.0**, same as CI); shared repositories must use a URL available to the team. |
+| 1 | **west.yml**: Align `revision` with your team's Zephyr version (currently **v4.4.0**, same as CI); shared repositories must use a URL available to the team. |
 | 2 | **zephyr_config.env**: Copy from `zephyr_config.env.template` and fill in paths; **do NOT commit** (already in `.gitignore`). |
 | 3 | **CMake**: In root `CMakeLists.txt`, change `project(...)` name to your product project name. |
 | 4 | **Version & Description**: Modify `APP_VERSION`, README title and product description as needed. |
@@ -299,7 +299,7 @@ After copying or forking this repo, complete the following steps in order for ea
 - Python 3.8+
 - West (Zephyr build tool)
 
-CI (`.github/workflows/ci.yml`) currently uses the Zephyr **4.3.0** build image; locally, use the same or a compatible Zephyr version to reduce configuration differences.
+CI (`.github/workflows/ci.yml`) currently uses the Zephyr **4.4.0** build image; locally, use the same or a compatible Zephyr version to reduce configuration differences.
 
 ### Project Type: Freestanding Application
 

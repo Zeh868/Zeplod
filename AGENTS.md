@@ -40,8 +40,8 @@
 
 ## 3. 当前工具链与常用命令
 
-前置：Zephyr 4.3.x、兼容的 Zephyr SDK、CMake 3.20+、West、满足该 Zephyr 发布要求的 Python。
-本仓库 CI 当前使用 **Zephyr 4.3.0 + `native_sim`**。`native_sim` / `native_posix`
+前置：Zephyr 4.4.x、兼容的 Zephyr SDK、CMake 3.20+、West、满足该 Zephyr 发布要求的 Python。
+本仓库 CI 当前使用 **Zephyr 4.4.0 + `native_sim`**。`native_sim` / `native_posix`
 仅用于 Linux/WSL2；Windows 原生和 macOS 使用 `qemu_riscv32`。
 
 ```bash
@@ -158,10 +158,10 @@ git diff --check
 
 ## Cursor Cloud specific instructions
 
-云端虚拟机已安装 Zephyr **v4.3.0** 与 Zephyr SDK **0.17.4**，不在本仓库内：
+云端虚拟机已安装 Zephyr **v4.4.0** 与 Zephyr SDK **1.0.1**，不在本仓库内：
 
 - `ZEPHYR_BASE=/opt/zephyrproject/zephyr`
-- `ZEPHYR_SDK_INSTALL_DIR=/opt/zephyr-sdk-0.17.4`
+- `ZEPHYR_SDK_INSTALL_DIR=/opt/zephyr-sdk-1.0.1`
 - Python 虚拟环境 `/opt/zephyr-venv`，`west` 在 `/usr/local/bin`
 - 登录 shell 与交互 bash 会加载 `/etc/zephyr.env`。非登录 shell 先执行 `source /etc/zephyr.env`
 

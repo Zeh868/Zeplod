@@ -8,7 +8,7 @@ To reduce discrepancies between "works locally, fails in CI" or vice versa, it i
 
 ## Zephyr Version Used in CI
 
-Both locations should use the **same** Zephyr mainline (mirror tag is **`v` + version number**, like **`v4.3.0`**):
+Both locations should use the **same** Zephyr mainline (mirror tag is **`v` + version number**, like **`v4.4.0`**):
 
 | Platform | Config File | Variable / Image |
 |----------|-------------|------------------|
@@ -19,7 +19,7 @@ Before merging or releasing, if upgrading Zephyr version in CI, also sync:
 
 1. Local `ZEPHYR_BASE` pointing to Zephyr repo checkout **compatible tag or branch**.
 2. Toolchain version required by [Zephyr SDK](https://github.com/zephyrproject-rtos/sdk-ng/releases) and [Zephyr Documentation](https://docs.zephyrproject.org/) for that version.
-3. **`revision:`** in this repository's **`west.yml`** (recommend **tag**, like **`v4.3.0`**).
+3. **`revision:`** in this repository's **`west.yml`** (recommend **tag**, like **`v4.4.0`**).
 4. If using GitLab, sync **`ZEPHYR_VERSION`** in **`.gitlab-ci.yml`** (consistent with GitHub).
 5. Any hardcoded version numbers in this repository's `README.md` regarding prerequisites/CI (if applicable).
 
@@ -29,7 +29,7 @@ Before merging or releasing, if upgrading Zephyr version in CI, also sync:
 
 If using root `west.yml` to manage Zephyr:
 
-- Fix `projects.zephyr.revision` to a **tag** (e.g., `v4.3.0`) instead of floating `main`, for reproducible builds.
+- Fix `projects.zephyr.revision` to a **tag** (e.g., `v4.4.0`) instead of floating `main`, for reproducible builds.
 - After first `west update`, run `west zephyr-export`, consistent with `ZEPHYR_BASE` in `zephyr_config.env`.
 
 ## Application Version (Firmware Version Number)

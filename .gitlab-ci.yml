@@ -9,7 +9,7 @@ stages:
   - docs
 
 variables:
-  ZEPHYR_VERSION: "4.3.0"
+  ZEPHYR_VERSION: "4.4.0"
   # west / 子模块若需完整历史，可改为 0（全量克隆，较慢）
   GIT_DEPTH: "20"
 

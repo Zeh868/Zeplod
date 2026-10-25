@@ -24,7 +24,7 @@ This checklist guides the complete process of project version releases, ensuring
 - [ ] **Run all unit tests and pass**
 
   ```bash
-  # Linux/WSL: run the CI-aligned native_sim tests (Zephyr 4.3.0)
+  # Linux/WSL: run the CI-aligned native_sim tests (Zephyr 4.4.0)
   west build -b native_sim tests/ --build-dir build_tests
   west build -t run --build-dir build_tests
   ```

@@ -12,7 +12,7 @@ This document describes how to build and run **ztest unit tests** in this reposi
 
 ## 1. Unit Tests (`tests/`)
 
-- **Purpose**: Run core logic on a **host simulation board**. This repository and its Zephyr 4.3.0 CI use **`native_sim`**.
+- **Purpose**: Run core logic on a **host simulation board**. This repository and its Zephyr 4.4.0 CI use **`native_sim`**.
 - **Details** (`prj.conf`, `prj_native_sim.conf`, writing cases, gcov): See **`tests/README.md`**.
 - **Recommended** (auto board selection):
 
@@ -30,7 +30,7 @@ west build -b native_sim tests/ --build-dir build_tests
 west build -t run --build-dir build_tests
 ```
 
-- **CI-aligned** (Zephyr 4.3.0 container):
+- **CI-aligned** (Zephyr 4.4.0 container):
 
 ```bash
 west build -b native_sim tests/ --build-dir build_tests
@@ -87,7 +87,7 @@ Both typically include (subject to actual YAML):
 | Job Type | Typical Content |
 |----------|----------------|
 | **Code Quality** | **`shellcheck`** (`scripts/*.sh`), **`pre-commit run --all-files`** (including **clang-format**, YAML, trailing whitespace, etc., consistent with **`.pre-commit-config.yaml`**) |
-| **Build** | Main project and **`tests/`** on **`native_sim`** (Zephyr 4.3.0 CI image), plus ARM matrix smoke builds |
+| **Build** | Main project and **`tests/`** on **`native_sim`** (Zephyr 4.4.0 CI image), plus ARM matrix smoke builds |
 
 **Version Alignment**: Zephyr container version used by CI is documented in **`Zephyr Version and CI Guide.md`**; local **`ZEPHYR_BASE`** is recommended to be compatible with CI main version line to reduce "passed locally, failed on CI".
 
