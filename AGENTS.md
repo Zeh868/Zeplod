@@ -167,7 +167,7 @@ git diff --check
 
 每次启动会把已跟踪的 `zephyr_config.env` 改写成上述 Linux 路径。该文件的仓库副本是维护者 Windows 机器的路径（本机工程目录为 `D:\Projects\shared\Zeplod`）。改写后 `git status` 会显示它被修改，不要提交。
 
-不要在本仓库执行 `west update`。`west.yml` 中的 Zephyr URL 是开发者本机的 `file://D:/Code/...`。
+不要在本仓库执行 `west update`。云端 Zephyr 已在 `/opt/zephyrproject`，再 update 会把第二份源码拉进工作区。
 
 `native_sim` 以 `-m32` 编译，环境已安装 `gcc-multilib` / `g++-multilib` / `libc6-dev-i386`。
 

@@ -146,8 +146,6 @@ The framework provides **`state_machine`** (lifecycle) and **`lock_order`** (mul
 | New modules | Use `zepl_state_machine_t` for init/start/stop; register lock order on every mutex; no external callbacks while holding locks |
 | Caveats | `event_system` does **not** use `ZEP_STATE_ERROR`; `module_manager` has a single global lock; IPC pending + shm release nests TABLE → ENTRY |
 
-Implementation plan and intentional design choices: **[2026-05-23-state-machine-lock-ordering-implementation-plan.md](../../superpowers/plan/2026-05-23-state-machine-lock-ordering-implementation-plan.md)** (under `docs/superpowers/plan/`).
-
 ### Modifying Configuration
 
 - `prj.conf` - Zephyr kernel and app merged config (`CONFIG_*`)

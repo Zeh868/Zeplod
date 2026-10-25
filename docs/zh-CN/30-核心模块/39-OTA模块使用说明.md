@@ -4,7 +4,7 @@
 
 本文说明 Zeplod **可选 OTA 模块**（`CONFIG_OTA_MODULE`）的 API、事件契约、接入路径与测试用法。
 
-**相关**： [产品化扩展路线图](../../superpowers/plan/2026-06-13-product-framework-expansion-roadmap.md) · [OTA 实施计划](../../superpowers/plan/2026-06-13-ota-module-implementation-plan.md) · [74-OTA与存储扩展指南](../70-发布与产品化/74-OTA与存储扩展指南.md)
+**相关**：[74-OTA与存储扩展指南](../70-发布与产品化/74-OTA与存储扩展指南.md)
 
 ---
 
