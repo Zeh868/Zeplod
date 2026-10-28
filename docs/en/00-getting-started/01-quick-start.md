@@ -2,7 +2,7 @@
 
 # 5-Minute Quick Start
 
-**Goal**: build and run Zeplod without a development board in five minutes, assuming a working Zephyr 4.3.x environment.
+**Goal**: build and run Zeplod without a development board in five minutes, assuming a working Zephyr 4.4.x environment.
 
 > If Zephyr, the SDK, West, or their dependencies are not installed, complete the
 > [Environment Setup Guide](../10-environment-build/11-environment-setup.md) first. Initial downloads are not part of the five minutes.

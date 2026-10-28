@@ -178,7 +178,7 @@ zeplod/
 │   ├── targets/                      # qemu
 │   └── examples/                     # gpio_uart、module_ipc
 ├── app.overlay                       # 通用设备树覆盖
-├── west.yml                          # West 清单（revision 为 v4.3.0）
+├── west.yml                          # West 清单（revision 为 v4.4.0）
 ├── zephyr_config.env                 # 本地路径（由 template 复制生成，勿提交密钥）
 ├── zephyr_config.env.template
 ├── Doxyfile                          # API 文档生成配置
@@ -284,7 +284,7 @@ zeplod/
 
 | 步骤 | 内容 |
 |------|------|
-| 1 | **west.yml**：将 `revision` 与团队 Zephyr 版本对齐（当前 **v4.3.0**，与 CI 一致）；共享仓库须使用团队可访问的 URL。 |
+| 1 | **west.yml**：将 `revision` 与团队 Zephyr 版本对齐（当前 **v4.4.0**，与 CI 一致）；共享仓库须使用团队可访问的 URL。 |
 | 2 | **zephyr_config.env**：由 `zephyr_config.env.template` 复制并填写路径；**勿提交**（已在 `.gitignore` 中忽略）。 |
 | 3 | **CMake**：根目录 `CMakeLists.txt` 中 `project(...)` 名称改为你的产品工程名。 |
 | 4 | **版本与说明**：按需修改 `APP_VERSION`、README 标题与产品描述。 |
@@ -302,7 +302,7 @@ zeplod/
 - Python 3.8+
 - West（Zephyr 构建工具）
 
-CI（`.github/workflows/ci.yml`）当前使用 Zephyr **4.3.0** 构建镜像；本地建议使用相同或兼容的 Zephyr 版本，以减少配置差异。
+CI（`.github/workflows/ci.yml`）当前使用 Zephyr **4.4.0** 构建镜像；本地建议使用相同或兼容的 Zephyr 版本，以减少配置差异。
 
 ### 项目类型：独立应用程序 (Freestanding Application)
 

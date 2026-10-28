@@ -30,7 +30,7 @@ For the complete manual list, three learning paths (build / business / release),
 
 When using this repo as a **new product engineering template**, it is recommended to check the following items to avoid path, version, and CI drift over time.
 
-1. **west.yml**: keep `revision` aligned with the team Zephyr version (currently **v4.3.0**, matching **[72-zephyr-version-ci.md](../70-release-productization/72-zephyr-version-ci.md)** and CI). Shared repositories must not retain a developer-local `file://` URL.
+1. **west.yml**: keep `revision` aligned with the team Zephyr version (currently **v4.4.0**, matching **[72-zephyr-version-ci.md](../70-release-productization/72-zephyr-version-ci.md)** and CI). Shared repositories must not retain a developer-local `file://` URL.
 2. **zephyr_config.env**: Copy from **`zephyr_config.env.template`**, fill in **`ZEPHYR_BASE`**, **`ZEPHYR_SDK_INSTALL_DIR`**; **do not commit** to Git (repo **`.gitignore`** already includes this file). If it was accidentally committed historically, remove from index: `git rm --cached zephyr_config.env` (then commit again).
 3. **CMake project name**: In root **`CMakeLists.txt`**, change **`project(...)`** to your product name.
 4. **Version and documentation**: Update root **`APP_VERSION`**, **`README.md`** title and product description as needed.
@@ -145,8 +145,6 @@ The framework provides **`state_machine`** (lifecycle) and **`lock_order`** (mul
 | Lock order API | Pair `zepl_lock_enter` / `zepl_lock_exit` with `k_mutex`; levels GLOBAL → STATE → TABLE → ENTRY → RESOURCE |
 | New modules | Use `zepl_state_machine_t` for init/start/stop; register lock order on every mutex; no external callbacks while holding locks |
 | Caveats | `event_system` does **not** use `ZEP_STATE_ERROR`; `module_manager` has a single global lock; IPC pending + shm release nests TABLE → ENTRY |
-
-Implementation plan and intentional design choices: **[2026-05-23-state-machine-lock-ordering-implementation-plan.md](../../superpowers/plan/2026-05-23-state-machine-lock-ordering-implementation-plan.md)** (under `docs/superpowers/plan/`).
 
 ### Modifying Configuration
 

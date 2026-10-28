@@ -2,6 +2,7 @@
 name: Zephyr Build CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, develop]
     paths:
@@ -15,6 +16,8 @@ on:
       - "Kconfig*"
       - "prj*.conf"
       - ".pre-commit-config.yaml"
+      - "west.yml"
+      - "include/**"
   pull_request:
     branches: [main]
     paths:
@@ -28,11 +31,16 @@ on:
       - "Kconfig*"
       - "prj*.conf"
       - ".pre-commit-config.yaml"
+      - "west.yml"
+      - "include/**"
   schedule:
     - cron: "0 0 * * 0"
 
 env:
-  ZEPHYR_VERSION: 4.3.0
+  # jobs.*.container 不能引用 env.*。Zephyr 4.4 的官方镜像标签不是 v4.4.0，
+  # 兼容级别是 0.29，当前使用 ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4。
+  # 升级 Zephyr 时同时改 ZEPHYR_VERSION、下面的镜像标签和 west.yml 的 revision。
+  ZEPHYR_VERSION: "4.4.0"
   BUILD_TYPE: release
   CORE_COVERAGE_MIN: 80
   EVENT_CORE_COVERAGE_MIN: 78
@@ -61,6 +69,8 @@ jobs:
               - 'Kconfig*'
               - 'prj*.conf'
               - '.github/workflows/**'
+              - 'west.yml'
+              - 'include/**'
 
   code-quality:
     name: Code Quality
@@ -135,7 +145,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     steps:
@@ -177,7 +187,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     steps:
@@ -349,15 +359,16 @@ jobs:
         run: |
           west build -b native_sim tests/ --build-dir build_tests_cov -p always -- -DCMAKE_C_FLAGS="--coverage"
           west build -t run --build-dir build_tests_cov
-          gcovr -r . --filter "src/core/" --xml-pretty --output coverage-core.xml --html --html-details --output coverage-core.html --print-summary --fail-under-line ${{ env.CORE_COVERAGE_MIN }}
-          gcovr -r . --filter "src/core/event_.*" --print-summary --fail-under-line ${{ env.EVENT_CORE_COVERAGE_MIN }}
-          gcovr -r . --filter "src/core/event_dispatcher\\.c" --print-summary --fail-under-line ${{ env.DISPATCHER_COVERAGE_MIN }}
+          gcovr -r . --filter "src/core/" --xml-pretty --output coverage-core.xml --html --html-details --output coverage-core.html --print-summary --fail-under-line "${CORE_COVERAGE_MIN}"
+          gcovr -r . --filter "src/core/event_.*" --print-summary --fail-under-line "${EVENT_CORE_COVERAGE_MIN}"
+          gcovr -r . --filter "src/core/event_dispatcher\\.c" --print-summary --fail-under-line "${DISPATCHER_COVERAGE_MIN}"
           gcovr -r . --filter "src/core/" --json-summary-pretty --output coverage-core-summary.json
 
       - name: Publish coverage summary
         run: |
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
           s = json.loads(Path("coverage-core-summary.json").read_text())
           line = s["line_percent"]
@@ -367,11 +378,11 @@ jobs:
               "",
               "| Scope | Threshold | Result |",
               "|---|---:|---:|",
-              f"| src/core/* | ${{{{ env.CORE_COVERAGE_MIN }}}}% | {line:.2f}% |",
-              f"| src/core/event_* | ${{{{ env.EVENT_CORE_COVERAGE_MIN }}}}% | see gate log |",
-              f"| src/core/event_dispatcher.c | ${{{{ env.DISPATCHER_COVERAGE_MIN }}}}% | see gate log |",
+              f"| src/core/* | {os.environ['CORE_COVERAGE_MIN']}% | {line:.2f}% |",
+              f"| src/core/event_* | {os.environ['EVENT_CORE_COVERAGE_MIN']}% | see gate log |",
+              f"| src/core/event_dispatcher.c | {os.environ['DISPATCHER_COVERAGE_MIN']}% | see gate log |",
           ]
-          Path("${GITHUB_STEP_SUMMARY}").write_text("\n".join(md), encoding="utf-8")
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(md) + "\n", encoding="utf-8")
           PY
 
       - name: Upload coverage artifacts
@@ -389,7 +400,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     strategy:
@@ -436,7 +447,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     steps:
@@ -476,7 +487,7 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.run_heavy == 'true'
     container:
-      image: gcr.io/zephyr-project/zephyr-build:v${{ env.ZEPHYR_VERSION }}
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
       options: --user root
 
     strategy:

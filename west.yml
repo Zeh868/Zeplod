@@ -23,10 +23,11 @@ manifest:
   projects:
     - name: zephyr
       path: zephyr
-      # 与 .github/workflows/ci.yml 中 ZEPHYR_VERSION / zephyr-build 镜像一致，便于 west init -l 可复现构建
-      # url: https://github.com/zephyrproject-rtos/zephyr
-      url: file://D:/Code/1-github-code/zephyrproject/zephyr
-      revision: v4.3.0
+      # 与 .github/workflows/ci.yml 中的 Zephyr v4.4.0 一致。
+      # CI 镜像是 ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4。
+      # 本机构建仍用 zephyr_config.env 里的 ZEPHYR_BASE，不必依赖这里的 URL。
+      url: https://github.com/zephyrproject-rtos/zephyr
+      revision: v4.4.0
       # 独立应用通常不需要 import: true；若需拉取 Zephyr 的 west 子项目再按需打开
 
   self:

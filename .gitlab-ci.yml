@@ -1,7 +1,7 @@
 # GitLab CI — 与 .github/workflows/ci.yml 能力对齐（可选）
 # 保姆级说明：docs/zh-CN/50-测试与CI/52-CI平台配置保姆级手册.md
 #
-# 要求：GitLab 13.3+（parallel:matrix）；Runner 能访问 gcr.io 与 github.com（west update）
+# 要求：GitLab 13.3+（parallel:matrix）；Runner 能访问 ghcr.io 与 github.com（west update）
 
 stages:
   - quality
@@ -9,7 +9,7 @@ stages:
   - docs
 
 variables:
-  ZEPHYR_VERSION: "4.3.0"
+  ZEPHYR_VERSION: "4.4.0"
   # west / 子模块若需完整历史，可改为 0（全量克隆，较慢）
   GIT_DEPTH: "20"
 
@@ -48,7 +48,7 @@ code_quality:
 # -----------------------------------------------------------------------------
 build_native:
   stage: build
-  image: gcr.io/zephyr-project/zephyr-build:v$ZEPHYR_VERSION
+  image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
   extends: .zephyr_prep
   needs: ["code_quality"]
   script:
@@ -60,7 +60,7 @@ build_native:
 
 build_tests:
   stage: build
-  image: gcr.io/zephyr-project/zephyr-build:v$ZEPHYR_VERSION
+  image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
   extends: .zephyr_prep
   needs: ["code_quality"]
   script:
@@ -106,7 +106,7 @@ build_tests:
 
 build_arm:
   stage: build
-  image: gcr.io/zephyr-project/zephyr-build:v$ZEPHYR_VERSION
+  image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
   extends: .zephyr_prep
   needs: ["code_quality"]
   parallel:
