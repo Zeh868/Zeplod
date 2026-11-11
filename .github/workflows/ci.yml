@@ -40,7 +40,10 @@ env:
   # jobs.*.container 不能引用 env.*。Zephyr 4.4 的官方镜像标签不是 v4.4.0，
   # 兼容级别是 0.29，当前使用 ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4。
   # 升级 Zephyr 时同时改 ZEPHYR_VERSION、下面的镜像标签和 west.yml 的 revision。
+  # v0.29.4 把 SDK 放在 /opt/toolchains。CMake 只搜索 /opt、/usr 和 $HOME，
+  # 不会进入 toolchains，所以必须显式给出安装根目录。
   ZEPHYR_VERSION: "4.4.0"
+  ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-1.0.1
   BUILD_TYPE: release
   CORE_COVERAGE_MIN: 80
   EVENT_CORE_COVERAGE_MIN: 78

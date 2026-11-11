@@ -141,6 +141,17 @@ class FindQemuTests(unittest.TestCase):
             )
             self.assertEqual(found, binary.resolve())
 
+    def test_sdk_root_from_hosttools_qemu(self) -> None:
+        qemu = Path(
+            "/opt/toolchains/zephyr-sdk-1.0.1/hosttools/sysroots/"
+            "x86_64-pokysdk-linux/usr/bin/qemu-system-riscv32"
+        )
+        self.assertEqual(
+            qz.sdk_install_dir_from_qemu(qemu),
+            Path("/opt/toolchains/zephyr-sdk-1.0.1"),
+        )
+        self.assertIsNone(qz.sdk_install_dir_from_qemu(Path("/usr/bin/qemu-system-riscv32")))
+
     def test_missing_binary_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             found = qz.find_qemu_binary(
