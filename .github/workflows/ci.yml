@@ -595,16 +595,17 @@ jobs:
 
       - name: Build (${{ matrix.board }} ${{ matrix.label }})
         run: |
-          CMAKE_ARGS=()
-          if [ -n "${{ matrix.extra_conf }}" ]; then
-            CMAKE_ARGS+=(-DEXTRA_CONF_FILE="${{ matrix.extra_conf }}")
-          fi
-          if [ -n "${{ matrix.dt_overlay }}" ]; then
-            CMAKE_ARGS+=(-DEXTRA_DTC_OVERLAY_FILE="${{ matrix.dt_overlay }}")
-          fi
-          if [ "${#CMAKE_ARGS[@]}" -gt 0 ]; then
+          # 运行器的 sh 是 dash，不用数组。
+          if [ -n "${{ matrix.extra_conf }}" ] && [ -n "${{ matrix.dt_overlay }}" ]; then
             west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }} -- \
-              "${CMAKE_ARGS[@]}"
+              -DEXTRA_CONF_FILE="${{ matrix.extra_conf }}" \
+              -DEXTRA_DTC_OVERLAY_FILE="${{ matrix.dt_overlay }}"
+          elif [ -n "${{ matrix.extra_conf }}" ]; then
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }} -- \
+              -DEXTRA_CONF_FILE="${{ matrix.extra_conf }}"
+          elif [ -n "${{ matrix.dt_overlay }}" ]; then
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }} -- \
+              -DEXTRA_DTC_OVERLAY_FILE="${{ matrix.dt_overlay }}"
           else
             west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }}
           fi
