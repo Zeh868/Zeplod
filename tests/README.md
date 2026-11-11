@@ -231,7 +231,7 @@ gcovr -r . --filter "src/core/" --html --html-details coverage-core.html --print
 
 ## 持续集成
 
-`native_sim` 测试在 GitHub Actions 的 `build-tests` 任务中执行（Zephyr **4.4.0** 容器）；见 `.github/workflows/ci.yml`。本机与 CI 统一使用 `native_sim`。
+`native_sim` 测试在 GitHub Actions 的 `build-tests` 任务中执行（Zephyr **4.4.0** 容器）；见 `.github/workflows/ci.yml`。另有 **`qemu-ztest`** 任务用 `scripts/run_qemu_ztest.sh` 在 **`qemu_riscv32`** 上运行默认 ztest 配置 `prj.conf;prj_test_extensions.conf`。`native_sim` 是主机进程，不是 QEMU。QEMU 作业不覆盖物理 PHY、外设和墙钟精度；ARM 矩阵仍只编译。
 
 ## 参考文档
 

@@ -395,6 +395,22 @@ QEMU 目标无主机 `.gcda` 文件；启用 `CONFIG_COVERAGE=y` 与 `CONFIG_COV
 
 与 CI 区别：GitHub Actions 在 **`native_sim`** 上对 `src/core/` 执行 **≥80%** 门禁。本地 Windows 以 QEMU 全量 ztest 验证同一范围；**95%** 为下一阶段目标（ISR 入队、`SYS_INIT` 自动初始化等路径仍难触达）。
 
+### 6.9 GitHub Actions 上的 QEMU 运行时
+
+`native_sim` 是 Linux 主机进程，不是 QEMU。官方 `ubuntu-22.04` runner 与镜像
+`ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4` 上的作业 **Unit Tests (QEMU qemu_riscv32)**
+调用 `scripts/run_qemu_ztest.sh`，在 Zephyr 板 **`qemu_riscv32`** 上运行 `tests/` 的 ztest。
+默认配置是 `prj.conf;prj_test_extensions.conf`（事件、模块、数据总线与并发压测），不是 `hello_world`。
+
+仿真器是镜像内 Zephyr SDK hosttools 的 `qemu-system-riscv32`（`setup.sh -h`）。
+v0.29.4 的 `Dockerfile.base` 没有用 apt 安装 `qemu-system-*`。脚本通过 `QEMU_PIPE` 采集串口，
+不依赖交互式 TTY。串口等待默认 **600 秒**。断言失败、`ZEPHYR FATAL ERROR`、
+`PROJECT EXECUTION FAILED`、超时或缺少成功横幅时退出码非 0。作业失败时保留 `qemu-ztest.log`。
+
+**仿真限制**：该作业只覆盖能在 QEMU `virt` 上执行的工程逻辑。它不验证物理 PHY、板级外设、
+引脚复用或墙钟精度。ARM 板 `nucleo_f429zi`、`nucleo_f767zi`、`disco_l475_iot1` 仍只做编译。
+`.gitlab-ci.yml` 不包含这个 QEMU 作业。
+
 ---
 
 ## 7. 主应用成功输出示例

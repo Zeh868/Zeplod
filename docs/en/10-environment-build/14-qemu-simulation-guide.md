@@ -328,6 +328,25 @@ PROJECT EXECUTION SUCCESSFUL
 - **SMP experiment**: `ZEPHYR_TEST_BOARD=qemu_riscv32/qemu_virt_riscv32/smp` (see §5).
 - **Avoid**: `qemu_cortex_m3` and other ARM M QEMU boards (see §8.4).
 
+### 6.8 QEMU runtime on GitHub Actions
+
+`native_sim` is a Linux host process, not QEMU. On the official `ubuntu-22.04` runner and
+`ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4`, job **Unit Tests (QEMU qemu_riscv32)**
+calls `scripts/run_qemu_ztest.sh` and runs the `tests/` ztest suite on Zephyr board **`qemu_riscv32`**.
+The default config is `prj.conf;prj_test_extensions.conf` (event system, modules, data bus, and
+concurrency stress), not `hello_world`.
+
+The emulator is `qemu-system-riscv32` from the image's Zephyr SDK host tools (`setup.sh -h`).
+The v0.29.4 `Dockerfile.base` does not apt-install `qemu-system-*`. The script captures the
+serial port with `QEMU_PIPE` and does not need an interactive TTY. The serial wait defaults to
+**600 seconds**. Assertion failure, `ZEPHYR FATAL ERROR`, `PROJECT EXECUTION FAILED`, timeout,
+or a missing success banner exits non-zero. A failed job keeps `qemu-ztest.log`.
+
+**Simulation limits**: this job only covers project logic that runs on the QEMU `virt` machine.
+It does not test a physical PHY, board peripherals, pinmux, or wall-clock accuracy. The ARM
+boards `nucleo_f429zi`, `nucleo_f767zi`, and `disco_l475_iot1` stay compile-only.
+`.gitlab-ci.yml` does not include this QEMU job.
+
 ---
 
 ## 7. Main-app expected output (excerpt)

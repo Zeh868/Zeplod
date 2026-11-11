@@ -19,7 +19,7 @@ Scripts use **`project_layout.ps1` / `project_layout.sh` / `project_layout.py`**
 |---|---|
 | Layout resolver (internal) | `project_layout.ps1` / `project_layout.sh` / `project_layout.py` |
 | Environment setup | `setup_env.ps1` / `setup_env.sh` / `setup_env.bat` |
-| QEMU simulation | `run_qemu.ps1` |
+| QEMU simulation | `run_qemu.ps1` / `run_qemu_ztest.sh` |
 | Host tests | `run_tests.ps1` / `run_tests.sh` |
 | Host sanitizers | `run_sanitizers.ps1` / `run_sanitizers.sh` |
 | Twister | `run_twister.ps1` / `run_twister.sh` |
@@ -78,6 +78,22 @@ source scripts/setup_env.sh
 `-Board` accepts any Zephyr QEMU board name (including SMP qualifiers). In APP mode, `CONF_FILE` merges `framework/prj.conf`, `*_prj.conf`, and `framework/conf/targets/qemu.conf` unless `ZEPHYR_QEMU_CONF` is set. See **[14-qemu-simulation-guide.md](../10-environment-build/14-qemu-simulation-guide.md)** §5 for SMP boards.
 
 Requires **`QEMU_BIN_PATH`** in **`zephyr_config.env`**. See **[14-qemu-simulation-guide.md](../10-environment-build/14-qemu-simulation-guide.md)**.
+
+### 3.2.1 QEMU unit tests (Linux / CI)
+
+| Script | Role | Usage |
+|---|---|---|
+| `run_qemu_ztest.sh` | Run `tests/` ztest on **`qemu_riscv32`**, capture serial, and exit non-zero on assertion failure, panic, or timeout. Not `native_sim` | `./scripts/run_qemu_ztest.sh` |
+
+Environment:
+
+- `ZEPHYR_QEMU_TEST_BOARD`: only `qemu_riscv32`
+- `ZEPHYR_QEMU_TEST_CONF`: default `prj.conf;prj_test_extensions.conf`
+- `ZEPHYR_QEMU_TEST_TIMEOUT`: serial wait in seconds, default `600`
+- `ZEPHYR_QEMU_TEST_BUILD_DIR`: default `build_tests_qemu`
+- `ZEPHYR_QEMU_TEST_LOG`: default `qemu-ztest.log`
+
+Requires `ZEPHYR_BASE` and `west` already on `PATH`. The emulator is resolved from `QEMU_BIN_PATH`, then `PATH`, then SDK hosttools under `ZEPHYR_SDK_INSTALL_DIR`. See [14 §6.8](../10-environment-build/14-qemu-simulation-guide.md).
 
 ### 3.3 Host tests
 
@@ -153,7 +169,7 @@ python scripts/check_script_docs.py
 
 - `native_sim/native_posix` are Linux/WSL2 host targets; macOS and native Windows use QEMU.
 - On Windows, use **QEMU** for the main app (`run_qemu.ps1`) or unit tests (`ZEPHYR_TEST_BOARD=qemu_riscv32` + `run_tests.ps1` — see [14-qemu-simulation-guide.md](../10-environment-build/14-qemu-simulation-guide.md) §6), or WSL for host POSIX tests.
-- CI includes preflight, encoding checks, coverage gates, sanitizers, and twister.
+- CI includes preflight, encoding checks, coverage gates, sanitizers, twister, and ztest on `qemu_riscv32` (`run_qemu_ztest.sh`). The QEMU job does not cover a physical PHY, peripherals, or wall-clock accuracy.
 
 ## 5. Optional APP manifest (`zephyr_app.env`)
 

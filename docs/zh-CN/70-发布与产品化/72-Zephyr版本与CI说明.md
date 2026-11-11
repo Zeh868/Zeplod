@@ -25,6 +25,14 @@
 
 **在托管平台上启用 / 维护 CI 的步骤**（含排查失败）：**[CI平台配置保姆级手册.md](../50-测试与CI/52-CI平台配置保姆级手册.md)**。
 
+## QEMU 运行时与仿真限制
+
+GitHub Actions 作业 **Unit Tests (QEMU qemu_riscv32)** 使用同一镜像，以及 `west.yml` 里的 Zephyr **v4.4.0**。
+板型是 Zephyr `qemu_riscv32`（`virt`，`qemu-system-riscv32` 来自 SDK hosttools）。
+它运行仓库 `tests/` 的 ztest，不是 `hello_world`，也不是 `native_sim`。
+
+该作业不验证物理 PHY、真实开发板外设、引脚和墙钟精度。ARM 矩阵仍只编译。`.gitlab-ci.yml` 没有对应 QEMU 作业。
+
 ## West 工作区（可选）
 
 若使用根目录 `west.yml` 管理 Zephyr：
