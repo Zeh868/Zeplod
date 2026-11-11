@@ -85,8 +85,8 @@ LOG_MODULE_REGISTER(sys_watchdog, CONFIG_SYS_LOG_LEVEL);
 /** 重新初始化时静默化探测的试锁超时（毫秒）：仅为探测"有无操作在途"，非真实等待 */
 #define SYS_WDT_REINIT_PROBE_TIMEOUT_MS 1
 
-#define MAX_MONITORED_THREADS CONFIG_MAX_MODULES
-#define WDT_FEED_MARGIN_MS    1000 /* 在到期前至少 1 秒喂狗 */
+#define MAX_MONITORED_THREADS           CONFIG_MAX_MODULES
+#define WDT_FEED_MARGIN_MS              1000 /* 在到期前至少 1 秒喂狗 */
 
 /* =============================================================================
  * 内部数据结构
@@ -770,7 +770,7 @@ static int sys_wdt_auto_init(void) {
                                .timeout_ms = APP_WATCHDOG_TIMEOUT_MS,
                                .feed_margin_ms = WDT_FEED_MARGIN_MS,
                                .reset_on_expire = IS_ENABLED(CONFIG_APP_WATCHDOG_RESET_ON_EXPIRE)};
-    int ret = sys_wdt_init(&wdt_config);
+    int          ret = sys_wdt_init(&wdt_config);
     if (ret == 0) {
         LOG_INF("Watchdog initialized");
     }

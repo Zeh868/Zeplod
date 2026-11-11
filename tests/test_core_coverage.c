@@ -8,7 +8,8 @@
  * @par 修改日志:
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            初始版本
- * 2026-09-18       1.1            zeh            首用例补 shutdown 兜底；新增 publish 级 DROP_LOWEST 防复发用例（配置门控）
+ * 2026-09-18       1.1            zeh            首用例补 shutdown 兜底；新增 publish 级 DROP_LOWEST
+ * 防复发用例（配置门控）
  */
 
 #include <zephyr/sys/atomic.h>

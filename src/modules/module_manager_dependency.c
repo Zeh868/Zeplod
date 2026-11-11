@@ -283,7 +283,7 @@ static void mm_dep_apply_pick_order(mm_dep_order_entry_t* entries, int n, const 
 }
 
 int mm_dep_planner_build_start_order(mm_dep_order_entry_t* entries, int n) {
-    uint32_t (*adj)[MM_ADJ_ROW_WORDS] = g_module_mgr.topo_adj_scratch;
+    uint32_t(*adj)[MM_ADJ_ROW_WORDS] = g_module_mgr.topo_adj_scratch;
     int      indegree[CONFIG_MAX_MODULES];
     uint32_t pick_order[CONFIG_MAX_MODULES];
 

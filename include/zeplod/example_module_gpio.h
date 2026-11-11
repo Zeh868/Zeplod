@@ -12,9 +12,8 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-09-18       1.1            zeh            删除不生效的 led_pin/button_pin 字段
- * 2026-09-18       1.2            zeh            复审整改：事件号 30-32 迁至 33-35，消除与 EVENT_TYPE_DATA_BUS_AVAILABLE(30) 的 ID 冲突
- *                                                 （实际引脚由 devicetree alias 决定）；
- *                                                 补全模块接口 Doxygen
+ * 2026-09-18       1.2            zeh            复审整改：事件号 30-32 迁至 33-35，消除与
+ * EVENT_TYPE_DATA_BUS_AVAILABLE(30) 的 ID 冲突 （实际引脚由 devicetree alias 决定）； 补全模块接口 Doxygen
  *
  */
 

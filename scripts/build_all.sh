@@ -78,13 +78,13 @@ for board in "${BOARDS[@]}"; do
     echo "============================================"
     echo "构建：$board"
     echo "============================================"
-    
+
     BUILD_DIR="build_${board}"
-    
+
     if [ -n "$OUTPUT_DIR" ]; then
         BUILD_DIR="$OUTPUT_DIR/$BUILD_DIR"
     fi
-    
+
     if [ "$CLEAN_BUILD" = true ]; then
         echo "命令：west build -b $board -d $BUILD_DIR $WEST_SOURCE -p always"
     else
@@ -106,7 +106,7 @@ for board in "${BOARDS[@]}"; do
     if [ "$build_status" -eq 0 ]; then
         echo "✓ 构建成功：$board"
         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-        
+
         # 复制构建产物
         if [ -n "$OUTPUT_DIR" ]; then
             mkdir -p "$OUTPUT_DIR/release"

@@ -11,7 +11,8 @@
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-04-11       1.1            zeh            补充完整测试用例
  * 2026-05-28       1.2            zeh            异步等待改用 ztest_sync（P0）
- * 2026-09-18       1.3            zeh            NULL callback 契约断言具体值；stop 超时时延由 join 超时常量推导；shm 句柄数组具名
+ * 2026-09-18       1.3            zeh            NULL callback 契约断言具体值；stop 超时时延由 join 超时常量推导；shm
+ * 句柄数组具名
  *
  */
 #include <zephyr/kernel.h>
@@ -45,7 +46,7 @@ LOG_MODULE_REGISTER(test_ipc_service);
  * CONFIG_THREAD_IPC_SERVICE_SHARED_MEM_POOL_SIZE 必须不大于该值，
  * 循环才能在数组范围内把池填满（用例内以 BUILD_ASSERT 前置校验）。
  */
-#define IPC_UT_SHM_HANDLE_MAX 16U
+#define IPC_UT_SHM_HANDLE_MAX        16U
 
 static ipc_service_t g_ipc;
 

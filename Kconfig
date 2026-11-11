@@ -940,4 +940,3 @@ menu "Feature Gate Module"
 rsource "src/modules/feature_gate/Kconfig"
 
 endmenu
-

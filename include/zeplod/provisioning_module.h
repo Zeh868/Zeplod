@@ -67,7 +67,7 @@ typedef struct {
 #define PROVISIONING_WIFI_SSID_MAX_LEN 33U
 
 /** PSK 缓冲区长度上限（Zephyr WIFI_PSK_MAX_LEN=64 + 结尾 NUL） */
-#define PROVISIONING_WIFI_PSK_MAX_LEN 65U
+#define PROVISIONING_WIFI_PSK_MAX_LEN  65U
 
 /* =============================================================================
  * 模块接口（module_interface_t，由 module_manager 生命周期驱动）

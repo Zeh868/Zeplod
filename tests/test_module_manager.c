@@ -9,7 +9,8 @@
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
- * 2026-09-18       1.1            zeh            嵌套函数提取为文件级 static；接口表加 static；手写等待改用 ztest_sync；补 STOPPING 窗口真实用例
+ * 2026-09-18       1.1            zeh            嵌套函数提取为文件级 static；接口表加 static；手写等待改用
+ * ztest_sync；补 STOPPING 窗口真实用例
  *
  */
 
@@ -817,9 +818,9 @@ ZTEST(module_manager, test_register_rejected_in_stopping_window) {
     zassert_equal(module_manager_start_module(probe_id), MODULE_OK, NULL);
 
     /* 后台线程发起 manager stop：先迁移到 STOPPING，随后在排空循环里阻塞于探测模块的 stop_fn */
-    k_tid_t stop_tid = k_thread_create(&g_mgr_stop_probe_thread, g_mgr_stop_probe_stack,
-                                       K_THREAD_STACK_SIZEOF(g_mgr_stop_probe_stack), mgr_stop_probe_thread_entry,
-                                       NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+    k_tid_t stop_tid =
+        k_thread_create(&g_mgr_stop_probe_thread, g_mgr_stop_probe_stack, K_THREAD_STACK_SIZEOF(g_mgr_stop_probe_stack),
+                        mgr_stop_probe_thread_entry, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
     zassert_not_null(stop_tid, NULL);
     zassert_equal(k_sem_take(&g_stopping_probe_entered, K_SECONDS(1)), 0, "stop 应已进入探测模块的 stop_fn");
 

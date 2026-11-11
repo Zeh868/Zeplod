@@ -80,11 +80,11 @@ typedef struct {
     size_t                     image_size; /**< 当前镜像已收字节（进度估算用） */
     struct k_mutex             lock;       /**< 保护状态字段（声明顺序须在 xfer_lock 之前，
                                                 保证锁序 key 单调递增） */
-    struct k_mutex             xfer_lock;  /**< 序列化传输层慢速操作（write/abort），见
+    struct k_mutex xfer_lock;              /**< 序列化传输层慢速操作（write/abort），见
                                                 ota_module_write_chunk */
-    bool                       lock_ready;
-    bool                       events_registered;
-    bool                       session_open; /**< 传输层 open 且未完成 close/abort */
+    bool lock_ready;
+    bool events_registered;
+    bool session_open; /**< 传输层 open 且未完成 close/abort */
 } ota_module_cb_t;
 
 /* =============================================================================

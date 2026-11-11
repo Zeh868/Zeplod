@@ -165,9 +165,9 @@ int ipc_service_start(ipc_service_t* service) {
 
     atomic_set(&service->shutdown, 0);
 
-    k_tid_t worker_tid = k_thread_create(&service->thread, service->worker_stack,
-                                         K_KERNEL_STACK_SIZEOF(service->worker_stack), ipc_service_worker_thread,
-                                         service, NULL, NULL, service->priority, 0, K_NO_WAIT);
+    k_tid_t worker_tid =
+        k_thread_create(&service->thread, service->worker_stack, K_KERNEL_STACK_SIZEOF(service->worker_stack),
+                        ipc_service_worker_thread, service, NULL, NULL, service->priority, 0, K_NO_WAIT);
     if (worker_tid == NULL) {
         LOG_ERR("Failed to create IPC worker thread for '%s'", service->name);
         atomic_set(&service->shutdown, 0);

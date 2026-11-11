@@ -28,10 +28,8 @@
 
 /** 链路类型可读名称，下标须与 connectivity_link_type_t 取值一致 */
 static const char* const conn_link_type_names[] = {
-    [CONNECTIVITY_LINK_NONE] = "none",
-    [CONNECTIVITY_LINK_WIFI] = "wifi",
-    [CONNECTIVITY_LINK_ETHERNET] = "ethernet",
-    [CONNECTIVITY_LINK_BLE] = "ble",
+    [CONNECTIVITY_LINK_NONE] = "none",         [CONNECTIVITY_LINK_WIFI] = "wifi",
+    [CONNECTIVITY_LINK_ETHERNET] = "ethernet", [CONNECTIVITY_LINK_BLE] = "ble",
     [CONNECTIVITY_LINK_CELLULAR] = "cellular",
 };
 
@@ -78,23 +76,20 @@ static int cmd_conn_status(const struct shell* shell, size_t argc, char** argv) 
     }
 
     shell_print(shell, "state: %s",
-               ((size_t) st.state < ARRAY_SIZE(conn_state_names) && conn_state_names[st.state] != NULL)
-                   ? conn_state_names[st.state]
-                   : "UNKNOWN");
+                ((size_t) st.state < ARRAY_SIZE(conn_state_names) && conn_state_names[st.state] != NULL)
+                    ? conn_state_names[st.state]
+                    : "UNKNOWN");
     shell_print(shell, "link_type: %s",
-               ((size_t) st.link_type < ARRAY_SIZE(conn_link_type_names) && conn_link_type_names[st.link_type] != NULL)
-                   ? conn_link_type_names[st.link_type]
-                   : "UNKNOWN");
+                ((size_t) st.link_type < ARRAY_SIZE(conn_link_type_names) && conn_link_type_names[st.link_type] != NULL)
+                    ? conn_link_type_names[st.link_type]
+                    : "UNKNOWN");
     shell_print(shell, "error_code: %d", st.error_code);
     return 0;
 }
 
-SHELL_STATIC_SUBCMD_SET_CREATE(sub_conn,
-                               SHELL_CMD(up, NULL, "Trigger a priority-ordered connect attempt (blocking)",
-                                        cmd_conn_up),
-                               SHELL_CMD(status, NULL, "Show connectivity state / link type / error code",
-                                        cmd_conn_status),
-                               SHELL_SUBCMD_SET_END);
+SHELL_STATIC_SUBCMD_SET_CREATE(
+    sub_conn, SHELL_CMD(up, NULL, "Trigger a priority-ordered connect attempt (blocking)", cmd_conn_up),
+    SHELL_CMD(status, NULL, "Show connectivity state / link type / error code", cmd_conn_status), SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(conn, &sub_conn, "Connectivity commands", NULL);
 #endif /* CONFIG_SHELL && CONFIG_CONNECTIVITY_SHELL */

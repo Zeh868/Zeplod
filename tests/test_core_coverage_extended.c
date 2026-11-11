@@ -213,7 +213,7 @@ ZTEST(core_coverage_ext, test_event_get_statistics_after_init) {
 }
 
 /* 回调开启且 NORMAL 池存在才可测耗尽；池容量 + 2 的富余量保证循环必然以 NULL 告终 */
-#if defined(CONFIG_EVENT_SLAB_EXHAUSTED_CB) && (CONFIG_EVENT_SLAB_EXHAUSTED_CB == 1) &&                           \
+#if defined(CONFIG_EVENT_SLAB_EXHAUSTED_CB) && (CONFIG_EVENT_SLAB_EXHAUSTED_CB == 1) &&                                \
     defined(CONFIG_EVENT_SLAB_NORMAL_COUNT)
 #define EXT_SLAB_PROBE_MAX (CONFIG_EVENT_SLAB_NORMAL_COUNT + 2U)
 

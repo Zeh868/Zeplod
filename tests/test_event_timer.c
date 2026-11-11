@@ -26,34 +26,34 @@
 LOG_MODULE_REGISTER(test_event_timer);
 
 /* 本套件专用事件类型（各用例先 shutdown 再注册，避免与其他套件残留注册冲突） */
-#define TIMER_TYPE_MAIN 240U
-#define TIMER_TYPE_AUX  241U
-#define TIMER_TYPE_THIRD 242U
+#define TIMER_TYPE_MAIN         240U
+#define TIMER_TYPE_AUX          241U
+#define TIMER_TYPE_THIRD        242U
 
 /** 延迟基本投递时长（毫秒）：5 tick，远大于量化误差 */
-#define TIMER_DELAY_BASIC_MS 50U
+#define TIMER_DELAY_BASIC_MS    50U
 
 /** 取消后观察无投递的窗口（毫秒，虚拟时钟下瞬时度过） */
 #define TIMER_CANCEL_OBSERVE_MS 2000U
 
 /** 超内联负载用例长度：超过内联容量（48B）且低于 4KB 上界 */
-#define TIMER_LARGE_LEN 200U
+#define TIMER_LARGE_LEN         200U
 
 /** 负载上界负测长度：延迟/周期负载上界为 4096B（API 契约），4097 应被拒 */
-#define TIMER_PAYLOAD_OVER_MAX 4097U
+#define TIMER_PAYLOAD_OVER_MAX  4097U
 
 /** 周期基本周期（毫秒）：6 tick */
-#define TIMER_PERIOD_BASIC_MS 60U
+#define TIMER_PERIOD_BASIC_MS   60U
 
 /** 周期速率窗口（毫秒）：60ms 周期下期望约 50 轮，取 20 为宽容下界 */
-#define TIMER_PERIOD_WINDOW_MS 3000U
-#define TIMER_PERIOD_MIN_FIRES 20
+#define TIMER_PERIOD_WINDOW_MS  3000U
+#define TIMER_PERIOD_MIN_FIRES  20
 
 /** 回调负载快照缓冲（须覆盖 TIMER_LARGE_LEN 用例） */
-#define TIMER_SINK_BUF_LEN 256U
+#define TIMER_SINK_BUF_LEN      256U
 
 /** 接收顺序记录容量 */
-#define TIMER_SEQ_MAX 16U
+#define TIMER_SEQ_MAX           16U
 
 /** 泄漏断言基线快照（未开 CONFIG_EVENT_DEBUG_MEM 时恒 0，断言退化为不校验） */
 #if defined(CONFIG_EVENT_DEBUG_MEM) && (CONFIG_EVENT_DEBUG_MEM == 1)
@@ -63,14 +63,14 @@ LOG_MODULE_REGISTER(test_event_timer);
 #endif
 
 typedef struct {
-    atomic_t calls;                             /**< 回调被调用次数 */
-    uint32_t last_u32;                          /**< 最近一次 4 字节载荷 */
-    uint32_t last_len;                          /**< 最近一次负载长度（字节） */
-    uint32_t first_ms;                          /**< 首次回调时刻（毫秒 uptime） */
-    bool     mismatch;                          /**< 多轮载荷出现不一致 */
-    uint32_t seq[TIMER_SEQ_MAX];                /**< 4 字节载荷接收顺序 */
-    uint32_t seq_len;                           /**< 已记录条数 */
-    uint8_t  last_payload[TIMER_SINK_BUF_LEN];  /**< 最近一次负载副本 */
+    atomic_t calls;                            /**< 回调被调用次数 */
+    uint32_t last_u32;                         /**< 最近一次 4 字节载荷 */
+    uint32_t last_len;                         /**< 最近一次负载长度（字节） */
+    uint32_t first_ms;                         /**< 首次回调时刻（毫秒 uptime） */
+    bool     mismatch;                         /**< 多轮载荷出现不一致 */
+    uint32_t seq[TIMER_SEQ_MAX];               /**< 4 字节载荷接收顺序 */
+    uint32_t seq_len;                          /**< 已记录条数 */
+    uint8_t  last_payload[TIMER_SINK_BUF_LEN]; /**< 最近一次负载副本 */
 } timer_sink_t;
 
 static timer_sink_t g_sink_a;
@@ -205,8 +205,7 @@ ZTEST(test_event_timer, test_timer_delayed_basic_delivery) {
     zassert_equal(g_sink_a.last_u32, value, "载荷应逐字节一致");
     zassert_equal(g_sink_a.last_len, sizeof(value), NULL);
     zassert_equal(event_timer_pending_count(), 0U, "投递后 pending 应归零");
-    zassert_equal(event_timer_get_stats(handle, &fire, &miss), EVENT_ERR_NOT_FOUND,
-                  "一次性槽投递后句柄已失效");
+    zassert_equal(event_timer_get_stats(handle, &fire, &miss), EVENT_ERR_NOT_FOUND, "一次性槽投递后句柄已失效");
     zassert_equal(event_timer_miss_count(), 0U, "正常投递不应计 miss");
 }
 
@@ -224,12 +223,12 @@ ZTEST(test_event_timer, test_timer_delayed_ordering) {
     zassert_equal(event_register_type(TIMER_TYPE_MAIN, "tmr_order"), EVENT_OK, NULL);
     zassert_equal(timer_subscribe(TIMER_TYPE_MAIN, &g_sink_a), EVENT_OK, NULL);
 
-    zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &val_a, sizeof(val_a), 100U,
-                                             &handle_a),
-                  EVENT_OK, NULL);
-    zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &val_b, sizeof(val_b), 40U,
-                                             &handle_b),
-                  EVENT_OK, NULL);
+    zassert_equal(
+        event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &val_a, sizeof(val_a), 100U, &handle_a),
+        EVENT_OK, NULL);
+    zassert_equal(
+        event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &val_b, sizeof(val_b), 40U, &handle_b),
+        EVENT_OK, NULL);
 
     zassert_true(timer_wait_calls(&g_sink_a.calls, 2, 1000U), "两条延迟事件都应投递");
     zassert_equal(g_sink_a.seq_len, 2U, NULL);
@@ -293,22 +292,22 @@ ZTEST(test_event_timer, test_timer_slots_exhausted_no_mem) {
     zassert_equal(event_register_type(TIMER_TYPE_MAIN, "tmr_full"), EVENT_OK, NULL);
 
     for (uint32_t i = 0; i < CONFIG_EVENT_TIMER_SLOTS; i++) {
-        zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value),
-                                                 30000U, &handles[i]),
+        zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U,
+                                                 &handles[i]),
                       EVENT_OK, "提交 #%u 应成功", i);
     }
-    zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U,
-                                             NULL),
-                  EVENT_ERR_NO_MEM, "第 9 个提交应返回 NO_MEM");
+    zassert_equal(
+        event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U, NULL),
+        EVENT_ERR_NO_MEM, "第 9 个提交应返回 NO_MEM");
     zassert_equal(event_timer_pending_count(), CONFIG_EVENT_TIMER_SLOTS, NULL);
 
     for (uint32_t i = 0; i < CONFIG_EVENT_TIMER_SLOTS; i++) {
         zassert_equal(event_delayed_cancel(handles[i]), EVENT_OK, NULL);
     }
     zassert_equal(event_timer_pending_count(), 0U, NULL);
-    zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U,
-                                             NULL),
-                  EVENT_OK, "释放槽位后应可再提交");
+    zassert_equal(
+        event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U, NULL),
+        EVENT_OK, "释放槽位后应可再提交");
 }
 
 /**
@@ -339,8 +338,7 @@ ZTEST(test_event_timer, test_timer_armed_stop_expire_miss) {
     timer_sink_reset(&g_sink_a);
     zassert_equal(event_register_type(TIMER_TYPE_MAIN, "tmr_miss"), EVENT_OK, NULL);
     zassert_equal(timer_subscribe(TIMER_TYPE_MAIN, &g_sink_a), EVENT_OK, NULL);
-    zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U,
-                                             NULL),
+    zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U, NULL),
                   EVENT_OK, NULL);
 
     miss_before = event_timer_miss_count();
@@ -369,16 +367,16 @@ ZTEST(test_event_timer, test_timer_shutdown_cancels_all_no_leak) {
         if ((i & 1U) == 0U) {
             uint32_t value = i;
 
-            zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value),
-                                                     30000U, NULL),
-                          EVENT_OK, NULL);
+            zassert_equal(
+                event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U, NULL),
+                EVENT_OK, NULL);
         } else {
             for (uint32_t j = 0; j < TIMER_LARGE_LEN; j++) {
                 large[j] = (uint8_t) (i * 31U + j);
             }
-            zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, large, sizeof(large),
-                                                     30000U, NULL),
-                          EVENT_OK, NULL);
+            zassert_equal(
+                event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, large, sizeof(large), 30000U, NULL),
+                EVENT_OK, NULL);
         }
     }
     zassert_equal(event_timer_pending_count(), CONFIG_EVENT_TIMER_SLOTS, NULL);
@@ -396,9 +394,9 @@ ZTEST(test_event_timer, test_timer_shutdown_cancels_all_no_leak) {
     uint32_t value = 0U;
 
     zassert_equal(event_register_type(TIMER_TYPE_MAIN, "tmr_sd2"), EVENT_OK, NULL);
-    zassert_equal(event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U,
-                                             NULL),
-                  EVENT_OK, "槽位应可复用");
+    zassert_equal(
+        event_publish_delayed_copy(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U, NULL),
+        EVENT_OK, "槽位应可复用");
 }
 
 /**
@@ -518,12 +516,12 @@ ZTEST(test_event_timer, test_periodic_initial_delay_zero_vs_200) {
     zassert_equal(timer_subscribe(TIMER_TYPE_MAIN, &g_sink_a), EVENT_OK, NULL);
     zassert_equal(timer_subscribe(TIMER_TYPE_AUX, &g_sink_b), EVENT_OK, NULL);
 
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U, 0U,
-                                       &handle_now),
-                  EVENT_OK, NULL);
-    zassert_equal(event_periodic_start(TIMER_TYPE_AUX, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U, 200U,
-                                       &handle_late),
-                  EVENT_OK, NULL);
+    zassert_equal(
+        event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U, 0U, &handle_now),
+        EVENT_OK, NULL);
+    zassert_equal(
+        event_periodic_start(TIMER_TYPE_AUX, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U, 200U, &handle_late),
+        EVENT_OK, NULL);
 
     zassert_true(timer_wait_calls(&g_sink_b.calls, 1, 2000U), "initial 200ms 首投应到达");
     /* k_timer 不提前触发：a 首投 >= period(100ms)，b 首投 >= initial(200ms)；
@@ -551,8 +549,7 @@ ZTEST(test_event_timer, test_periodic_cancel_no_delivery_no_leak) {
     zassert_equal(timer_subscribe(TIMER_TYPE_MAIN, &g_sink_a), EVENT_OK, NULL);
     leak_base = TIMER_LEAK_SNAPSHOT();
 
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 50U, 0U,
-                                       &handle),
+    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 50U, 0U, &handle),
                   EVENT_OK, NULL);
     zassert_true(timer_wait_calls(&g_sink_a.calls, 3, 2000U), "取消前应有多轮投递");
     zassert_false(g_sink_a.mismatch, "每轮载荷应与母本一致");
@@ -574,9 +571,9 @@ ZTEST(test_event_timer, test_periodic_cancel_no_delivery_no_leak) {
     for (uint32_t i = 0; i < TIMER_LARGE_LEN; i++) {
         master[i] = (uint8_t) (i ^ 0x3CU);
     }
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, master, sizeof(master), 50U, 0U,
-                                       &handle),
-                  EVENT_OK, "超内联母本入槽应成功");
+    zassert_equal(
+        event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, master, sizeof(master), 50U, 0U, &handle),
+        EVENT_OK, "超内联母本入槽应成功");
     k_sleep(K_MSEC(200)); /* 数轮 miss：母本持续持有 */
     zassert_equal(event_periodic_cancel(handle), EVENT_OK, NULL);
 #if defined(CONFIG_EVENT_DEBUG_MEM) && (CONFIG_EVENT_DEBUG_MEM == 1)
@@ -596,13 +593,13 @@ ZTEST(test_event_timer, test_periodic_resubmit_gen_increment) {
     timer_sink_reset(&g_sink_a);
     zassert_equal(event_register_type(TIMER_TYPE_MAIN, "prd_gen"), EVENT_OK, NULL);
 
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 1000U, 0U,
-                                       &handle1),
-                  EVENT_OK, NULL);
+    zassert_equal(
+        event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 1000U, 0U, &handle1),
+        EVENT_OK, NULL);
     zassert_equal(event_periodic_cancel(handle1), EVENT_OK, NULL);
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 1000U, 0U,
-                                       &handle2),
-                  EVENT_OK, "取消后同槽应可复用");
+    zassert_equal(
+        event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 1000U, 0U, &handle2),
+        EVENT_OK, "取消后同槽应可复用");
     zassert_equal(handle2.slot, handle1.slot, "应复用同一槽位");
     zassert_true(handle2.gen != handle1.gen, "复用后 gen 应递增");
     zassert_equal(event_periodic_cancel(handle2), EVENT_OK, NULL);
@@ -626,9 +623,9 @@ ZTEST(test_event_timer, test_periodic_stop_miss_then_start_resume) {
     zassert_equal(event_register_type(TIMER_TYPE_MAIN, "prd_stop"), EVENT_OK, NULL);
     zassert_equal(timer_subscribe(TIMER_TYPE_MAIN, &g_sink_a), EVENT_OK, NULL);
 
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U, 0U,
-                                       &handle),
-                  EVENT_OK, NULL);
+    zassert_equal(
+        event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 100U, 0U, &handle),
+        EVENT_OK, NULL);
     zassert_true(timer_wait_calls(&g_sink_a.calls, 2, 2000U), "停止前应正常投递");
 
     calls_at_stop = atomic_get(&g_sink_a.calls);
@@ -659,9 +656,9 @@ ZTEST(test_event_timer, test_periodic_shutdown_cancels_all) {
     for (uint32_t i = 0; i < 2U; i++) {
         uint32_t value = i + 1U;
 
-        zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value),
-                                           30000U + i, 0U, NULL),
-                      EVENT_OK, NULL);
+        zassert_equal(
+            event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 30000U + i, 0U, NULL),
+            EVENT_OK, NULL);
     }
     zassert_equal(event_periodic_active_count(), 2U, NULL);
 
@@ -699,8 +696,7 @@ ZTEST(test_event_timer, test_periodic_slab_exhausted_miss_recover) {
         zassert_not_null(held[i], "前置：应能领到事件壳 #%u", i);
     }
 
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 60U, 0U,
-                                       &handle),
+    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, &value, sizeof(value), 60U, 0U, &handle),
                   EVENT_OK, "提交本身不分配事件壳，应成功");
 
     k_sleep(K_MSEC(500));
@@ -811,9 +807,9 @@ ZTEST(test_event_timer, test_periodic_zero_len_after_large_oneshot_same_slot) {
     zassert_equal(event_subscribe(TIMER_TYPE_MAIN, timer_zero_len_cb, &g_sink_a, &sub2), EVENT_OK, NULL);
     timer_sink_reset(&g_sink_a);
 
-    zassert_equal(event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, NULL, 0U, TIMER_PERIOD_BASIC_MS, 0U,
-                                       &h_periodic),
-                  EVENT_OK, "零长母本周期发布应成功");
+    zassert_equal(
+        event_periodic_start(TIMER_TYPE_MAIN, EVENT_PRIORITY_NORMAL, NULL, 0U, TIMER_PERIOD_BASIC_MS, 0U, &h_periodic),
+        EVENT_OK, "零长母本周期发布应成功");
     zassert_equal(h_periodic.slot, h_oneshot.slot, "应复用一次性槽已归还的同一槽位");
 
     zassert_true(timer_wait_calls(&g_sink_a.calls, 3, TIMER_PERIOD_WINDOW_MS), "零长周期应持续投递");

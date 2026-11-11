@@ -219,9 +219,9 @@ static int timer_svc_ensure_started(void) {
         return 0;
     }
 
-    k_tid_t tid = k_thread_create(&g_sys_timer.svc_thread, g_sys_timer.svc_stack,
-                                  K_THREAD_STACK_SIZEOF(g_sys_timer.svc_stack), timer_svc_thread_func, NULL, NULL,
-                                  NULL, CONFIG_SYS_TIMER_PRIORITY, 0, K_FOREVER);
+    k_tid_t tid =
+        k_thread_create(&g_sys_timer.svc_thread, g_sys_timer.svc_stack, K_THREAD_STACK_SIZEOF(g_sys_timer.svc_stack),
+                        timer_svc_thread_func, NULL, NULL, NULL, CONFIG_SYS_TIMER_PRIORITY, 0, K_FOREVER);
     if (tid == NULL) {
         LOG_ERR("Failed to create timer service thread");
         g_sys_timer.initialized = false;
@@ -784,8 +784,8 @@ static void timer_expiry_fn(struct k_timer* ktimer) {
  *
  * @retval true 校验通过，*cb、*user_data、*scheduled 已填充且 cb_active 已置位
  */
-static bool timer_entry_acquire_locked(struct sys_timer* timer, const expire_entry_t* entry,
-                                       sys_timer_callback_t* cb, void** user_data, uint32_t* scheduled) {
+static bool timer_entry_acquire_locked(struct sys_timer* timer, const expire_entry_t* entry, sys_timer_callback_t* cb,
+                                       void** user_data, uint32_t* scheduled) {
     timer_lock();
 
     bool valid = timer_slot_valid(timer) && !timer->delete_pending && timer->gen == entry->gen &&

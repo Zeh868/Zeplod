@@ -33,8 +33,8 @@ Write-Host ""
 if (-not $MapFile) {
     $ReleaseDir = Join-Path $ProjectRoot "release"
     if (Test-Path $ReleaseDir) {
-        $MapFile = Get-ChildItem -Path $ReleaseDir -Filter "*.map" | 
-                   Sort-Object LastWriteTime -Descending | 
+        $MapFile = Get-ChildItem -Path $ReleaseDir -Filter "*.map" |
+                   Sort-Object LastWriteTime -Descending |
                    Select-Object -First 1 -ExpandProperty FullName
     }
 }
@@ -61,7 +61,7 @@ Write-Host "============================================"
 Write-Host "1. 内存配置"
 Write-Host "============================================"
 
-$MemoryConfig = [regex]::Matches($Content, 
+$MemoryConfig = [regex]::Matches($Content,
     'Name\s+([A-Za-z0-9]+)\s+(0x[0-9A-Fa-f]+)\s+(0x[0-9A-Fa-f]+)')
 
 $MemoryTable = @()
@@ -69,7 +69,7 @@ foreach ($Match in $MemoryConfig) {
     $Name = $Match.Groups[1].Value
     $Origin = [Convert]::ToInt64($Match.Groups[2].Value, 16)
     $Length = [Convert]::ToInt64($Match.Groups[3].Value, 16)
-    
+
     $MemoryTable += [PSCustomObject]@{
         Name   = $Name
         Origin = "0x{0:X8}" -f $Origin
@@ -94,7 +94,7 @@ foreach ($Match in $BssMatches) {
     $Address = [Convert]::ToInt64($Match.Groups[2].Value, 16)
     $Size = [Convert]::ToInt64($Match.Groups[3].Value, 16)
     $Module = $Match.Groups[4].Value
-    
+
     if ($Size -gt 0) {
         $BssData += [PSCustomObject]@{
             Variable = $Name
@@ -129,7 +129,7 @@ foreach ($Match in $NoinitMatches) {
     $Name = $Match.Groups[1].Value -replace '^WEST_TOPDIR/', ''
     $Address = [Convert]::ToInt64($Match.Groups[2].Value, 16)
     $Size = [Convert]::ToInt64($Match.Groups[3].Value, 16)
-    
+
     if ($Size -gt 0) {
         $NoinitData += [PSCustomObject]@{
             Section = $Name
@@ -159,7 +159,7 @@ $TextMatches = [regex]::Matches($Content, '\.text[^\s]*\s+(0x[0-9A-Fa-f]+)\s+(0x
 foreach ($Match in $TextMatches) {
     $Size = [Convert]::ToInt64($Match.Groups[2].Value, 16)
     $Module = $Match.Groups[3].Value
-    
+
     if ($TextByModule.ContainsKey($Module)) {
         $TextByModule[$Module] += $Size
     } else {
@@ -195,7 +195,7 @@ $RodataData = @{}
 foreach ($Match in $RodataMatches) {
     $Size = [Convert]::ToInt64($Match.Groups[2].Value, 16)
     $Module = $Match.Groups[3].Value
-    
+
     if ($RodataData.ContainsKey($Module)) {
         $RodataData[$Module] += $Size
     } else {
@@ -275,9 +275,9 @@ $StringBuilder = New-Object System.Text.StringBuilder
 [string]$null = $StringBuilder.AppendLine("")
 
 [string]$null = $StringBuilder.AppendLine("=== 内存使用总结 ===")
-[string]$null = $StringBuilder.AppendLine(("RAM 使用：{0:N0} 字节 ({1:N2} KB) / {2:N0} 字节 ({3:N2} KB) = {4}%" -f 
+[string]$null = $StringBuilder.AppendLine(("RAM 使用：{0:N0} 字节 ({1:N2} KB) / {2:N0} 字节 ({3:N2} KB) = {4}%" -f
     $RamUsed, ($RamUsed / 1KB), $RamTotal, ($RamTotal / 1KB), $RamPercent))
-[string]$null = $StringBuilder.AppendLine(("Flash 使用：{0:N0} 字节 ({1:N2} KB) / {2:N0} 字节 ({3:N2} KB) = {4}%" -f 
+[string]$null = $StringBuilder.AppendLine(("Flash 使用：{0:N0} 字节 ({1:N2} KB) / {2:N0} 字节 ({3:N2} KB) = {4}%" -f
     $FlashUsed, ($FlashUsed / 1KB), $FlashTotal, ($FlashTotal / 1KB), $FlashPercent))
 
 $StringBuilder.ToString() | Out-File -FilePath $OutputFile -Encoding UTF8

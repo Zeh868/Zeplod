@@ -17,9 +17,8 @@
  * 2026-05-15       2.0            zeh            重构：删除 COPY 模式，实现 +N 引用拆分
  * 2026-05-20       2.1            zeh            消费者固定槽位：注销不压缩数组，保证 out_consumer 地址稳定
  * 2026-09-18       2.2            zeh            审查整改：注销等待 callback_hold 改有界超时
- * 2026-09-18       2.3            zeh            复审返工：注册路径名字格式化真正移出自旋锁临界区（锁前格式化、锁内 memcpy）
- *                                                 （超时 -EBUSY）；spinlock 内日志拼接改锁内
- *                                                 memcpy 快照、锁外输出
+ * 2026-09-18       2.3            zeh            复审返工：注册路径名字格式化真正移出自旋锁临界区（锁前格式化、锁内
+ * memcpy） （超时 -EBUSY）；spinlock 内日志拼接改锁内 memcpy 快照、锁外输出
  *
  */
 
@@ -112,8 +111,7 @@ int data_bus_consumer_register(data_bus_channel_t* ch, const data_bus_consumer_c
         memcpy(full_log_name, ch->name_storage, sizeof(full_log_name));
         k_spin_unlock(&ch->lock, key);
         k_mutex_unlock(&g_channels_lock);
-        LOG_ERR("Channel '%s' consumer table full (max=%u)", full_log_name,
-                CONFIG_DATA_BUS_MAX_CONSUMERS_PER_CHANNEL);
+        LOG_ERR("Channel '%s' consumer table full (max=%u)", full_log_name, CONFIG_DATA_BUS_MAX_CONSUMERS_PER_CHANNEL);
         return -ENOMEM;
     }
 

@@ -9,9 +9,10 @@
  *
  *    Date         Version        Author          Description
  * 2026-05-28       1.0            zeh            初始版本
- * 2026-09-18       1.1            zeh            拆分 register_type/subscribe 超长函数；标注槽满复用 EVENT_ERR_QUEUE_FULL 的延期计划
- * 2026-09-27       1.2            zeh            新增订阅级过滤：侧表、subscribe_filtered/set_filter 热换、通知快照过滤判定
- * 2026-09-27       1.3            zeh            订阅成功后接入 sticky 同步重放（两锁释放后、ops gate 内锁外回调）
+ * 2026-09-18       1.1            zeh            拆分 register_type/subscribe 超长函数；标注槽满复用
+ * EVENT_ERR_QUEUE_FULL 的延期计划 2026-09-27       1.2            zeh
+ * 新增订阅级过滤：侧表、subscribe_filtered/set_filter 热换、通知快照过滤判定 2026-09-27       1.3            zeh
+ * 订阅成功后接入 sticky 同步重放（两锁释放后、ops gate 内锁外回调）
  */
 
 #include <zephyr/logging/log.h>
@@ -556,8 +557,8 @@ void event_unsubscribe_all(uint32_t subscriber_id) {
 }
 
 #if defined(CONFIG_EVENT_SUBSCRIBER_FILTER)
-event_status_t event_set_subscriber_filter(uint32_t subscriber_id, event_type_t type,
-                                           event_subscriber_filter_t filter, void* filter_user_data) {
+event_status_t event_set_subscriber_filter(uint32_t subscriber_id, event_type_t type, event_subscriber_filter_t filter,
+                                           void* filter_user_data) {
     if (!event_system_op_enter()) {
         return EVENT_ERR_INVALID_ARG;
     }

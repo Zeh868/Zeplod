@@ -72,15 +72,15 @@ static void test_suite_teardown(void* fixture) {
  * ============================================================================= */
 
 /* 控制命令（example_module_a.c 内部约定的 1/2/3） */
-#define CMD_SET_RATE 1
-#define CMD_GET_RATE 2
-#define CMD_RESET    3
+#define CMD_SET_RATE                1
+#define CMD_GET_RATE                2
+#define CMD_RESET                   3
 
 /* 无效命令探针：落在合法命令集合之外 */
-#define CMD_INVALID 9999U
+#define CMD_INVALID                 9999U
 
 /* 异步等待上限：覆盖最慢采样周期（10ms）的富余量 */
-#define MODULE_A_DATA_WAIT_MS 2000U
+#define MODULE_A_DATA_WAIT_MS       2000U
 
 /* 并发用例参数：工作线程数与每线程读写轮数 */
 #define MODULE_A_CONCURRENT_WORKERS 2
@@ -290,9 +290,9 @@ ZTEST(example_module_a, test_control_reset) {
     example_module_a_config_t config = {.sample_rate_ms = 10, .enable_filtering = true};
     sensor_sample_t           samples[4];
     module_a_get_data_ctx_t   probe = {
-        .samples = samples,
-        .samples_bytes = sizeof(samples),
-        .bytes_read = 0,
+          .samples = samples,
+          .samples_bytes = sizeof(samples),
+          .bytes_read = 0,
     };
     int8_t leftover[64];
 

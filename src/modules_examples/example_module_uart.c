@@ -41,11 +41,11 @@ LOG_MODULE_REGISTER(example_module_uart, CONFIG_SYS_LOG_LEVEL);
  * 内部定义
  * ============================================================================= */
 
-#define UART_THREAD_PRIORITY   5
-#define UART_THREAD_STACK_SIZE 2048
+#define UART_THREAD_PRIORITY        5
+#define UART_THREAD_STACK_SIZE      2048
 
 /** rx_thread 单次批量读取并发布的最大字节数（栈上缓冲，须小于环形缓冲容量） */
-#define UART_RX_BATCH_SIZE 64
+#define UART_RX_BATCH_SIZE          64
 
 /** stop 时等待 rx_thread 退出的有界超时；线程循环 k_msleep(10)，正常远小于该值 */
 #define UART_THREAD_JOIN_TIMEOUT_MS 200
@@ -61,8 +61,8 @@ typedef struct {
      * 状态切换仅为枚举整数值的单写者多读者场景，用 atomic 保证可见性即可，
      * 不引入互斥锁（读侧容忍读到上一状态的旧值，最多多执行一轮循环判断）。
      */
-    atomic_t                     status;
-    struct k_thread              rx_thread;
+    atomic_t        status;
+    struct k_thread rx_thread;
     K_KERNEL_STACK_MEMBER(rx_stack, UART_THREAD_STACK_SIZE);
     const struct device* dev;
     uint8_t*             rx_buffer;
@@ -113,9 +113,8 @@ int example_module_uart_init(void* config) {
     /* 缓冲区配置须落在内部静态缓冲范围内，否则取模运算会越界（外部输入先校验再使用） */
     if (g_module_uart.config.rx_buffer_size == 0U || g_module_uart.config.rx_buffer_size > sizeof(g_rx_buffer_static) ||
         g_module_uart.config.tx_buffer_size == 0U || g_module_uart.config.tx_buffer_size > sizeof(g_tx_buffer_static)) {
-        LOG_ERR("Invalid buffer config: rx=%u tx=%u (1..%u)",
-                (unsigned int) g_module_uart.config.rx_buffer_size, (unsigned int) g_module_uart.config.tx_buffer_size,
-                (unsigned int) sizeof(g_rx_buffer_static));
+        LOG_ERR("Invalid buffer config: rx=%u tx=%u (1..%u)", (unsigned int) g_module_uart.config.rx_buffer_size,
+                (unsigned int) g_module_uart.config.tx_buffer_size, (unsigned int) sizeof(g_rx_buffer_static));
         return -EINVAL;
     }
 

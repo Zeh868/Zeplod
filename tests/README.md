@@ -89,7 +89,7 @@ source scripts/setup_env.sh
 .\scripts\run_tests.ps1
 ```
 
-脚本会先执行 **`setup_env`**（读取 `zephyr_config.env`），再构建/运行测试；无需单独激活环境。  
+脚本会先执行 **`setup_env`**（读取 `zephyr_config.env`），再构建/运行测试；无需单独激活环境。
 板型优先 `native_sim`（若 `west boards` 列出），否则 `native_posix`。可用环境变量 `ZEPHYR_TEST_BOARD`、`ZEPHYR_TEST_CONF` 覆盖。
 
 ### West（手动）
@@ -213,7 +213,7 @@ Windows 原生无法运行 `native_sim`，使用 **`scripts/run_qemu.ps1`** 在 
 .\scripts\run_qemu.ps1 -Tests -Coverage -ReportOnly -CoverageLog coverage_qemu_qemu_riscv32.log
 ```
 
-默认 CONF 链：`prj.conf;prj_test_extensions.conf;prj_qemu_coverage.conf;prj_block_overflow.conf`。  
+默认 CONF 链：`prj.conf;prj_test_extensions.conf;prj_qemu_coverage.conf;prj_block_overflow.conf`。
 产物：`coverage-qemu-core.html`、`coverage-qemu-core-summary.json`、日志 `coverage_qemu_<board>.log`。
 
 需已安装 **Zephyr SDK**（`riscv64-zephyr-elf-gcov`）与 **gcovr**（`pip install gcovr`）。

@@ -49,9 +49,9 @@ static int cmd_prov_set_wifi(const struct shell* shell, size_t argc, char** argv
 
 /** `prov show`：显示配网状态与已保存 SSID（PSK 出于安全考虑不回显） */
 static int cmd_prov_show(const struct shell* shell, size_t argc, char** argv) {
-    provisioning_state_t state;
-    char                  ssid[PROVISIONING_WIFI_SSID_MAX_LEN];
-    char                  psk[PROVISIONING_WIFI_PSK_MAX_LEN];
+    provisioning_state_t     state;
+    char                     ssid[PROVISIONING_WIFI_SSID_MAX_LEN];
+    char                     psk[PROVISIONING_WIFI_PSK_MAX_LEN];
     static const char* const state_names[] = {
         [PROVISIONING_STATE_UNPROVISIONED] = "UNPROVISIONED",
         [PROVISIONING_STATE_IN_PROGRESS] = "IN_PROGRESS",
@@ -67,7 +67,7 @@ static int cmd_prov_show(const struct shell* shell, size_t argc, char** argv) {
         return -EIO;
     }
     shell_print(shell, "state: %s",
-               (state < ARRAY_SIZE(state_names) && state_names[state] != NULL) ? state_names[state] : "UNKNOWN");
+                (state < ARRAY_SIZE(state_names) && state_names[state] != NULL) ? state_names[state] : "UNKNOWN");
 
     if (provisioning_module_get_credentials(ssid, sizeof(ssid), psk, sizeof(psk)) == 0) {
         shell_print(shell, "wifi.ssid: %s", ssid);
@@ -79,11 +79,9 @@ static int cmd_prov_show(const struct shell* shell, size_t argc, char** argv) {
     return 0;
 }
 
-SHELL_STATIC_SUBCMD_SET_CREATE(sub_prov,
-                               SHELL_CMD_ARG(set-wifi, NULL, "Set Wi-Fi SSID/PSK and provision", cmd_prov_set_wifi, 3,
-                                             0),
-                               SHELL_CMD(show, NULL, "Show provisioning state and saved SSID", cmd_prov_show),
-                               SHELL_SUBCMD_SET_END);
+SHELL_STATIC_SUBCMD_SET_CREATE(
+    sub_prov, SHELL_CMD_ARG(set - wifi, NULL, "Set Wi-Fi SSID/PSK and provision", cmd_prov_set_wifi, 3, 0),
+    SHELL_CMD(show, NULL, "Show provisioning state and saved SSID", cmd_prov_show), SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(prov, &sub_prov, "Provisioning commands", NULL);
 #endif /* CONFIG_SHELL && CONFIG_PROVISIONING_SHELL */

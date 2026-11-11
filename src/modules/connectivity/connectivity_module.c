@@ -71,15 +71,15 @@ typedef struct {
     struct k_mutex                     lock;                       /**< 保护 status/backends/active/module_status */
     bool                               lock_ready;
     bool                               events_registered; /**< EVENT_CONNECTIVITY_STATE_CHANGED 已注册 */
-    bool                               prov_event_subscribed;    /**< EVENT_PROVISIONING_STATE_CHANGED 是否已订阅（配网即连） */
-    uint32_t                           prov_event_subscriber_id; /**< 上述订阅的订阅者 ID，stop() 时用于反订阅 */
+    bool     prov_event_subscribed;    /**< EVENT_PROVISIONING_STATE_CHANGED 是否已订阅（配网即连） */
+    uint32_t prov_event_subscriber_id; /**< 上述订阅的订阅者 ID，stop() 时用于反订阅 */
 #if IS_ENABLED(CONFIG_CONNECTIVITY_FAILOVER)
-    struct k_work_delayable            failover_work;     /**< 周期健康轮询 / 抢占升级 / 空闲首连；仅由本 work 回调自身独占访问 */
-    const connectivity_backend_desc_t* preempt_candidate; /**< 抢占去抖：上次发现的高优先级候选 */
-    uint8_t                            preempt_streak;    /**< 该候选连续可用的轮询次数 */
+    struct k_work_delayable failover_work; /**< 周期健康轮询 / 抢占升级 / 空闲首连；仅由本 work 回调自身独占访问 */
+    const connectivity_backend_desc_t* preempt_candidate;      /**< 抢占去抖：上次发现的高优先级候选 */
+    uint8_t                            preempt_streak;         /**< 该候选连续可用的轮询次数 */
     bool                               failover_workq_started; /**< 专用工作队列是否已启动（保证只 start 一次） */
 #else
-    struct k_work_delayable            connect_work; /**< FAILOVER 关闭时的独立一次性连接触发 work（系统工作队列） */
+    struct k_work_delayable connect_work; /**< FAILOVER 关闭时的独立一次性连接触发 work（系统工作队列） */
 #endif
 } connectivity_module_cb_t;
 
@@ -240,7 +240,7 @@ static void conn_provisioning_event_handler(const event_t* event, void* user_dat
     }
 
     st = (event->flags & EVENT_FLAG_DATA_INLINE) ? (const provisioning_status_t*) event->data.inline_data
-                                                  : (const provisioning_status_t*) event->data.ptr;
+                                                 : (const provisioning_status_t*) event->data.ptr;
     if (st == NULL) {
         return;
     }

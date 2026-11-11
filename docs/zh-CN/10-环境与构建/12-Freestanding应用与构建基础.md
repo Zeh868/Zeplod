@@ -1,6 +1,6 @@
 > 语言: **中文** | [English](../../en/10-environment-build/12-freestanding-app-build.md)
 
-> **本文档范围**：Freestanding 应用概念、`ZEPHYR_BASE`、常规 `west build`、`BOARD_ROOT` / overlay 规则（概要）。  
+> **本文档范围**：Freestanding 应用概念、`ZEPHYR_BASE`、常规 `west build`、`BOARD_ROOT` / overlay 规则（概要）。
 > **另见**：[15-新建APP开发指南](15-新建APP开发指南.md)（APP 子模块仓库）· [14-QEMU仿真运行指南](14-QEMU仿真运行指南.md)（无硬件仿真）· [44-设备树与内存配置手册](../40-应用开发/44-设备树与内存配置手册.md)（overlay 细节）
 
 # Freestanding 应用与构建基础

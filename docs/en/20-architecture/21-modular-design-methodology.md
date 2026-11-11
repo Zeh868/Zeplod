@@ -469,12 +469,12 @@ typedef struct {
 
 int process_sensor_data(void) {
     sensor_data_t data;
-    
+
     // Directly call low-level module
     if (sensor_driver_read(&data) != 0) {
         return -EIO;
     }
-    
+
     // Process data
     return process(&data);
 }
@@ -516,12 +516,12 @@ typedef struct {
 
 int process_sensor_data(const sensor_interface_t *sensor) {
     uint32_t data;
-    
+
     // Call through abstract interface, don't care about concrete implementation
     if (sensor->read(&data) != 0) {
         return -EIO;
     }
-    
+
     return process(data);
 }
 
@@ -678,7 +678,7 @@ bool event_queue_is_empty(const event_queue_t *queue);
 
 ```
 No Coupling (Best)               Content Coupling (Worst)
-                           
+
     ┌───┐                      ┌───┐
     │ A │                      │ A │──────┐
     └───┘                      └─┬─┘      │
@@ -726,7 +726,7 @@ g_sensor_data.internal_state = 0xFF;  // Directly modify internal state
 ```c
 // ✅ Modules decoupled through events - no direct coupling
 // Module A publishes event
-event_publish_copy(EVENT_TYPE_DATA_READY, EVENT_PRIORITY_NORMAL, 
+event_publish_copy(EVENT_TYPE_DATA_READY, EVENT_PRIORITY_NORMAL,
                    &sensor_data, sizeof(sensor_data));
 
 // Module B subscribes to event
@@ -1635,7 +1635,7 @@ src/
 
 ```c
 // ✅ Good: Input params const, output params pointer
-int sensor_driver_read(const sensor_driver_config_t *config, 
+int sensor_driver_read(const sensor_driver_config_t *config,
                        sensor_driver_data_t *data);
 
 // ❌ Bad: Can't distinguish input from output
@@ -1645,7 +1645,7 @@ int sensor_driver_read(sensor_driver_data_t *data);
 int network_send(const network_packet_t *packet);
 
 // ❌ Bad: Parameter list too long
-int network_send(uint8_t *data, size_t len, uint8_t type, 
+int network_send(uint8_t *data, size_t len, uint8_t type,
                  uint8_t flags, uint32_t timeout);
 ```
 
@@ -1714,11 +1714,11 @@ int sensor_driver_check_version(const sensor_driver_interface_t *iface) {
 
 ```
 Deep dependency (bad)             Shallow dependency (good)
-                           
+
 A → B → C → D                    A → B
                                A → C
                                A → D
-                           
+
 Depth 4                          Depth 1-2
 ```
 
@@ -1889,7 +1889,7 @@ void sensor_handler(const event_t *event, void *user_data) {
 
 // 4. Another module publishes events
 void publish_sensor_data(sensor_data_t *data) {
-    event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL, 
+    event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL,
                        data, sizeof(sensor_data_t));
 }
 ```

@@ -35,16 +35,16 @@ extern "C" {
  * 新代码请通过 prj.conf / Kconfig 配置事件系统。
  */
 typedef struct {
-    uint16_t high_priority_queue_size;  /**< 无效字段（Kconfig 接管），计划于 2.0 移除 */
+    uint16_t high_priority_queue_size;   /**< 无效字段（Kconfig 接管），计划于 2.0 移除 */
     uint16_t normal_priority_queue_size; /**< 无效字段（Kconfig 接管），计划于 2.0 移除 */
-    uint16_t low_priority_queue_size;   /**< 无效字段（Kconfig 接管），计划于 2.0 移除 */
-    bool     enable_playback;           /**< 无效字段（未实现回放），计划于 2.0 移除 */
-    bool     enable_statistics;         /**< 无效字段（统计恒开启），计划于 2.0 移除 */
-    bool     enable_rate_limit;         /**< 无效字段（未实现限流），计划于 2.0 移除 */
-    bool     enable_batch;              /**< 无效字段（批处理由分发器负责），计划于 2.0 移除 */
-    bool     enable_persist;            /**< 无效字段（未实现持久化），计划于 2.0 移除 */
-    bool     enable_profiling;          /**< 无效字段（未实现剖析），计划于 2.0 移除 */
-    bool     enable_security;           /**< 无效字段（未实现安全策略），计划于 2.0 移除 */
+    uint16_t low_priority_queue_size;    /**< 无效字段（Kconfig 接管），计划于 2.0 移除 */
+    bool     enable_playback;            /**< 无效字段（未实现回放），计划于 2.0 移除 */
+    bool     enable_statistics;          /**< 无效字段（统计恒开启），计划于 2.0 移除 */
+    bool     enable_rate_limit;          /**< 无效字段（未实现限流），计划于 2.0 移除 */
+    bool     enable_batch;               /**< 无效字段（批处理由分发器负责），计划于 2.0 移除 */
+    bool     enable_persist;             /**< 无效字段（未实现持久化），计划于 2.0 移除 */
+    bool     enable_profiling;           /**< 无效字段（未实现剖析），计划于 2.0 移除 */
+    bool     enable_security;            /**< 无效字段（未实现安全策略），计划于 2.0 移除 */
 } event_compat_config_t;
 
 /**
@@ -54,12 +54,12 @@ typedef struct {
  * （既有豁免：兼容已有 Shell 和应用代码），计划于 2.0 移除。
  */
 typedef struct {
-    uint32_t total_events;           /**< 已处理的事件总数 */
-    uint32_t queue_depth;            /**< 当前队列深度 */
-    uint32_t dropped_events;         /**< 被丢弃的事件数量 */
+    uint32_t total_events;            /**< 已处理的事件总数 */
+    uint32_t queue_depth;             /**< 当前队列深度 */
+    uint32_t dropped_events;          /**< 被丢弃的事件数量 */
     uint32_t high_priority_processed; /**< 恒为 0（历史扩展字段），计划于 2.0 移除 */
-    uint32_t batch_operations;       /**< 恒为 0（历史扩展字段），计划于 2.0 移除 */
-    uint32_t rate_limited_events;    /**< 恒为 0（历史扩展字段），计划于 2.0 移除 */
+    uint32_t batch_operations;        /**< 恒为 0（历史扩展字段），计划于 2.0 移除 */
+    uint32_t rate_limited_events;     /**< 恒为 0（历史扩展字段），计划于 2.0 移除 */
 } event_compat_stats_t;
 
 /**

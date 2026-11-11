@@ -309,10 +309,10 @@ LOG_MODULE_REGISTER(test_my_module);
 
 ZTEST(my_module, test_something) {
     LOG_INF("Starting test_something");
-    
+
     int ret = my_function();
     LOG_DBG("my_function returned %d", ret);
-    
+
     zassert_equal(ret, 0, "my_function failed");
 }
 ```
@@ -331,11 +331,11 @@ hardware-tests:
   runs-on: self-hosted
   steps:
     - uses: actions/checkout@v3
-    
+
     - name: Build tests for hardware
       run: |
         west build -b nucleo_f429zi tests/ --build-dir build_tests_hw
-    
+
     - name: Flash and run tests
       run: |
         west flash --build-dir build_tests_hw

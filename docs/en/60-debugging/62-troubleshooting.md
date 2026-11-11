@@ -16,8 +16,8 @@ This document summarizes **frequently encountered issues** and their solutions d
 
 **Resolution**:
 
-1. Copy **`zephyr_config.env.template`** to **`zephyr_config.env`** and fill in your local **`ZEPHYR_BASE`** (pointing to the Zephyr repository root) and **`ZEPHYR_SDK_INSTALL_DIR`**.  
-2. Or manually set environment variables in your terminal before running **`west build`**.  
+1. Copy **`zephyr_config.env.template`** to **`zephyr_config.env`** and fill in your local **`ZEPHYR_BASE`** (pointing to the Zephyr repository root) and **`ZEPHYR_SDK_INSTALL_DIR`**.
+2. Or manually set environment variables in your terminal before running **`west build`**.
 3. Verify that **`CMakeLists.txt`** reads `zephyr_config.env` (this project includes this logic).
 
 ### 1.2 `west` not found in terminal
@@ -26,8 +26,8 @@ This document summarizes **frequently encountered issues** and their solutions d
 
 **Resolution**:
 
-- Install in the **Python virtual environment** for Zephyr: `pip install west`, then **activate that venv** before running `west`.  
-- Or add the venv's `Scripts` (Windows) or `bin` (Linux/macOS) to your **PATH**.  
+- Install in the **Python virtual environment** for Zephyr: `pip install west`, then **activate that venv** before running `west`.
+- Or add the venv's `Scripts` (Windows) or `bin` (Linux/macOS) to your **PATH**.
 - Verify: `west --version`.
 
 ### 1.3 Python / CMake version requirements not met
@@ -47,7 +47,7 @@ This document summarizes **frequently encountered issues** and their solutions d
 **Resolution**:
 
 1. Read **[Device Tree and Memory Config.md](../40-app-development/44-devicetree-memory-config.md)**: Verify the overlay is applied and main RAM has been extended to the chip's allowed range.
-   **Note**: When building **`nucleo_l4r5zi`**, if a **`boards/nucleo_l4r5zi.overlay`** exists, Zephyr **typically no longer** auto-merges the root **`app.overlay`**; if that board-level overlay only has settings without SRAM extension, linking uses the default ~**192KB** RAM, which can easily **overflow** when combined with **64KB heap**, NVS, etc. This repository has **640KB SRAM** and **settings-partition** in the same **`boards/nucleo_l4r5zi.overlay`**.  
+   **Note**: When building **`nucleo_l4r5zi`**, if a **`boards/nucleo_l4r5zi.overlay`** exists, Zephyr **typically no longer** auto-merges the root **`app.overlay`**; if that board-level overlay only has settings without SRAM extension, linking uses the default ~**192KB** RAM, which can easily **overflow** when combined with **64KB heap**, NVS, etc. This repository has **640KB SRAM** and **settings-partition** in the same **`boards/nucleo_l4r5zi.overlay`**.
 2. In **`prj.conf`**, reduce **`CONFIG_HEAP_MEM_POOL_SIZE`**, thread stack sizes, queue depths, etc. as appropriate (see **[Project Config Options.md](../40-app-development/42-config-options.md)**).
 3. After modifying overlay or `prj.conf`, use **`west build ... -p always`** or **`west build -t pristine`** to rebuild.
 
@@ -57,15 +57,15 @@ This document summarizes **frequently encountered issues** and their solutions d
 
 **Resolution**:
 
-- **`/delete-node/`** must be at the **overlay file top level**, not inside `/ { }`.  
-- Auto-merged overlays must use the **`.overlay`** suffix; **`.dts`** files are not auto-merged as application overlays unless specified via **`DTC_OVERLAY_FILE`**.  
+- **`/delete-node/`** must be at the **overlay file top level**, not inside `/ { }`.
+- Auto-merged overlays must use the **`.overlay`** suffix; **`.dts`** files are not auto-merged as application overlays unless specified via **`DTC_OVERLAY_FILE`**.
 See **[Device Tree and Memory Config.md](../40-app-development/44-devicetree-memory-config.md)** for details.
 
 ### 2.3 `Board 'xxx' not found`
 
 **Resolution**:
 
-- Use Zephyr's built-in board names (e.g., **`nucleo_l4r5zi`**), or ensure custom boards are placed in the **`BOARD_ROOT`** corresponding directory and **`CMakeLists.txt`** has **`list(APPEND BOARD_ROOT ...)`**.  
+- Use Zephyr's built-in board names (e.g., **`nucleo_l4r5zi`**), or ensure custom boards are placed in the **`BOARD_ROOT`** corresponding directory and **`CMakeLists.txt`** has **`list(APPEND BOARD_ROOT ...)`**.
 See **[Standalone Build Guide.md](../10-environment-build/12-freestanding-app-build.md)** for details.
 
 ### 2.4 Changes don't take effect after config modification
@@ -80,8 +80,8 @@ See **[Standalone Build Guide.md](../10-environment-build/12-freestanding-app-bu
 
 **Resolution**:
 
-1. Verify **`CONFIG_SERIAL`** and the used UART are enabled in **`prj.conf`**; the **`zephyr,console`** assigned UART matches the board's **USB-to-serial** pins (see board DTS / user manual).  
-2. Baud rate matches the terminal software (commonly **115200**).  
+1. Verify **`CONFIG_SERIAL`** and the used UART are enabled in **`prj.conf`**; the **`zephyr,console`** assigned UART matches the board's **USB-to-serial** pins (see board DTS / user manual).
+2. Baud rate matches the terminal software (commonly **115200**).
 3. On Windows, confirm the **COM port number** in Device Manager; on Linux, check **`/dev/ttyACM0`** permissions.
 
 See **[Flash and Debug Quickstart.md](61-flash-debug-quickstart.md)** for more details.

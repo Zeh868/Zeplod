@@ -38,7 +38,7 @@ LOG_MODULE_REGISTER(provisioning_module, CONFIG_SYS_LOG_LEVEL);
 #define PROV_KV_KEY_SSID "wifi.ssid"
 
 /** app_kv 中存储 PSK 的键名 */
-#define PROV_KV_KEY_PSK "wifi.psk"
+#define PROV_KV_KEY_PSK  "wifi.psk"
 
 /* =============================================================================
  * 内部数据结构
@@ -48,7 +48,7 @@ LOG_MODULE_REGISTER(provisioning_module, CONFIG_SYS_LOG_LEVEL);
 typedef struct {
     provisioning_state_t state;             /**< 配网状态机当前阶段 */
     module_status_t      module_status;     /**< init/start/stop 生命周期 */
-    struct k_mutex        lock;              /**< 保护 state 与 module_status */
+    struct k_mutex       lock;              /**< 保护 state 与 module_status */
     bool                 lock_ready;        /**< 互斥量是否已完成 k_mutex_init */
     bool                 events_registered; /**< EVENT_PROVISIONING_STATE_CHANGED 是否已注册 */
 } provisioning_module_cb_t;
