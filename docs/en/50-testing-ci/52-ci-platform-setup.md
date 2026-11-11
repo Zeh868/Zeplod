@@ -52,7 +52,7 @@ Config file path: `**.github/workflows/ci.yml**`. Follow the "zero to running" s
 
 1. Push any commit to `**main**` or `**develop**`, or create a **Pull Request** to `**main**` - this triggers `**.github/workflows/ci.yml`** based on `on:` configuration.
 2. Open repository tab **Actions**, you should see workflow run records for **"Zephyr Build CI"**.
-3. Click into a run, expand the **Job** list (for example **Code Quality**, **Build (native_sim)**, and **Unit Tests (native_sim)**), then inspect the failed step logs.
+3. Click into a run, expand the **Job** list (for example **Code Quality**, **Build (native_sim)**, **Unit Tests (native_sim)**, and **Unit Tests (QEMU qemu_riscv32)**), then inspect the failed step logs. A failed QEMU job also keeps a serial log artifact named `qemu-ztest-*`.
 
 ### 2.4 Common Failures and Self-Troubleshooting
 
@@ -76,6 +76,8 @@ Config file path: `**.github/workflows/ci.yml**`. Follow the "zero to running" s
    - Modify `**on: push: branches`** / `**pull_request: branches**`, e.g., keep only `**main**`.
 4. **Scheduled Jobs**
    - `**schedule: cron**` runs weekly on Sunday; delete `**schedule**` section if not needed.
+5. **QEMU runtime**
+   - Job **Unit Tests (QEMU qemu_riscv32)** runs `tests/` ztest on `qemu_riscv32` only. It is not `native_sim`, it does not replace the ARM compile matrix, and it does not cover a physical PHY, peripherals, or wall-clock accuracy. Do not replace it with a `hello_world` build.
 
 ### 2.6 Tag Release and Permissions (Optional)
 

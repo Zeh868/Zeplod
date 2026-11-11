@@ -25,6 +25,14 @@ Before merging or releasing, if upgrading Zephyr version in CI, also sync:
 
 **Steps to enable/maintain CI on hosted platforms** (including troubleshooting failures): **[CI Platform Configuration Guide.md](../50-testing-ci/52-ci-platform-setup.md)**.
 
+## QEMU runtime and simulation limits
+
+The GitHub Actions job **Unit Tests (QEMU qemu_riscv32)** uses the same image and Zephyr **v4.4.0** from `west.yml`.
+The board is Zephyr `qemu_riscv32` (`virt`, `qemu-system-riscv32` from the SDK host tools).
+It runs this repository's `tests/` ztest suite, not `hello_world` and not `native_sim`.
+
+That job does not validate a physical PHY, real-board peripherals, pinmux, or wall-clock accuracy. The ARM matrix stays compile-only. `.gitlab-ci.yml` has no matching QEMU job.
+
 ## West Workspace (Optional)
 
 If using root `west.yml` to manage Zephyr:

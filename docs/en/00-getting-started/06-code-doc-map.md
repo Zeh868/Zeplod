@@ -15,6 +15,7 @@ Task entry: [05-task-navigation.md](05-task-navigation.md) · Full index: [02-do
 | `scripts/project_layout.ps1` / `.sh` / `.py` | [63 §2](../60-debugging/63-scripts-and-tools.md), [15 §5](../10-environment-build/15-creating-new-app-guide.md) | app/framework layout, `Get-ZephyrQemuConfFile`, `Set-ZephyrConsoleUtf8` |
 | `scripts/run_qemu.ps1` | [14](../10-environment-build/14-qemu-simulation-guide.md), [63 §3.2](../60-debugging/63-scripts-and-tools.md) | `-Board`, `-BuildOnly`, `-Target` |
 | `scripts/run_tests.ps1` | [14 §6](../10-environment-build/14-qemu-simulation-guide.md), [51](../50-testing-ci/51-unit-testing-ci.md) | env vars, QEMU tests |
+| `scripts/run_qemu_ztest.sh` | [14 §6.8](../10-environment-build/14-qemu-simulation-guide.md), [63 §3.2.1](../60-debugging/63-scripts-and-tools.md) | `qemu_riscv32` ztest; not `native_sim` |
 | `cmake/zeplod_app_overlays.cmake` | [15 §6](../10-environment-build/15-creating-new-app-guide.md), [44 overlay](../40-app-development/44-devicetree-memory-config.md) | skip `app.overlay` on QEMU |
 | `zephyr_app.env.template` | [15 §3.7](../10-environment-build/15-creating-new-app-guide.md), [63 §6](../60-debugging/63-scripts-and-tools.md) | `APP_PRJ_CONF`, `QEMU_CONF` |
 | `zephyr_config.env.template` | [11](../10-environment-build/11-environment-setup.md) | `ZEPHYR_BASE`, `QEMU_BIN_PATH` |

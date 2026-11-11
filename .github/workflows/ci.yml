@@ -135,6 +135,7 @@ jobs:
           test -f .pre-commit-config.yaml
           python3 -m py_compile scripts/check_encoding.py scripts/check_script_docs.py scripts/preflight_host_tests.py
           bash -n scripts/run_tests.sh
+          bash -n scripts/run_qemu_ztest.sh
           bash -n scripts/run_sanitizers.sh
           bash -n scripts/run_twister.sh
           bash -n scripts/qa.sh
@@ -481,6 +482,61 @@ jobs:
           path: twister-out
           retention-days: 7
 
+  # qemu_riscv32 runs the repository ztest suite inside QEMU.
+  # native_sim stays on the host jobs above. This does not boot a physical
+  # board and does not replace the ARM compile matrix.
+  # qemu-system-riscv32 comes from the image's Zephyr SDK hosttools
+  # (setup.sh -h). Dockerfile.base for v0.29.4 does not apt-install qemu-system-*.
+  qemu-ztest:
+    name: Unit Tests (QEMU qemu_riscv32)
+    runs-on: ubuntu-22.04
+    needs: [changes, preflight]
+    if: needs.changes.outputs.run_heavy == 'true'
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4
+      options: --user root
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build python3-pip
+
+      - name: Install West
+        run: pip3 install west
+
+      - name: Initialize West
+        run: west init -l .
+
+      - name: Update modules
+        run: west update
+
+      - name: Export Zephyr CMake package
+        run: west zephyr-export
+
+      - name: Run ztest on qemu_riscv32
+        timeout-minutes: 40
+        env:
+          ZEPHYR_QEMU_TEST_BOARD: qemu_riscv32
+          ZEPHYR_QEMU_TEST_CONF: "prj.conf;prj_test_extensions.conf"
+          ZEPHYR_QEMU_TEST_TIMEOUT: "600"
+        run: ./scripts/run_qemu_ztest.sh
+
+      - name: Upload QEMU serial log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-ztest-${{ github.sha }}
+          path: |
+            qemu-ztest.log
+            build_tests_qemu/qemu-runner.stdout
+          retention-days: 7
+          if-no-files-found: warn
+
   build-arm:
     name: Build (ARM Cortex-M)
     runs-on: ubuntu-22.04
@@ -563,7 +619,7 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-22.04
-    needs: [build-native, build-arm, build-tests]
+    needs: [build-native, build-arm, build-tests, qemu-ztest]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout

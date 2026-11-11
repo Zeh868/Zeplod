@@ -80,14 +80,16 @@ This document covers:
 ## 2. Continuous Integration (GitHub Actions / GitLab)
 
 - **GitHub**: **`.github/workflows/ci.yml`**
-- **GitLab**: **`.gitlab-ci.yml`** (aligned with GitHub capabilities, see **[CI Platform Setup Guide.md](52-ci-platform-setup.md)**)
+- **GitLab**: **`.gitlab-ci.yml`** (host tests and ARM compile track GitHub; it does **not** include the QEMU runtime job below. See **[CI Platform Setup Guide.md](52-ci-platform-setup.md)**)
 
-Both typically include (subject to actual YAML):
+Subject to the YAML, GitHub usually includes:
 
 | Job Type | Typical Content |
 |----------|----------------|
 | **Code Quality** | **`shellcheck`** (`scripts/*.sh`), **`pre-commit run --all-files`** (including **clang-format**, YAML, trailing whitespace, etc., consistent with **`.pre-commit-config.yaml`**) |
-| **Build** | Main project and **`tests/`** on **`native_sim`** (Zephyr 4.4.0 CI image), plus ARM matrix smoke builds |
+| **Host tests** | Main project and **`tests/`** on **`native_sim`** (Zephyr 4.4.0 CI image). `native_sim` is a host process, not QEMU |
+| **QEMU runtime** | `tests/` ztest on **`qemu_riscv32`** (`scripts/run_qemu_ztest.sh`). Does not cover a physical PHY, board peripherals, or wall-clock accuracy |
+| **ARM compile** | `nucleo_f429zi`, `nucleo_f767zi`, and `disco_l475_iot1` are compile-only |
 
 **Version Alignment**: Zephyr container version used by CI is documented in **`Zephyr Version and CI Guide.md`**; local **`ZEPHYR_BASE`** is recommended to be compatible with CI main version line to reduce "passed locally, failed on CI".
 
