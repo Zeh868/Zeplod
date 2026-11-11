@@ -27,7 +27,7 @@ Scripts use **`project_layout.ps1` / `project_layout.sh` / `project_layout.py`**
 | Preflight | `preflight_host_tests.py` |
 | Docs and checks | `generate_docs.ps1` / `generate_docs.sh` / `lint_docs.py` / `check_encoding.py` / `check_script_docs.py` |
 | Version and release | `bump_version.py` / `package_release.ps1` / `package_release.sh` |
-| Build analysis | `build_all.ps1` / `build_all.bat` / `build_all.sh` / `analyze_map.ps1` / `analyze_map.sh` / `analyze_map.bat` |
+| Build analysis | `build_all.sh` / `analyze_map.ps1` / `analyze_map.sh` / `analyze_map.bat` |
 | Module/config management | `module_config.py` |
 
 ## 2. Prerequisites
@@ -164,6 +164,16 @@ Modes: `test`, `san`, `twister`, `all`
 python scripts/check_encoding.py
 python scripts/check_script_docs.py
 ```
+
+### 3.9 Batch build
+
+The implementation is `build_all.sh`. Flags are `-b`/`--board`, `-c`/`--clean`, and `-o`/`--output`. In APP layout it builds from the APP root. The file is not marked executable; invoke it with `bash`.
+
+```bash
+bash scripts/build_all.sh -b nucleo_l4r5zi
+```
+
+`build_all.bat` only forwards to a PowerShell file that is not in this repository, so it is not an entry point.
 
 ## 4. Platform Notes
 
