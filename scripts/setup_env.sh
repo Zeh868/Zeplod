@@ -17,11 +17,11 @@ source "${SCRIPT_DIR}/project_layout.sh"
 initialize_zephyr_project_layout "${SCRIPT_DIR}"
 write_zephyr_project_banner
 
-PROJECT_ROOT="${ZP_FRAMEWORK_ROOT}"
 CONFIG_FILE="${ZP_CONFIG_FILE}"
 
+# Non-zero status stops via set -e, whether sourced or executed.
 _exit_script() {
-    return "$1" 2>/dev/null || exit "$1"
+    return "$1"
 }
 
 _trim() {
@@ -53,7 +53,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 
             if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
                 printf -v "$key" '%s' "$value"
-                export "$key"
+                export "${key?}"
             fi
             ;;
     esac
@@ -103,7 +103,8 @@ fi
 
 if [ -f "$ZEPHYR_BASE/scripts/env.sh" ]; then
     echo "Running Zephyr environment script..."
-    # shellcheck disable=SC1090
+    # Path comes from the local zephyr_config.env; this Zephyr file is not in the repo.
+    # shellcheck disable=SC1090,SC1091
     source "$ZEPHYR_BASE/scripts/env.sh"
 fi
 
