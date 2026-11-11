@@ -1,0 +1,9 @@
+/*
+ * nucleo_f767zi 没有默认的 zephyr,uart-mcumgr。
+ * 编译检查把它接到已经启用的 ST-Link 串口 usart3。
+ */
+/ {
+	chosen {
+		zephyr,uart-mcumgr = &usart3;
+	};
+};

@@ -547,24 +547,30 @@ jobs:
           - board: nucleo_f767zi
             label: standard
             extra_conf: ""
+            dt_overlay: ""
           # MCUboot 需要片上 Flash 分区。native_sim 没有 FLASH_PAGE_LAYOUT。
           - board: nucleo_f767zi
             label: mcuboot
             extra_conf: conf/targets/mcuboot.conf
+            dt_overlay: ""
           - board: nucleo_f767zi
             label: production-mcuboot
             extra_conf: conf/targets/production.conf;conf/targets/mcuboot.conf
+            dt_overlay: ""
           - board: nucleo_f767zi
             label: mcumgr-smp
             extra_conf: conf/targets/mcumgr_smp.conf
+            dt_overlay: boards/nucleo_f767zi_mcumgr.overlay
           # f429 的 zephyr,sram 只有 192KB，standard 档会让 noinit 溢出。
           - board: nucleo_f429zi
             label: balanced
             extra_conf: conf/profiles/balanced.conf
+            dt_overlay: ""
           # disco SRAM 96KB，用极简档做编译覆盖。
           - board: disco_l475_iot1
             label: minimal
             extra_conf: conf/profiles/minimal.conf
+            dt_overlay: ""
 
     steps:
       - name: Checkout
@@ -589,9 +595,16 @@ jobs:
 
       - name: Build (${{ matrix.board }} ${{ matrix.label }})
         run: |
+          CMAKE_ARGS=()
           if [ -n "${{ matrix.extra_conf }}" ]; then
+            CMAKE_ARGS+=(-DEXTRA_CONF_FILE="${{ matrix.extra_conf }}")
+          fi
+          if [ -n "${{ matrix.dt_overlay }}" ]; then
+            CMAKE_ARGS+=(-DEXTRA_DTC_OVERLAY_FILE="${{ matrix.dt_overlay }}")
+          fi
+          if [ "${#CMAKE_ARGS[@]}" -gt 0 ]; then
             west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }} -- \
-              -DEXTRA_CONF_FILE="${{ matrix.extra_conf }}"
+              "${CMAKE_ARGS[@]}"
           else
             west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }}
           fi
