@@ -291,9 +291,9 @@ ZTEST(example_module_a, test_control_reset) {
     example_module_a_config_t config = {.sample_rate_ms = 10, .enable_filtering = true};
     sensor_sample_t           samples[4];
     module_a_get_data_ctx_t   probe = {
-        .samples = samples,
-        .samples_bytes = sizeof(samples),
-        .bytes_read = 0,
+          .samples = samples,
+          .samples_bytes = sizeof(samples),
+          .bytes_read = 0,
     };
     int8_t leftover[64];
 
