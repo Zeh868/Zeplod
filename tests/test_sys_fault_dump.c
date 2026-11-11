@@ -24,8 +24,9 @@ ZTEST_SUITE(sys_fault_dump_tests, NULL, NULL, NULL, NULL, NULL);
 
 ZTEST(sys_fault_dump_tests, test_record_and_export) {
     static const uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
-    uint8_t              buf[512];
-    size_t               n = 0U;
+    /* 环按默认 16×(记录头+payload) 已超过 512；用静态缓冲避免吃掉 ztest 栈。 */
+    static uint8_t buf[8192];
+    size_t         n = 0U;
 
     zassert_equal(sys_fault_dump_init(), 0, NULL);
     sys_fault_dump_clear();
