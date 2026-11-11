@@ -134,7 +134,7 @@ jobs:
 
       - name: Verify key files and script syntax
         run: |
-          test -f tests/testsuite.yaml
+          test -f tests/testcase.yaml
           test -f .pre-commit-config.yaml
           python3 -m py_compile scripts/check_encoding.py scripts/check_script_docs.py scripts/preflight_host_tests.py
           bash -n scripts/run_tests.sh
@@ -435,14 +435,15 @@ jobs:
 
       - name: Build and run with sanitizer (${{ matrix.sanitizer }})
         run: |
+          # 交给 Zephyr posix 把 -fsanitize 同时加到固件编译和 native_simulator 最终链接。
+          # 只设 CMAKE_C_FLAGS 时，链接阶段没有 libasan/libubsan。
           if [ "${{ matrix.sanitizer }}" = "asan" ]; then
-            SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g"
+            SAN_KCONFIG=CONFIG_ASAN=y
           else
-            SAN_FLAGS="-fsanitize=undefined -fno-omit-frame-pointer -g"
+            SAN_KCONFIG=CONFIG_UBSAN=y
           fi
           west build -b native_sim tests/ --build-dir build_san_${{ matrix.sanitizer }} -p always -- \
-            -DCMAKE_C_FLAGS="${SAN_FLAGS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS}"
+            -D"${SAN_KCONFIG}"
           west build -t run --build-dir build_san_${{ matrix.sanitizer }}
 
   twister:
@@ -552,10 +553,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board:
-          - nucleo_f429zi
-          - nucleo_f767zi
-          - disco_l475_iot1
+        include:
+          # f767 SRAM 512KB，默认 standard.conf（≥256KB）可以放下。
+          - board: nucleo_f767zi
+            extra_conf: ""
+          # f429 的 zephyr,sram 只有 192KB，standard 档会让 noinit 溢出。
+          - board: nucleo_f429zi
+            extra_conf: conf/profiles/balanced.conf
+          # disco SRAM 96KB，用极简档做编译覆盖。
+          - board: disco_l475_iot1
+            extra_conf: conf/profiles/minimal.conf
 
     steps:
       - name: Checkout
@@ -580,7 +587,12 @@ jobs:
 
       - name: Build (${{ matrix.board }})
         run: |
-          west build -b ${{ matrix.board }} --build-dir build_${{ matrix.board }}
+          if [ -n "${{ matrix.extra_conf }}" ]; then
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.board }} -- \
+              -DEXTRA_CONF_FILE="${{ matrix.extra_conf }}"
+          else
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.board }}
+          fi
           echo "Build succeeded: ${{ matrix.board }}"
 
       - name: Upload artifact
