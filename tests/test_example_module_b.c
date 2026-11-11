@@ -48,7 +48,8 @@ static void* test_suite_setup(void) {
     zassert_true(ret == 0 || ret == -EALREADY, "模块管理器初始化失败: %d", ret);
 
     ret = module_manager_start();
-    zassert_true(ret == 0 || ret == -EALREADY, "模块管理器启动失败: %d", ret);
+    /* compat SYS_INIT 已经 start 过时返回 ALREADY_RUNNING，不是 -EALREADY。 */
+    zassert_true(ret == 0 || ret == -EALREADY || ret == MODULE_ERR_ALREADY_RUNNING, "模块管理器启动失败: %d", ret);
 
     return NULL;
 }

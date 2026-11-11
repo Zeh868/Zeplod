@@ -147,14 +147,17 @@ ZTEST(factory_mode_tests, test_enter_gpio_finalize_flow) {
 ZTEST(factory_mode_tests, test_enter_publishes_events) {
     uint32_t sub_id;
 
+    setup_factory();
+    /* 同套件前面的用例已经把状态事件放进队列，分发器要等本次让出才跑。
+     * 先排空再订阅，否则第一次 k_sem_take 会吃到旧事件，PASSED 还没到。 */
+    k_msleep(1);
+
     k_sem_init(&g_factory_sem, 0, 10);
     g_last_factory_state = FACTORY_STATE_INACTIVE;
     g_last_factory_error = 0;
     g_factory_event_count = 0;
 
     zassert_equal(event_subscribe(EVENT_FACTORY_STATE_CHANGED, factory_state_event_cb, NULL, &sub_id), EVENT_OK);
-
-    setup_factory();
     zassert_equal(factory_mode_enter(), 0, NULL);
     zassert_equal(k_sem_take(&g_factory_sem, K_SECONDS(2)), 0, "enter event");
     zassert_equal(g_last_factory_state, FACTORY_STATE_ACTIVE, NULL);
@@ -249,16 +252,22 @@ ZTEST(factory_mode_tests, test_cal_slots_full) {
  * APP_ERR_INVALID_PARAM。本用例为该契约的防复发锚点。
  */
 ZTEST(factory_mode_tests, test_calibration_value_too_long_rejected) {
-    char long_val[CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN];
+    char ok_val[CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN];
+    char long_val[CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN + 1U];
 
     setup_factory();
     zassert_equal(factory_mode_enter(), 0, NULL);
 
-    /* 长度恰等于上限（不含结尾 0）：契约要求 strlen < 上限，此处必须拒绝 */
-    memset(long_val, 'v', sizeof(long_val) - 1U);
-    long_val[sizeof(long_val) - 1U] = '\0';
+    /* 头文件契约是长度落在 [0, MAX)。MAX-1 仍可放入带结尾 0 的槽。 */
+    memset(ok_val, 'v', sizeof(ok_val) - 1U);
+    ok_val[sizeof(ok_val) - 1U] = '\0';
+    zassert_equal(factory_mode_set_calibration("ok", ok_val), 0, NULL);
+
+    /* strlen == MAX 超出 [0, MAX)，与 key 超长一样返回 APP_ERR_INVALID_PARAM。 */
+    memset(long_val, 'v', CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN);
+    long_val[CONFIG_FACTORY_MODE_CAL_VALUE_MAX_LEN] = '\0';
     zassert_equal(factory_mode_set_calibration("toolong", long_val), APP_ERR_INVALID_PARAM,
-                  "value 达长度上限应返回 APP_ERR_INVALID_PARAM");
+                  "value 长度达到 MAX 应返回 APP_ERR_INVALID_PARAM");
 
     teardown_factory();
 }
