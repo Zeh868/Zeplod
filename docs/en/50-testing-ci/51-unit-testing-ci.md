@@ -111,7 +111,9 @@ The following host-coverage path is for Linux/WSL2. macOS must use the
 
 ```bash
 # Build tests with coverage
-west build -b native_sim tests/ --build-dir build_tests -- -DCMAKE_C_FLAGS="--coverage"
+# CONFIG_COVERAGE links gcov into the native simulator. CMAKE_C_FLAGS=--coverage does not.
+# The GitHub Actions src/core/ gate is CORE_COVERAGE_MIN (79) in ci.yml.
+west build -b native_sim tests/ --build-dir build_tests -- -DCONFIG_COVERAGE=y
 
 # Run tests
 west build -t run --build-dir build_tests

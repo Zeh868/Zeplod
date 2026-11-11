@@ -192,7 +192,7 @@ ZTEST_SUITE(test_module_name, NULL, NULL, NULL, NULL, NULL);
 
 | 范围 | 本地目标 | CI 门禁（`.github/workflows/ci.yml`） |
 |------|----------|--------------------------------------|
-| `src/core/` | 目标 **≥95%**（QEMU 全量 ztest；当前约 **77%**，见下方说明） | **≥80%**（`native_sim` + `--coverage`） |
+| `src/core/` | 目标 **≥95%**（QEMU 全量 ztest；当前约 **77%**，见下方说明） | **≥79%**（`native_sim` + `CONFIG_COVERAGE`） |
 
 全仓库 100% 不现实（`src/app/`、未纳入测试的路径、`SYS_INIT` 自动初始化路径等不在统计范围内）。
 
@@ -203,7 +203,7 @@ Windows 原生无法运行 `native_sim`，使用 **`scripts/run_qemu.ps1`** 在 
 ```powershell
 . .\scripts\setup_env.ps1
 
-# 构建、运行测试、生成报告（CI 对齐门槛 80%）
+# 构建、运行测试、生成报告（本地示例门槛 80%；CI native_sim 门禁为 79%）
 .\scripts\run_qemu.ps1 -Tests -Coverage -CoverageMin 80
 
 # 冲刺 95% 目标（当前未达标时会非零退出）
@@ -224,7 +224,7 @@ Windows 原生无法运行 `native_sim`，使用 **`scripts/run_qemu.ps1`** 在 
 
 ```bash
 west build -b native_sim tests/ --build-dir build_tests_cov -p always \
-  -- -DCMAKE_C_FLAGS="--coverage"
+  -- -DCONFIG_COVERAGE=y
 west build -t run --build-dir build_tests_cov
 gcovr -r . --filter "src/core/" --html --html-details coverage-core.html --print-summary
 ```

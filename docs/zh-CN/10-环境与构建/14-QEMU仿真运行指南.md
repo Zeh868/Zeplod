@@ -369,7 +369,7 @@ QEMU 目标无主机 `.gcda` 文件；启用 `CONFIG_COVERAGE=y` 与 `CONFIG_COV
 ```powershell
 . .\scripts\setup_env.ps1
 
-# 默认板型 qemu_riscv32；CI 对齐门槛 80%
+# 默认板型 qemu_riscv32；本地示例门槛 80%（CI native_sim 门禁为 79%）
 .\scripts\run_qemu.ps1 -Tests -Coverage -CoverageMin 80
 
 # 95% 冲刺目标（未达标时非零退出；当前约 77%）
@@ -393,7 +393,7 @@ QEMU 目标无主机 `.gcda` 文件；启用 `CONFIG_COVERAGE=y` 与 `CONFIG_COV
 
 `prj_qemu_coverage.conf` 加大堆与各服务线程栈（gcov 插桩耗栈），并开启 `EVENT_RUNTIME_STATUS` / `EVENT_DEBUG_MEM`；覆盖率构建默认关闭 `CONFIG_ZTEST_CONCURRENCY_STRESS` 以避免栈溢出。
 
-与 CI 区别：GitHub Actions 在 **`native_sim`** 上对 `src/core/` 执行 **≥80%** 门禁。本地 Windows 以 QEMU 全量 ztest 验证同一范围；**95%** 为下一阶段目标（ISR 入队、`SYS_INIT` 自动初始化等路径仍难触达）。
+与 CI 区别：GitHub Actions 在 **`native_sim`** 上对 `src/core/` 执行 **≥79%** 门禁。本地 Windows 以 QEMU 全量 ztest 验证同一范围；**95%** 为下一阶段目标（ISR 入队、`SYS_INIT` 自动初始化等路径仍难触达）。
 
 ### 6.9 GitHub Actions 上的 QEMU 运行时
 

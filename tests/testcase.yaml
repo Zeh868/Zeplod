@@ -12,4 +12,3 @@ tests:
     harness: ztest
     platform_allow:
       - native_sim
-      - native_posix
