@@ -45,7 +45,7 @@ LOG_MODULE_REGISTER(app_main, CONFIG_SYS_LOG_LEVEL);
 #define APP_HEARTBEAT_LOG_EVERY_N 10U
 
 /** 主循环空闲睡眠时长（毫秒）：事件驱动设计下主循环无任务，仅让出 CPU */
-#define APP_MAIN_LOOP_SLEEP_MS 1000
+#define APP_MAIN_LOOP_SLEEP_MS    1000
 
 /* =============================================================================
  * 内部数据结构

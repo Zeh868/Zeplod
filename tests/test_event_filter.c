@@ -22,19 +22,19 @@
 LOG_MODULE_REGISTER(test_event_filter);
 
 /* 本套件专用事件类型（各用例先 shutdown 再注册，避免与其他套件残留注册冲突） */
-#define FILTER_TEST_TYPE_A 205U
-#define FILTER_TEST_TYPE_B 206U
+#define FILTER_TEST_TYPE_A      205U
+#define FILTER_TEST_TYPE_B      206U
 
 /** 并发热换用例的发布总数（奇偶交替两种载荷） */
-#define FILTER_PAIR_PUBLISHED 40U
+#define FILTER_PAIR_PUBLISHED   40U
 
 /** STATS=n 静默判定轮数（1ms 轮询间隔下约 300ms 无新交付即视为排空） */
 #define FILTER_PAIR_QUIET_POLLS 300U
 
 /** 回调/过滤上下文魔数：ud 内嵌魔数校验配对一致（串线/撕裂即计数异常） */
-#define FILTER_CTX_MAGIC_A 0xA11CE00AU
-#define FILTER_CTX_MAGIC_B 0xB0B0F00BU
-#define FILTER_CB_MAGIC    0xC0FFE00CU
+#define FILTER_CTX_MAGIC_A      0xA11CE00AU
+#define FILTER_CTX_MAGIC_B      0xB0B0F00BU
+#define FILTER_CB_MAGIC         0xC0FFE00CU
 
 typedef struct {
     uint32_t magic;        /**< 上下文魔数（A/B 区分热换两侧） */
@@ -44,12 +44,12 @@ typedef struct {
 } filter_ctx_t;
 
 typedef struct {
-    uint32_t magic;     /**< 回调上下文魔数（FILTER_CB_MAGIC） */
-    atomic_t cb_calls;  /**< 回调被调用次数 */
+    uint32_t magic;    /**< 回调上下文魔数（FILTER_CB_MAGIC） */
+    atomic_t cb_calls; /**< 回调被调用次数 */
 } cb_sink_t;
 
 static cb_sink_t g_sink = {.magic = FILTER_CB_MAGIC};
-static atomic_t  g_filter_anomalies;   /**< 回调/过滤内检测到的配对异常（用例末尾断言为 0） */
+static atomic_t  g_filter_anomalies;    /**< 回调/过滤内检测到的配对异常（用例末尾断言为 0） */
 static atomic_t  g_global_filter_calls; /**< 全局分发器过滤被调用次数（叠加顺序用例） */
 
 /* =============================================================================
@@ -160,9 +160,8 @@ ZTEST(test_event_filter, test_filter_match_and_skip) {
     skip_before = event_subscriber_filter_get_skip_count();
 #endif
 
-    zassert_equal(
-        event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
-        EVENT_OK, NULL);
+    zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
+                  EVENT_OK, NULL);
 
     filter_test_publish(FILTER_TEST_TYPE_A, 1U);
     filter_test_publish(FILTER_TEST_TYPE_A, 2U);
@@ -181,8 +180,8 @@ ZTEST(test_event_filter, test_filter_match_and_skip) {
  * @brief skip 计数与 dispatcher 统计口径：事件级照常计数，订阅级跳过单独累计
  */
 ZTEST(test_event_filter, test_filter_stats_accounting) {
-    filter_ctx_t   ctx = {.magic = FILTER_CTX_MAGIC_A, .tag = 7U};
-    uint32_t       sub_id = 0U;
+    filter_ctx_t       ctx = {.magic = FILTER_CTX_MAGIC_A, .tag = 7U};
+    uint32_t           sub_id = 0U;
     dispatcher_stats_t stats;
 #if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
     uint64_t skip_before;
@@ -194,9 +193,8 @@ ZTEST(test_event_filter, test_filter_stats_accounting) {
     skip_before = event_subscriber_filter_get_skip_count();
 #endif
 
-    zassert_equal(
-        event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
-        EVENT_OK, NULL);
+    zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
+                  EVENT_OK, NULL);
 
     filter_test_publish(FILTER_TEST_TYPE_A, 7U);
     filter_test_publish(FILTER_TEST_TYPE_A, 8U);
@@ -274,9 +272,8 @@ ZTEST(test_event_filter, test_filter_null_equals_plain_subscribe) {
                   EVENT_ERR_INVALID_ARG, "NULL 回调应拒绝");
 
     zassert_equal(event_subscribe(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, &plain_id), EVENT_OK, NULL);
-    zassert_equal(
-        event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, NULL, NULL, &filtered_id),
-        EVENT_OK, NULL);
+    zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, NULL, NULL, &filtered_id),
+                  EVENT_OK, NULL);
 
     for (uint32_t i = 1U; i <= 3U; i++) {
         filter_test_publish(FILTER_TEST_TYPE_A, i);
@@ -307,8 +304,8 @@ ZTEST(test_event_filter, test_filter_set_after_subscribe) {
 
     zassert_equal(event_subscribe(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, &sub_id), EVENT_OK, NULL);
     zassert_equal(event_set_subscriber_filter(sub_id, FILTER_TEST_TYPE_A, filter_by_tag, &ctx), EVENT_OK, NULL);
-    zassert_equal(event_set_subscriber_filter(0xDEADU, FILTER_TEST_TYPE_A, filter_by_tag, &ctx),
-                  EVENT_ERR_NOT_FOUND, "不存在的订阅者应返回 NOT_FOUND");
+    zassert_equal(event_set_subscriber_filter(0xDEADU, FILTER_TEST_TYPE_A, filter_by_tag, &ctx), EVENT_ERR_NOT_FOUND,
+                  "不存在的订阅者应返回 NOT_FOUND");
 
     filter_test_publish(FILTER_TEST_TYPE_A, 1U);
     filter_test_publish(FILTER_TEST_TYPE_A, 2U);
@@ -336,9 +333,8 @@ ZTEST(test_event_filter, test_filter_clear_restores_all) {
     skip_before = event_subscriber_filter_get_skip_count();
 #endif
 
-    zassert_equal(
-        event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
-        EVENT_OK, NULL);
+    zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
+                  EVENT_OK, NULL);
 
     filter_test_publish(FILTER_TEST_TYPE_A, 3U);
     filter_test_publish(FILTER_TEST_TYPE_A, 4U);
@@ -375,9 +371,9 @@ ZTEST(test_event_filter, test_filter_slots_exhausted_no_mem) {
     zassert_equal(event_register_type(FILTER_TEST_TYPE_B, "flt_full_b"), EVENT_OK, NULL);
 
     for (uint32_t i = 0; i < CONFIG_EVENT_SUBSCRIBER_FILTER_SLOTS; i++) {
-        zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass,
-                                               NULL, &ids[i]),
-                      EVENT_OK, "filtered subscribe #%u should succeed", i);
+        zassert_equal(
+            event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass, NULL, &ids[i]),
+            EVENT_OK, "filtered subscribe #%u should succeed", i);
     }
 
     /* A 类订阅槽亦满（16），换 B 类验证的是过滤侧表耗尽而非订阅槽耗尽 */
@@ -401,15 +397,15 @@ ZTEST(test_event_filter, test_filter_unsubscribe_recycles_slot) {
     zassert_equal(event_register_type(FILTER_TEST_TYPE_A, "flt_recyc"), EVENT_OK, NULL);
 
     for (uint32_t i = 0; i < CONFIG_EVENT_SUBSCRIBER_FILTER_SLOTS; i++) {
-        zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass,
-                                               NULL, &ids[i]),
-                      EVENT_OK, NULL);
+        zassert_equal(
+            event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass, NULL, &ids[i]),
+            EVENT_OK, NULL);
     }
 
     zassert_equal(event_unsubscribe(FILTER_TEST_TYPE_A, ids[0]), EVENT_OK, NULL);
-    zassert_equal(
-        event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass, NULL, &recycled_id),
-        EVENT_OK, "退订后应回收过滤槽");
+    zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass, NULL,
+                                           &recycled_id),
+                  EVENT_OK, "退订后应回收过滤槽");
 }
 
 /**
@@ -437,8 +433,8 @@ ZTEST(test_event_filter, test_filter_hot_swap_reuses_slot) {
         EVENT_OK, NULL);
     /* 填满其余过滤槽 */
     for (uint32_t i = 0; i < CONFIG_EVENT_SUBSCRIBER_FILTER_SLOTS - 1U; i++) {
-        zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass,
-                                               NULL, &filler_id),
+        zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, test_event_noop_callback, NULL, filter_allpass, NULL,
+                                               &filler_id),
                       EVENT_OK, NULL);
     }
 
@@ -466,8 +462,8 @@ ZTEST(test_event_filter, test_filter_hot_swap_reuses_slot) {
  * @brief 与全局过滤器叠加：全局先判，全局拒绝时订阅级过滤不被调用
  */
 ZTEST(test_event_filter, test_filter_global_precedes_subscriber) {
-    filter_ctx_t ctx = {.magic = FILTER_CTX_MAGIC_A, .tag = 1U};
-    uint32_t     sub_id = 0U;
+    filter_ctx_t       ctx = {.magic = FILTER_CTX_MAGIC_A, .tag = 1U};
+    uint32_t           sub_id = 0U;
     dispatcher_stats_t stats;
 #if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
     uint64_t skip_before;
@@ -481,9 +477,8 @@ ZTEST(test_event_filter, test_filter_global_precedes_subscriber) {
     atomic_set(&g_global_filter_calls, 0);
 
     event_dispatcher_set_filter(filter_global_reject, NULL);
-    zassert_equal(
-        event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
-        EVENT_OK, NULL);
+    zassert_equal(event_subscribe_filtered(FILTER_TEST_TYPE_A, filter_cb_count, &g_sink, filter_by_tag, &ctx, &sub_id),
+                  EVENT_OK, NULL);
 
     filter_test_publish(FILTER_TEST_TYPE_A, 1U);
     filter_test_drain(1U);
@@ -507,14 +502,14 @@ ZTEST(test_event_filter, test_filter_global_precedes_subscriber) {
 
 static K_THREAD_STACK_DEFINE(g_filter_producer_stack, 1024);
 static struct k_thread g_filter_producer_thread;
-static atomic_t        g_pair_published;  /**< 成功入队的事件数（守恒口径） */
-static atomic_t        g_pair_dropped;    /**< 入队失败被丢弃的事件数 */
+static atomic_t        g_pair_published; /**< 成功入队的事件数（守恒口径） */
+static atomic_t        g_pair_dropped;   /**< 入队失败被丢弃的事件数 */
 static atomic_t        g_pair_producer_done;
 #if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
-static uint64_t        g_pair_skip_base; /**< 并发用例起始时的跳过计数基线 */
+static uint64_t g_pair_skip_base; /**< 并发用例起始时的跳过计数基线 */
 #else
-static atomic_t g_pair_quiet_rounds;    /**< STATS=n 静默判定：交付计数不变的连续轮询轮数 */
-static atomic_t g_pair_prev_delivered;  /**< STATS=n 静默判定：上一轮询的交付计数 */
+static atomic_t g_pair_quiet_rounds;   /**< STATS=n 静默判定：交付计数不变的连续轮询轮数 */
+static atomic_t g_pair_prev_delivered; /**< STATS=n 静默判定：上一轮询的交付计数 */
 #endif
 
 static filter_ctx_t g_pair_ctx_a = {.magic = FILTER_CTX_MAGIC_A, .tag = 0xAAU};
@@ -595,14 +590,14 @@ static bool filter_pair_quiesced_pred(void* ctx) {
  *       每条事件恰好「交付或跳过」二选一，总量守恒
  */
 ZTEST(test_event_filter, test_filter_concurrent_swap_consistency) {
-    uint32_t   sub_id = 0U;
+    uint32_t     sub_id = 0U;
     atomic_val_t published;
     atomic_val_t delivered;
     atomic_val_t accepted;
 #if defined(CONFIG_EVENT_SUBSCRIBER_FILTER_STATS)
     uint64_t skip_before;
 #endif
-    bool       swap_a = false;
+    bool swap_a = false;
 
     filter_test_reset();
     zassert_equal(event_register_type(FILTER_TEST_TYPE_A, "flt_pair"), EVENT_OK, NULL);
@@ -649,8 +644,8 @@ ZTEST(test_event_filter, test_filter_concurrent_swap_consistency) {
     published = atomic_get(&g_pair_published);
     zassert_true(ztest_wait_until(filter_pair_drained_pred, NULL, 2000U),
                  "drain timeout: published=%d delivered=%d skip_delta=%d dropped=%d", (int) published,
-                 (int) atomic_get(&g_sink.cb_calls),
-                 (int) (event_subscriber_filter_get_skip_count() - skip_before), (int) atomic_get(&g_pair_dropped));
+                 (int) atomic_get(&g_sink.cb_calls), (int) (event_subscriber_filter_get_skip_count() - skip_before),
+                 (int) atomic_get(&g_pair_dropped));
 #else
     /* STATS=n 无跳过计数：以静默窗口近似排空后再停止分发器 */
     zassert_true(ztest_wait_until(filter_pair_quiesced_pred, NULL, 3000U), "quiesce timeout");

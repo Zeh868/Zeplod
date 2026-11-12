@@ -73,23 +73,23 @@ static void eth_mgmt_event_handler(struct net_mgmt_event_callback* cb, uint64_t 
     }
 
     switch (mgmt_event) {
-        case NET_EVENT_IF_UP:
-            g_eth_ctx.iface_up = true;
-            LOG_INF("Ethernet interface up");
-            break;
-        case NET_EVENT_IF_DOWN:
-            g_eth_ctx.iface_up = false;
-            g_eth_ctx.has_ipv4 = false;
-            LOG_INF("Ethernet interface down");
-            k_sem_give(&g_eth_ctx.ip_sem); /* 唤醒可能仍在等待地址的 connect() */
-            break;
-        case NET_EVENT_IPV4_ADDR_ADD:
-            g_eth_ctx.has_ipv4 = true;
-            LOG_INF("Ethernet IPv4 address bound");
-            k_sem_give(&g_eth_ctx.ip_sem);
-            break;
-        default:
-            break;
+    case NET_EVENT_IF_UP:
+        g_eth_ctx.iface_up = true;
+        LOG_INF("Ethernet interface up");
+        break;
+    case NET_EVENT_IF_DOWN:
+        g_eth_ctx.iface_up = false;
+        g_eth_ctx.has_ipv4 = false;
+        LOG_INF("Ethernet interface down");
+        k_sem_give(&g_eth_ctx.ip_sem); /* 唤醒可能仍在等待地址的 connect() */
+        break;
+    case NET_EVENT_IPV4_ADDR_ADD:
+        g_eth_ctx.has_ipv4 = true;
+        LOG_INF("Ethernet IPv4 address bound");
+        k_sem_give(&g_eth_ctx.ip_sem);
+        break;
+    default:
+        break;
     }
 
     ARG_UNUSED(cb);

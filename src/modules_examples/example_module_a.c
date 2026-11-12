@@ -32,20 +32,20 @@ LOG_MODULE_REGISTER(example_module_a, CONFIG_SYS_LOG_LEVEL);
  * 内部定义
  * ============================================================================= */
 
-#define EXAMPLE_MODULE_A_BUFFER_SIZE       256
-#define EXAMPLE_MODULE_A_THREAD_PRIORITY   5
-#define EXAMPLE_MODULE_A_THREAD_STACK_SIZE 2048
+#define EXAMPLE_MODULE_A_BUFFER_SIZE            256
+#define EXAMPLE_MODULE_A_THREAD_PRIORITY        5
+#define EXAMPLE_MODULE_A_THREAD_STACK_SIZE      2048
 
 /** 模拟传感器读数的递增步进（演示值） */
-#define EXAMPLE_MODULE_A_SAMPLE_STEP 100
+#define EXAMPLE_MODULE_A_SAMPLE_STEP            100
 
 /** stop 时等待采集线程退出的有界超时；线程循环 k_msleep(10)，正常远小于该值 */
 #define EXAMPLE_MODULE_A_THREAD_JOIN_TIMEOUT_MS 200
 
 /* 控制命令 */
-#define CMD_SET_RATE                       1
-#define CMD_GET_RATE                       2
-#define CMD_RESET                          3
+#define CMD_SET_RATE                            1
+#define CMD_GET_RATE                            2
+#define CMD_RESET                               3
 
 /* =============================================================================
  * 内部数据结构
@@ -64,8 +64,8 @@ typedef struct {
      * 枚举整数的单写者多读者切换，用 atomic 保证可见性即可；
      * 读侧容忍读到上一状态旧值，不加互斥锁。
      */
-    atomic_t                  status;
-    struct k_thread           thread;
+    atomic_t        status;
+    struct k_thread thread;
     K_KERNEL_STACK_MEMBER(stack, EXAMPLE_MODULE_A_THREAD_STACK_SIZE);
     struct k_mutex  buffer_lock;
     sensor_sample_t buffer[EXAMPLE_MODULE_A_BUFFER_SIZE];

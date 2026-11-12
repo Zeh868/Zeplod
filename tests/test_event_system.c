@@ -9,8 +9,9 @@
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
- * 2026-09-18       1.1            zeh            修复 ZTEST_SUITE 参数错位；rt 系列改为直接断言；统计用例补哨兵断言；裸调用返回值检查
- * 2026-09-27       1.2            zeh            unregister_type 用例对齐注销后换名重注册契约；新增正向用例
+ * 2026-09-18       1.1            zeh            修复 ZTEST_SUITE 参数错位；rt
+ * 系列改为直接断言；统计用例补哨兵断言；裸调用返回值检查 2026-09-27       1.2            zeh            unregister_type
+ * 用例对齐注销后换名重注册契约；新增正向用例
  *
  */
 

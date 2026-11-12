@@ -19,8 +19,6 @@ PROJECT_ROOT="${ZP_WORK_ROOT}"
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 帮助信息
@@ -182,7 +180,7 @@ done < <(grep -oE '\.rodata[^ ]* +0x[0-9a-fA-F]+ +0x[0-9a-fA-F]+ +[^ ]+' "$MAP_F
 
 for module in "${!RODATA_SIZE[@]}"; do
     size=${RODATA_SIZE[$module]}
-    if [ $size -gt 0 ]; then
+    if [ "$size" -gt 0 ]; then
         size_kb=$(echo "scale=2; $size / 1024" | bc)
         printf "%-30s %15d %12s\n" "$module" "$size" "$size_kb"
     fi
@@ -208,12 +206,12 @@ RAM_PERCENT=$(echo "scale=2; ($RAM_USED * 100) / $RAM_TOTAL" | bc)
 RAM_REMAINING=$((RAM_TOTAL - RAM_USED))
 
 echo "RAM 使用情况:"
-printf "  BSS 段：     %12d 字节 (%10.2f KB)\n" $TOTAL_BSS $(echo "scale=2; $TOTAL_BSS / 1024" | bc)
-printf "  NOINIT 段：  %12d 字节 (%10.2f KB)\n" $TOTAL_NOINIT $(echo "scale=2; $TOTAL_NOINIT / 1024" | bc)
+printf "  BSS 段：     %12d 字节 (%10.2f KB)\n" "$TOTAL_BSS" "$(echo "scale=2; $TOTAL_BSS / 1024" | bc)"
+printf "  NOINIT 段：  %12d 字节 (%10.2f KB)\n" "$TOTAL_NOINIT" "$(echo "scale=2; $TOTAL_NOINIT / 1024" | bc)"
 echo "  ─────────────────────────────"
-printf "  已使用：     %12d 字节 (%10.2f KB) (%s%%)\n" $RAM_USED $(echo "scale=2; $RAM_USED / 1024" | bc) $RAM_PERCENT
-printf "  总容量：     %12d 字节 (%10.2f KB)\n" $RAM_TOTAL $(echo "scale=2; $RAM_TOTAL / 1024" | bc)
-printf "  剩余可用：   %12d 字节 (%10.2f KB)\n" $RAM_REMAINING $(echo "scale=2; $RAM_REMAINING / 1024" | bc)
+printf "  已使用：     %12d 字节 (%10.2f KB) (%s%%)\n" "$RAM_USED" "$(echo "scale=2; $RAM_USED / 1024" | bc)" "$RAM_PERCENT"
+printf "  总容量：     %12d 字节 (%10.2f KB)\n" "$RAM_TOTAL" "$(echo "scale=2; $RAM_TOTAL / 1024" | bc)"
+printf "  剩余可用：   %12d 字节 (%10.2f KB)\n" "$RAM_REMAINING" "$(echo "scale=2; $RAM_REMAINING / 1024" | bc)"
 echo ""
 
 # Flash 计算 (假设 2MB)
@@ -223,12 +221,12 @@ FLASH_PERCENT=$(echo "scale=2; ($FLASH_USED * 100) / $FLASH_TOTAL" | bc)
 FLASH_REMAINING=$((FLASH_TOTAL - FLASH_USED))
 
 echo "Flash 使用情况:"
-printf "  代码段：     %12d 字节 (%10.2f KB)\n" $TOTAL_TEXT $(echo "scale=2; $TOTAL_TEXT / 1024" | bc)
-printf "  只读数据：   %12d 字节 (%10.2f KB)\n" $TOTAL_RODATA $(echo "scale=2; $TOTAL_RODATA / 1024" | bc)
+printf "  代码段：     %12d 字节 (%10.2f KB)\n" "$TOTAL_TEXT" "$(echo "scale=2; $TOTAL_TEXT / 1024" | bc)"
+printf "  只读数据：   %12d 字节 (%10.2f KB)\n" "$TOTAL_RODATA" "$(echo "scale=2; $TOTAL_RODATA / 1024" | bc)"
 echo "  ─────────────────────────────"
-printf "  已使用：     %12d 字节 (%10.2f KB) (%s%%)\n" $FLASH_USED $(echo "scale=2; $FLASH_USED / 1024" | bc) $FLASH_PERCENT
-printf "  总容量：     %12d 字节 (%10.2f KB)\n" $FLASH_TOTAL $(echo "scale=2; $FLASH_TOTAL / 1024" | bc)
-printf "  剩余可用：   %12d 字节 (%10.2f KB)\n" $FLASH_REMAINING $(echo "scale=2; $FLASH_REMAINING / 1024" | bc)
+printf "  已使用：     %12d 字节 (%10.2f KB) (%s%%)\n" "$FLASH_USED" "$(echo "scale=2; $FLASH_USED / 1024" | bc)" "$FLASH_PERCENT"
+printf "  总容量：     %12d 字节 (%10.2f KB)\n" "$FLASH_TOTAL" "$(echo "scale=2; $FLASH_TOTAL / 1024" | bc)"
+printf "  剩余可用：   %12d 字节 (%10.2f KB)\n" "$FLASH_REMAINING" "$(echo "scale=2; $FLASH_REMAINING / 1024" | bc)"
 echo ""
 
 # =============================================================================

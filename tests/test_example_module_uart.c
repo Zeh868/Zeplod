@@ -80,10 +80,8 @@ ZTEST(example_module_uart, test_init_null_config) {
  * @brief 测试模块初始化 - 有效配置
  */
 ZTEST(example_module_uart, test_init_valid_config) {
-    example_module_uart_config_t config = {.device_name = "UART_0",
-                                           .rx_buffer_size = 256,
-                                           .tx_buffer_size = 256,
-                                           .enable_interrupt = true};
+    example_module_uart_config_t config = {
+        .device_name = "UART_0", .rx_buffer_size = 256, .tx_buffer_size = 256, .enable_interrupt = true};
 
     int ret = example_module_uart_init(&config);
     zassert_equal(ret, 0, "有效配置初始化应返回 0");
@@ -96,10 +94,8 @@ ZTEST(example_module_uart, test_init_valid_config) {
  * @brief 测试模块初始化 - 禁用中断模式
  */
 ZTEST(example_module_uart, test_init_no_interrupt) {
-    example_module_uart_config_t config = {.device_name = "UART_1",
-                                           .rx_buffer_size = 128,
-                                           .tx_buffer_size = 128,
-                                           .enable_interrupt = false};
+    example_module_uart_config_t config = {
+        .device_name = "UART_1", .rx_buffer_size = 128, .tx_buffer_size = 128, .enable_interrupt = false};
 
     int ret = example_module_uart_init(&config);
     zassert_equal(ret, 0, "禁用中断模式初始化应返回 0");
@@ -111,10 +107,8 @@ ZTEST(example_module_uart, test_init_no_interrupt) {
  * @brief 测试模块初始化 - rx_buffer_size = 0（新契约：越界返回 -EINVAL）
  */
 ZTEST(example_module_uart, test_init_rx_buffer_zero_rejected) {
-    example_module_uart_config_t config = {.device_name = "UART_0",
-                                           .rx_buffer_size = 0U,
-                                           .tx_buffer_size = 128U,
-                                           .enable_interrupt = false};
+    example_module_uart_config_t config = {
+        .device_name = "UART_0", .rx_buffer_size = 0U, .tx_buffer_size = 128U, .enable_interrupt = false};
 
     int ret = example_module_uart_init(&config);
     zassert_equal(ret, -EINVAL, "rx_buffer_size=0 应返回 -EINVAL");
@@ -126,10 +120,8 @@ ZTEST(example_module_uart, test_init_rx_buffer_zero_rejected) {
  * @brief 测试模块初始化 - rx_buffer_size = 257 超过内部静态缓冲（新契约：-EINVAL）
  */
 ZTEST(example_module_uart, test_init_rx_buffer_too_large_rejected) {
-    example_module_uart_config_t config = {.device_name = "UART_0",
-                                           .rx_buffer_size = 257U,
-                                           .tx_buffer_size = 128U,
-                                           .enable_interrupt = false};
+    example_module_uart_config_t config = {
+        .device_name = "UART_0", .rx_buffer_size = 257U, .tx_buffer_size = 128U, .enable_interrupt = false};
 
     int ret = example_module_uart_init(&config);
     zassert_equal(ret, -EINVAL, "rx_buffer_size=257 应返回 -EINVAL");

@@ -115,8 +115,8 @@ int ipc_service_init(ipc_service_t *service, const char *name,
 
 ### 4.4 `start` / `stop`
 
-- **`start`**：`ipc_service_start(&cb->ipc)`。  
-- **`stop`**：先停止本模块内会调用 IPC 的线程/work，再 **`ipc_service_stop(&cb->ipc)`**。  
+- **`start`**：`ipc_service_start(&cb->ipc)`。
+- **`stop`**：先停止本模块内会调用 IPC 的线程/work，再 **`ipc_service_stop(&cb->ipc)`**。
 - 若 **`stop` 之后需要再次 `start`**：须再次执行 **`ipc_service_init()`**（本模块示例在 `start()` 里对 `MODULE_STATUS_STOPPED` 分支做了重新 `init`）。
 
 ### 4.5 注册到 `module_manager`
@@ -141,17 +141,17 @@ int ipc_service_init(ipc_service_t *service, const char *name,
 
 ## 6. 与事件系统 / 事件桥
 
-- 订阅 **`EVENT_TYPE_THREAD_IPC_RESPONSE`**（定义在 `event_system.h`），载荷类型为 **`thread_ipc_event_result_t`**（见 `ipc_service_event.h`）。  
-- 将 **`EXAMPLE_MODULE_IPC_EVENT_SOURCE_ID`（42）** 与 `thread_ipc_event_publish_result` 的 `source_id` 对应，便于多服务区分。  
+- 订阅 **`EVENT_TYPE_THREAD_IPC_RESPONSE`**（定义在 `event_system.h`），载荷类型为 **`thread_ipc_event_result_t`**（见 `ipc_service_event.h`）。
+- 将 **`EXAMPLE_MODULE_IPC_EVENT_SOURCE_ID`（42）** 与 `thread_ipc_event_publish_result` 的 `source_id` 对应，便于多服务区分。
 - 详细说明见 **[线程IPC服务使用说明.md](33-线程IPC服务使用说明.md)** 中「与事件系统联动」章节。
 
 ---
 
 ## 7. RAM 与线程
 
-- 每个 **`ipc_service_t`** 含 **两个** `THREAD_IPC_SERVICE_STACK_SIZE` 大小的栈及队列缓冲，请预留 RAM。  
-- 本示例额外增加 **演示线程** 栈 `example_module_ipc_demo_stack`（当前 **1024** 字节，见 `example_module_ipc.c`）。  
-- 若 RAM 紧张：减小 `THREAD_IPC_SERVICE_STACK_SIZE`、队列深度、`MAX_PENDING`、演示线程栈；**不要**同时打开 **`CONFIG_THREAD_IPC_SERVICE_EXAMPLE`** 与 **`CONFIG_EXAMPLE_MODULE_THREAD_IPC`**（两套演示叠加易撑满 192KB SRAM）。  
+- 每个 **`ipc_service_t`** 含 **两个** `THREAD_IPC_SERVICE_STACK_SIZE` 大小的栈及队列缓冲，请预留 RAM。
+- 本示例额外增加 **演示线程** 栈 `example_module_ipc_demo_stack`（当前 **1024** 字节，见 `example_module_ipc.c`）。
+- 若 RAM 紧张：减小 `THREAD_IPC_SERVICE_STACK_SIZE`、队列深度、`MAX_PENDING`、演示线程栈；**不要**同时打开 **`CONFIG_THREAD_IPC_SERVICE_EXAMPLE`** 与 **`CONFIG_EXAMPLE_MODULE_THREAD_IPC`**（两套演示叠加易撑满 192KB SRAM）。
 - 根目录 **`prj.conf`** 已设置 **`CONFIG_HEAP_MEM_POOL_SIZE`**（事件与 `event_publish_copy` 需要 **`k_malloc`**）；若仍为 `0` 会链接报错 `undefined reference to k_malloc`。
 
 ---
@@ -180,12 +180,12 @@ west build -b <board> -- '-DEXTRA_CONF_FILE=conf/examples/module_ipc.conf'
 
 （PowerShell 下注意引号与绝对路径。）
 
-构建成功后运行固件，日志中应出现 `example_module_ipc` 初始化、`Thread IPC demo: sync ok` 等输出。  
+构建成功后运行固件，日志中应出现 `example_module_ipc` 初始化、`Thread IPC demo: sync ok` 等输出。
 **注意**：合并 `conf/examples/module_ipc.conf` 时，其中已将 **`CONFIG_THREAD_IPC_SERVICE_EXAMPLE=n`**，避免与 `example_module_ipc` 重复占用 RAM。
 
 ---
 
 ## 相关文档
 
-- [线程IPC服务使用说明.md](33-线程IPC服务使用说明.md) — API、三种调用模式、事件桥 API  
-- [事件系统详细使用说明.md](31-事件系统详细使用说明.md) — 订阅与发布  
+- [线程IPC服务使用说明.md](33-线程IPC服务使用说明.md) — API、三种调用模式、事件桥 API
+- [事件系统详细使用说明.md](31-事件系统详细使用说明.md) — 订阅与发布

@@ -10,10 +10,10 @@ This document explains how to **submit changes** (Issue / Pull Request) to this 
 
 ## 1. Collaboration Workflow (Recommended)
 
-1. **Fork** this repository to your namespace.  
-2. **Create a feature branch** from **`main`** (or the project's default branch); naming suggestions: `feature/description`, `fix/description`.  
-3. Complete development and **self-testing** on the branch (see "Pre-commit Checklist" below).  
-4. Submit a **Pull Request (PR)**: use a **complete sentence** in the title to explain "what changed and why"; the body may include: related Issue, testing approach, breaking change description.  
+1. **Fork** this repository to your namespace.
+2. **Create a feature branch** from **`main`** (or the project's default branch); naming suggestions: `feature/description`, `fix/description`.
+3. Complete development and **self-testing** on the branch (see "Pre-commit Checklist" below).
+4. Submit a **Pull Request (PR)**: use a **complete sentence** in the title to explain "what changed and why"; the body may include: related Issue, testing approach, breaking change description.
 5. Revise based on reviewer feedback; **keep commit history clean** (rebase / squash as per maintainer requirements).
 
 For large changes, open an **Issue** first to discuss direction and avoid conflicts with maintainer expectations.
@@ -35,8 +35,8 @@ For documentation changes, run the commands listed in the Chinese canonical cont
 
 ## 3. Code Style and Static Analysis
 
-- **Formatting**: Use **clang-format** with the style file at repository root **`.clang-format`**.  
-  Example: `clang-format -i src/path/to/file.c`  
+- **Formatting**: Use **clang-format** with the style file at repository root **`.clang-format`**.
+  Example: `clang-format -i src/path/to/file.c`
 - **Static Analysis (optional)**: **`.clang-tidy`** can be used with **`compile_commands.json`** via IDE or command line (see the **[Developer Getting Started Guide.md](../00-getting-started/04-developer-guide.md)**).
   - **Pre-commit Hook (optional)**: If using **pre-commit**, configuration is in **`.pre-commit-config.yaml`** (install: `pip install pre-commit && pre-commit install`).
 
@@ -212,8 +212,8 @@ git config commit.template .gitmessage
 
 GitHub Actions is in **`.github/workflows/ci.yml`**; GitLab is in **`.gitlab-ci.yml`**. For steps to enable and troubleshoot CI on these platforms, see the **[CI Platform Configuration Guide.md](../50-testing-ci/52-ci-platform-setup.md)**. Pipelines typically include:
 
-- **ShellCheck**: Static analysis for **`scripts/*.sh`**.  
-- **pre-commit**: Aligned with **`.pre-commit-config.yaml`** (includes **clang-format**, YAML, trailing whitespace, etc.); locally install with `pip install pre-commit && pre-commit install` to align with CI.  
+- **ShellCheck**: Static analysis for **`scripts/*.sh`**.
+- **pre-commit**: Aligned with **`.pre-commit-config.yaml`** (includes **clang-format**, YAML, trailing whitespace, etc.); locally install with `pip install pre-commit && pre-commit install` to align with CI.
 - **Build / Test**: **`native_sim`** main project and **`tests/`**, plus multi-ARM board matrix smoke tests.
 
 Local Zephyr and CI image versions should be aligned; see the **[Zephyr Version and CI Guide.md](../70-release-productization/72-zephyr-version-ci.md)**. Ensure CI is **green** before merging PRs or explain failure reasons (e.g., known limitations triggered by documentation-only changes).

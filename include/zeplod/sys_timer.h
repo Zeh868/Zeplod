@@ -71,7 +71,7 @@ typedef struct {
     sys_timer_callback_t callback;
     void*                user_data;
     const char*          name;
-    int priority; /* v2 兼容保留：所有回调共享服务线程优先级，此字段被忽略 */
+    int                  priority; /* v2 兼容保留：所有回调共享服务线程优先级，此字段被忽略 */
 } sys_timer_config_t;
 
 /**

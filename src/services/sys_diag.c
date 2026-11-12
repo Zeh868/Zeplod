@@ -9,7 +9,8 @@
  *
  *    Date         Version        Author          Description
  * 2026-06-13       1.0            zeh            初始版本
- * 2026-09-18       1.1            zeh            u32_from_size 辅助函数按 CONFIG_SYS_MEMORY_ENABLE 条件编译，消除禁用内存服务配置下的未使用告警
+ * 2026-09-18       1.1            zeh            u32_from_size 辅助函数按 CONFIG_SYS_MEMORY_ENABLE
+ * 条件编译，消除禁用内存服务配置下的未使用告警
  *
  */
 

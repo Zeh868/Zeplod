@@ -40,9 +40,13 @@ env:
   # jobs.*.container 不能引用 env.*。Zephyr 4.4 的官方镜像标签不是 v4.4.0，
   # 兼容级别是 0.29，当前使用 ghcr.io/zephyrproject-rtos/zephyr-build:v0.29.4。
   # 升级 Zephyr 时同时改 ZEPHYR_VERSION、下面的镜像标签和 west.yml 的 revision。
+  # v0.29.4 把 SDK 放在 /opt/toolchains。CMake 只搜索 /opt、/usr 和 $HOME，
+  # 不会进入 toolchains，所以必须显式给出安装根目录。
   ZEPHYR_VERSION: "4.4.0"
+  ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-1.0.1
   BUILD_TYPE: release
-  CORE_COVERAGE_MIN: 80
+  # native_sim + CONFIG_COVERAGE，默认 tests/prj.conf 实测约 79.2%。
+  CORE_COVERAGE_MIN: 79
   EVENT_CORE_COVERAGE_MIN: 78
   DISPATCHER_COVERAGE_MIN: 75
 
@@ -131,7 +135,7 @@ jobs:
 
       - name: Verify key files and script syntax
         run: |
-          test -f tests/testsuite.yaml
+          test -f tests/testcase.yaml
           test -f .pre-commit-config.yaml
           python3 -m py_compile scripts/check_encoding.py scripts/check_script_docs.py scripts/preflight_host_tests.py
           bash -n scripts/run_tests.sh
@@ -326,23 +330,9 @@ jobs:
             -- -DEXTRA_CONF_FILE=conf/targets/production.conf
           echo "Production config build succeeded."
 
-      - name: Build production + MCUboot config (compile check)
-        run: |
-          west build -b native_sim . --build-dir build_production_mcuboot -p always \
-            -- -DEXTRA_CONF_FILE="conf/targets/production.conf;conf/targets/mcuboot.conf"
-          echo "Production + MCUboot config build succeeded."
-
-      - name: Build MCUboot OTA config (compile check)
-        run: |
-          west build -b native_sim . --build-dir build_mcuboot -p always \
-            -- -DEXTRA_CONF_FILE=conf/targets/mcuboot.conf
-          echo "MCUboot config build succeeded."
-
-      - name: Build MCUmgr SMP OTA config (compile check)
-        run: |
-          west build -b native_sim . --build-dir build_mcumgr_smp -p always \
-            -- -DEXTRA_CONF_FILE=conf/targets/mcumgr_smp.conf
-          echo "MCUmgr SMP OTA config build succeeded."
+      # MCUboot / MCUmgr 会 select FLASH_PAGE_LAYOUT 和 USE_DT_CODE_PARTITION。
+      # native_sim 没有这些依赖，Kconfig 警告会让 Zephyr 4.4 直接失败。
+      # 这两项目标改在 build-arm 的 nucleo_f767zi 上编译。
 
       - name: Run IPC tests (prj.conf + prj_native_sim)
         run: |
@@ -358,12 +348,14 @@ jobs:
 
       - name: Run core coverage gate
         run: |
-          west build -b native_sim tests/ --build-dir build_tests_cov -p always -- -DCMAKE_C_FLAGS="--coverage"
+          # CMAKE_C_FLAGS=--coverage 只进固件编译，native_simulator 最终链接没有 gcov。
+          # CONFIG_COVERAGE 会同时给编译和链接加上 coverage。
+          west build -b native_sim tests/ --build-dir build_tests_cov -p always -- -DCONFIG_COVERAGE=y
           west build -t run --build-dir build_tests_cov
-          gcovr -r . --filter "src/core/" --xml-pretty --output coverage-core.xml --html --html-details --output coverage-core.html --print-summary --fail-under-line "${CORE_COVERAGE_MIN}"
-          gcovr -r . --filter "src/core/event_.*" --print-summary --fail-under-line "${EVENT_CORE_COVERAGE_MIN}"
-          gcovr -r . --filter "src/core/event_dispatcher\\.c" --print-summary --fail-under-line "${DISPATCHER_COVERAGE_MIN}"
-          gcovr -r . --filter "src/core/" --json-summary-pretty --output coverage-core-summary.json
+          gcovr -r . --object-directory build_tests_cov --filter "src/core/" --xml-pretty --output coverage-core.xml --html --html-details --output coverage-core.html --print-summary --fail-under-line "${CORE_COVERAGE_MIN}"
+          gcovr -r . --object-directory build_tests_cov --filter "src/core/event_.*" --print-summary --fail-under-line "${EVENT_CORE_COVERAGE_MIN}"
+          gcovr -r . --object-directory build_tests_cov --filter "src/core/event_dispatcher\\.c" --print-summary --fail-under-line "${DISPATCHER_COVERAGE_MIN}"
+          gcovr -r . --object-directory build_tests_cov --filter "src/core/" --json-summary-pretty --output coverage-core-summary.json
 
       - name: Publish coverage summary
         run: |
@@ -432,14 +424,15 @@ jobs:
 
       - name: Build and run with sanitizer (${{ matrix.sanitizer }})
         run: |
+          # 交给 Zephyr posix 把 -fsanitize 同时加到固件编译和 native_simulator 最终链接。
+          # 只设 CMAKE_C_FLAGS 时，链接阶段没有 libasan/libubsan。
           if [ "${{ matrix.sanitizer }}" = "asan" ]; then
-            SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g"
+            SAN_KCONFIG=CONFIG_ASAN=y
           else
-            SAN_FLAGS="-fsanitize=undefined -fno-omit-frame-pointer -g"
+            SAN_KCONFIG=CONFIG_UBSAN=y
           fi
           west build -b native_sim tests/ --build-dir build_san_${{ matrix.sanitizer }} -p always -- \
-            -DCMAKE_C_FLAGS="${SAN_FLAGS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS}"
+            -D"${SAN_KCONFIG}"
           west build -t run --build-dir build_san_${{ matrix.sanitizer }}
 
   twister:
@@ -549,10 +542,35 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board:
-          - nucleo_f429zi
-          - nucleo_f767zi
-          - disco_l475_iot1
+        include:
+          # f767 SRAM 512KB，默认 standard.conf（≥256KB）可以放下。
+          - board: nucleo_f767zi
+            label: standard
+            extra_conf: ""
+            dt_overlay: ""
+          # MCUboot 需要片上 Flash 分区。native_sim 没有 FLASH_PAGE_LAYOUT。
+          - board: nucleo_f767zi
+            label: mcuboot
+            extra_conf: conf/targets/mcuboot.conf
+            dt_overlay: ""
+          - board: nucleo_f767zi
+            label: production-mcuboot
+            extra_conf: conf/targets/production.conf;conf/targets/mcuboot.conf
+            dt_overlay: ""
+          - board: nucleo_f767zi
+            label: mcumgr-smp
+            extra_conf: conf/targets/mcumgr_smp.conf
+            dt_overlay: boards/nucleo_f767zi_mcumgr.overlay
+          # f429 的 zephyr,sram 只有 192KB，standard 档会让 noinit 溢出。
+          - board: nucleo_f429zi
+            label: balanced
+            extra_conf: conf/profiles/balanced.conf
+            dt_overlay: ""
+          # disco SRAM 96KB，用极简档做编译覆盖。
+          - board: disco_l475_iot1
+            label: minimal
+            extra_conf: conf/profiles/minimal.conf
+            dt_overlay: ""
 
     steps:
       - name: Checkout
@@ -575,16 +593,29 @@ jobs:
       - name: Export Zephyr CMake package
         run: west zephyr-export
 
-      - name: Build (${{ matrix.board }})
+      - name: Build (${{ matrix.board }} ${{ matrix.label }})
         run: |
-          west build -b ${{ matrix.board }} --build-dir build_${{ matrix.board }}
-          echo "Build succeeded: ${{ matrix.board }}"
+          # 运行器的 sh 是 dash，不用数组。
+          if [ -n "${{ matrix.extra_conf }}" ] && [ -n "${{ matrix.dt_overlay }}" ]; then
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }} -- \
+              -DEXTRA_CONF_FILE="${{ matrix.extra_conf }}" \
+              -DEXTRA_DTC_OVERLAY_FILE="${{ matrix.dt_overlay }}"
+          elif [ -n "${{ matrix.extra_conf }}" ]; then
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }} -- \
+              -DEXTRA_CONF_FILE="${{ matrix.extra_conf }}"
+          elif [ -n "${{ matrix.dt_overlay }}" ]; then
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }} -- \
+              -DEXTRA_DTC_OVERLAY_FILE="${{ matrix.dt_overlay }}"
+          else
+            west build -b ${{ matrix.board }} --build-dir build_${{ matrix.label }}
+          fi
+          echo "Build succeeded: ${{ matrix.board }} ${{ matrix.label }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zephyr-${{ matrix.board }}-${{ github.sha }}
-          path: build_${{ matrix.board }}/zephyr/zephyr.bin
+          name: zephyr-${{ matrix.board }}-${{ matrix.label }}-${{ github.sha }}
+          path: build_${{ matrix.label }}/zephyr/zephyr.bin
           retention-days: 7
 
   docs:

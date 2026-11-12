@@ -16,18 +16,18 @@ From the **application root directory** (containing `CMakeLists.txt`) after at l
 west flash
 ```
 
-- **Build Directory**: If not using the default **`./build`**, specify explicitly:  
-  `west flash -d build_nucleo`  
+- **Build Directory**: If not using the default **`./build`**, specify explicitly:
+  `west flash -d build_nucleo`
   (Must match the **`-d` / `--build-dir`** used with **`west build`**.)
-- **Switching Runners**: If the default runner doesn't match your board (e.g., using **J-Link** or **pyOCD**), specify:  
-  `west flash -r jlink`  
-  or `west flash -r pyocd`  
+- **Switching Runners**: If the default runner doesn't match your board (e.g., using **J-Link** or **pyOCD**), specify:
+  `west flash -r jlink`
+  or `west flash -r pyocd`
   Run **`west flash --help`** or check the Zephyr documentation for your board's supported **Runner**.
 
 Common Notes:
 
-- **ST Nucleo** boards with onboard ST-Link typically work after installing the **ST driver**; if it fails, check USB, driver, and the Zephyr documentation for the board's **Runner** info.  
-- For **J-Link**, **DAPLink**, etc., install the corresponding tools and ensure they are in your `PATH`.  
+- **ST Nucleo** boards with onboard ST-Link typically work after installing the **ST driver**; if it fails, check USB, driver, and the Zephyr documentation for the board's **Runner** info.
+- For **J-Link**, **DAPLink**, etc., install the corresponding tools and ensure they are in your `PATH`.
 - Multi-image / partitioned schemes (e.g., MCUboot) require following the **[OTA and Storage Guide.md](../70-release-productization/74-ota-storage-guide.md)** and official MCUboot documentation—**do not** rely on a single `west flash` to cover all partitions.
 
 ---
@@ -38,7 +38,7 @@ When the application uses **`CONFIG_SERIAL`** and board-level **`zephyr,console`
 
 ### Windows
 
-1. Open **Device Manager** → **Ports (COM & LPT)** and note the **COM number** (e.g., `COM3`).  
+1. Open **Device Manager** → **Ports (COM & LPT)** and note the **COM number** (e.g., `COM3`).
 2. Use **PuTTY**, **Tera Term**, or install **Python pyserial**:
 
 ```powershell
@@ -91,5 +91,5 @@ You can use **VS Code**, **CLion**, etc. with **GDB** and Zephyr's generated **E
 
 ## 5. References
 
-- [Flashing and Debugging](https://docs.zephyrproject.org/latest/develop/west/build-flash-debug.html)  
+- [Flashing and Debugging](https://docs.zephyrproject.org/latest/develop/west/build-flash-debug.html)
 - **Developer Quickstart.md](../00-getting-started/04-developer-quickstart.md)** in this repository, "Debugging" section

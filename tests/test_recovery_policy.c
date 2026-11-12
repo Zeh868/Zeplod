@@ -168,7 +168,8 @@ ZTEST(recovery_policy_tests, test_escalate_restart_all_after_max_retries) {
     zassert_true(g_recovery_test_start_calls >= 3, "restart_all should retry start after clear ERROR");
 
     zassert_equal(module_manager_get_module_info(mod_id, &info), MODULE_OK, NULL);
-    zassert_equal(info.status, MODULE_STATUS_ERROR, "module still fails after restart_all");
+    zassert_equal(info.status, MODULE_STATUS_ERROR, "status=%d calls=%d after restart_all", (int) info.status,
+                  g_recovery_test_start_calls);
     zassert_equal(recovery_policy_get_restart_count(mod_id), 2U, NULL);
 
     zassert_equal(module_manager_unregister(mod_id), MODULE_OK, NULL);
@@ -176,11 +177,11 @@ ZTEST(recovery_policy_tests, test_escalate_restart_all_after_max_retries) {
 }
 
 ZTEST(recovery_policy_tests, test_fault_dump_on_module_error) {
-    uint32_t mod_id;
-    uint8_t  buf[512];
-    size_t   n = 0U;
-    uint32_t ring_magic = 0U;
-    uint16_t ring_count = 0U;
+    uint32_t       mod_id;
+    static uint8_t buf[8192];
+    size_t         n = 0U;
+    uint32_t       ring_magic = 0U;
+    uint16_t       ring_count = 0U;
 
     setup_recovery_policy();
     sys_fault_dump_clear();

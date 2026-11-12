@@ -45,10 +45,10 @@ LOG_MODULE_REGISTER(sys_memory, CONFIG_SYS_LOG_LEVEL);
 #define MAX_ALLOCATIONS   8 ///< 最小跟踪记录数
 #endif
 
-#define MEMORY_MAGIC       0x4D454D30U                                 ///< 魔数 - 有效分配标识（"MEM0"）
-#define MEMORY_FREED_MAGIC 0x46524545U                                 ///< 魔数 - 已释放块标识（"FREE"）
-#define MEMORY_ALIGN_BYTES 8U                                          ///< 内存对齐字节数（保证对齐到8字节）
-#define MIN_BLOCK_SIZE     (sizeof(free_block_t) + MEMORY_ALIGN_BYTES) ///< 最小可分割块大小
+#define MEMORY_MAGIC                    0x4D454D30U ///< 魔数 - 有效分配标识（"MEM0"）
+#define MEMORY_FREED_MAGIC              0x46524545U ///< 魔数 - 已释放块标识（"FREE"）
+#define MEMORY_ALIGN_BYTES              8U          ///< 内存对齐字节数（保证对齐到8字节）
+#define MIN_BLOCK_SIZE                  (sizeof(free_block_t) + MEMORY_ALIGN_BYTES) ///< 最小可分割块大小
 
 /** 重新初始化时静默化探测的试锁超时（毫秒）：仅为探测"有无并发操作在途"，非真实等待 */
 #define SYS_MEM_REINIT_PROBE_TIMEOUT_MS 1
@@ -1075,8 +1075,7 @@ static void dump_active_allocations(sys_mem_pool_type_t type) {
                 printk("Active Allocations:\n");
                 header_printed = true;
             }
-            printk("  [%u] ptr=%p, size=%u, time=%u", i, info_copy.ptr, (uint32_t) info_copy.size,
-                   info_copy.timestamp);
+            printk("  [%u] ptr=%p, size=%u, time=%u", i, info_copy.ptr, (uint32_t) info_copy.size, info_copy.timestamp);
             if (info_copy.module[0] != '\0') {
                 printk(" (%s:%u)", info_copy.module, info_copy.line);
             }

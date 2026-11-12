@@ -2,8 +2,8 @@
  * @file recovery_policy.c
  * @brief 恢复策略模块实现
  * @author zeh (china_qzh@163.com)
- * @version 1.2
- * @date 2026-06-13
+ * @version 1.3
+ * @date 2026-11-11
  *
  * @par 修改日志:
  *
@@ -13,6 +13,7 @@
  * 2026-09-18       1.2            zeh            复审整改：OTA 钩子回调补事件类型校验，对齐 connectivity 防御模式
  *                                                 （按 DATA_INLINE 标志取内联/指针并本地拷贝）；
  *                                                 restart_count 改原子 CAS 读-改-写
+ * 2026-11-11       1.3            zeh            restart_all 进行中不再响应模块错误，避免递归重试
  *
  */
 
@@ -67,6 +68,9 @@ typedef struct {
 
 static recovery_policy_cb_t g_recovery;
 
+/** restart_all 已在本线程执行。其内部 start 失败会同步再次上报错误，若不拦住会无限重试。 */
+static bool g_recovery_restarting_all;
+
 /* =============================================================================
  * 前置声明
  * ============================================================================= */
@@ -117,9 +121,16 @@ static int recovery_restart_all(void) {
     int stopped;
     int started;
 
+    if (g_recovery_restarting_all) {
+        return -EBUSY;
+    }
+
+    /* 先置位再启动：start 失败会同步进入 on_module_error，那里看到标志后直接返回。 */
+    g_recovery_restarting_all = true;
     (void) module_manager_clear_all_error_states();
     stopped = module_manager_stop_all();
     started = module_manager_start_all();
+    g_recovery_restarting_all = false;
 
     LOG_INF("recovery restart_all: stopped=%d started=%d", stopped, started);
     return (started < 0) ? started : 0;
@@ -222,6 +233,10 @@ int recovery_policy_on_module_error(uint32_t module_id) {
     atomic_t*         cell;
     atomic_val_t      prev;
     int               ret;
+
+    if (g_recovery_restarting_all) {
+        return -EBUSY;
+    }
 
     if (g_recovery.status != MODULE_STATUS_RUNNING) {
         return -EINVAL;

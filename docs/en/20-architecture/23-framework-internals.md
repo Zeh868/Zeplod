@@ -342,7 +342,7 @@ Event system supports three data storage strategies:
 uint8_t small_data[16];
 
 // Use event_publish_copy, inline storage with no extra allocation
-event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL, 
+event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL,
                    small_data, sizeof(small_data));
 // System automatically sets EVENT_FLAG_DATA_INLINE flag
 ```
@@ -359,7 +359,7 @@ event_t* event = event_create_with_data_rt(
 );
 
 // Or publish directly
-event_publish_copy_rt(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_HIGH, 
+event_publish_copy_rt(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_HIGH,
                       data, sizeof(data));
 
 // Slab pool architecture:

@@ -53,11 +53,11 @@ LOG_MODULE_REGISTER(connectivity_backend_wifi, CONFIG_SYS_LOG_LEVEL);
 
 /** Wi-Fi 后端上下文：net_mgmt 事件回调 + 有界等待信号量 */
 typedef struct {
-    struct net_if*                  iface;       /**< Wi-Fi 网络接口（net_if_get_first_wifi） */
-    struct net_mgmt_event_callback  mgmt_cb;      /**< NET_EVENT_WIFI_* 事件回调登记块 */
-    struct k_sem                    connect_sem;  /**< connect() 内有界等待用信号量 */
-    bool                            link_up;      /**< 由事件回调更新的链路状态缓存 */
-    bool                            inited;       /**< init 是否已成功 */
+    struct net_if*                 iface;       /**< Wi-Fi 网络接口（net_if_get_first_wifi） */
+    struct net_mgmt_event_callback mgmt_cb;     /**< NET_EVENT_WIFI_* 事件回调登记块 */
+    struct k_sem                   connect_sem; /**< connect() 内有界等待用信号量 */
+    bool                           link_up;     /**< 由事件回调更新的链路状态缓存 */
+    bool                           inited;      /**< init 是否已成功 */
 } connectivity_wifi_ctx_t;
 
 /* =============================================================================
@@ -97,14 +97,14 @@ static void wifi_mgmt_event_handler(struct net_mgmt_event_callback* cb, uint64_t
     ARG_UNUSED(iface);
 
     switch (mgmt_event) {
-        case NET_EVENT_WIFI_CONNECT_RESULT:
-            wifi_handle_connect_result(&g_wifi_ctx, cb);
-            break;
-        case NET_EVENT_WIFI_DISCONNECT_RESULT:
-            wifi_handle_disconnect_result(&g_wifi_ctx);
-            break;
-        default:
-            break;
+    case NET_EVENT_WIFI_CONNECT_RESULT:
+        wifi_handle_connect_result(&g_wifi_ctx, cb);
+        break;
+    case NET_EVENT_WIFI_DISCONNECT_RESULT:
+        wifi_handle_disconnect_result(&g_wifi_ctx);
+        break;
+    default:
+        break;
     }
 }
 
@@ -177,10 +177,10 @@ static int wifi_init(connectivity_backend_ops_t* ops) {
  */
 static int wifi_connect(connectivity_backend_ops_t* ops) {
     connectivity_wifi_ctx_t*       ctx = (connectivity_wifi_ctx_t*) ops->ctx;
-    char                            ssid[PROVISIONING_WIFI_SSID_MAX_LEN];
-    char                            psk[PROVISIONING_WIFI_PSK_MAX_LEN];
+    char                           ssid[PROVISIONING_WIFI_SSID_MAX_LEN];
+    char                           psk[PROVISIONING_WIFI_PSK_MAX_LEN];
     struct wifi_connect_req_params params;
-    int                             ret;
+    int                            ret;
 
     if (ctx == NULL || !ctx->inited) {
         return -EINVAL;
@@ -241,7 +241,7 @@ static int wifi_connect(connectivity_backend_ops_t* ops) {
 
 static int wifi_disconnect(connectivity_backend_ops_t* ops) {
     connectivity_wifi_ctx_t* ctx = (connectivity_wifi_ctx_t*) ops->ctx;
-    int                       ret;
+    int                      ret;
 
     if (ctx == NULL) {
         return -EINVAL;

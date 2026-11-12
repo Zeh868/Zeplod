@@ -4,9 +4,9 @@
 
 This guide explains how to create a **standalone business APP repository** on top of **Zeplod (framework)**: layout, required files, Kconfig / devicetree / script configuration, and differences between hardware boards and QEMU simulation.
 
-> **Relation to [12-freestanding-app-build.md](12-freestanding-app-build.md)**  
-> Doc 12 covers Zephyr freestanding concepts (`ZEPHYR_BASE`, `BOARD_ROOT`, overlay rules).  
-> **This guide focuses on the recommended `framework/` submodule + APP layout**, step by step.  
+> **Relation to [12-freestanding-app-build.md](12-freestanding-app-build.md)**
+> Doc 12 covers Zephyr freestanding concepts (`ZEPHYR_BASE`, `BOARD_ROOT`, overlay rules).
+> **This guide focuses on the recommended `framework/` submodule + APP layout**, step by step.
 > Reference implementation: [zephyr_gateway](https://github.com/QZehao/zephyr_gateway).
 
 ---
@@ -187,14 +187,14 @@ Details: [63-scripts-and-tools.md](../60-debugging/63-scripts-and-tools.md).
 
 ## 6. Acceptance checklist
 
-- [ ] `framework/` submodule initialized and pinned  
-- [ ] `framework/zephyr_config.env` configured, not committed  
-- [ ] Top `CMakeLists.txt` with overlays helper + `add_subdirectory(framework)`  
-- [ ] `<app>_prj.conf` and `<app>_conf/targets/qemu.conf` present  
-- [ ] `modules/<name>/` + `ZEPHYR_EXTRA_MODULES` aligned  
-- [ ] `west build -b qemu_riscv32 .` passes  
-- [ ] Target board build passes  
-- [ ] CI board/CONF matches local  
+- [ ] `framework/` submodule initialized and pinned
+- [ ] `framework/zephyr_config.env` configured, not committed
+- [ ] Top `CMakeLists.txt` with overlays helper + `add_subdirectory(framework)`
+- [ ] `<app>_prj.conf` and `<app>_conf/targets/qemu.conf` present
+- [ ] `modules/<name>/` + `ZEPHYR_EXTRA_MODULES` aligned
+- [ ] `west build -b qemu_riscv32 .` passes
+- [ ] Target board build passes
+- [ ] CI board/CONF matches local
 
 ---
 
@@ -213,6 +213,6 @@ More: [62-troubleshooting.md](../60-debugging/62-troubleshooting.md).
 
 ## 8. Related docs
 
-- [12-freestanding-app-build.md](12-freestanding-app-build.md)  
-- [14-qemu-simulation-guide.md](14-qemu-simulation-guide.md)  
+- [12-freestanding-app-build.md](12-freestanding-app-build.md)
+- [14-qemu-simulation-guide.md](14-qemu-simulation-guide.md)
 - Example: **zephyr_gateway**

@@ -45,7 +45,7 @@ typedef struct {
 } event_timer_handle_t;
 
 /** 无效句柄常量（slot/gen 均为保留值 0xFFFF） */
-#define EVENT_TIMER_HANDLE_INVALID ((event_timer_handle_t){.slot = 0xFFFFU, .gen = 0xFFFFU})
+#define EVENT_TIMER_HANDLE_INVALID ((event_timer_handle_t) {.slot = 0xFFFFU, .gen = 0xFFFFU})
 
 #if defined(CONFIG_EVENT_TIMER_POOL) || defined(__DOXYGEN__)
 
@@ -177,8 +177,7 @@ event_status_t event_timer_get_stats(event_timer_handle_t handle, uint32_t* fire
  *       EVENT_ERR_INVALID_ARG
  */
 event_status_t event_periodic_start(event_type_t type, event_priority_t priority, const void* data, size_t data_len,
-                                    uint32_t period_ms, uint32_t initial_delay_ms,
-                                    event_timer_handle_t* handle_out);
+                                    uint32_t period_ms, uint32_t initial_delay_ms, event_timer_handle_t* handle_out);
 
 /**
  * @brief 取消周期发布并释放母本与槽位
@@ -232,8 +231,8 @@ static inline uint32_t event_periodic_active_count(void) {
 #else /* !CONFIG_EVENT_TIMER_POOL */
 
 /* 定时器池未启用时提供可编译桩：调用即返回参数错误/零值，保持上层代码无需条件编译 */
-static inline event_status_t event_publish_delayed_copy(event_type_t type, event_priority_t priority,
-                                                        const void* data, size_t data_len, uint32_t delay_ms,
+static inline event_status_t event_publish_delayed_copy(event_type_t type, event_priority_t priority, const void* data,
+                                                        size_t data_len, uint32_t delay_ms,
                                                         event_timer_handle_t* handle_out) {
     ARG_UNUSED(type);
     ARG_UNUSED(priority);

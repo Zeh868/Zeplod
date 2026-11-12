@@ -131,7 +131,7 @@ ZTEST(sys_watchdog, test_hardware_watchdog_init) {
 
     int ret = sys_wdt_init(&hw_config);
     zassert_equal(ret, 0, "Hardware watchdog init should succeed");
-    
+
     zassert_equal(sys_wdt_start(), 0, NULL);
     zassert_equal(sys_wdt_feed(), 0, NULL);
     zassert_equal(sys_wdt_stop(), 0, NULL);

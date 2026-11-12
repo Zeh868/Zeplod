@@ -41,15 +41,15 @@ BUILD_ASSERT(sizeof(((data_bus_memory_warning_event_t*) 0)->channel_name) == CON
  * ============================================================================ */
 
 /** 强制复位循环：至多重试次数（每次间隔 RESET_RETRY_INTERVAL_MS，总窗约 1.5s） */
-#define RESET_MAX_ATTEMPTS 30
+#define RESET_MAX_ATTEMPTS            30
 /** 强制复位循环：单次重试间隔（等待在途回调退出） */
-#define RESET_RETRY_INTERVAL_MS 50
+#define RESET_RETRY_INTERVAL_MS       50
 /** 通道静默（分发空闲）判定超时 */
-#define CHANNEL_QUIESCENT_TIMEOUT_MS 2000U
+#define CHANNEL_QUIESCENT_TIMEOUT_MS  2000U
 /** OVERWRITE 连发用例：连发次数（数倍于队列深度，充分触发覆盖旧块路径） */
 #define OVERWRITE_BURST_PUBLISH_COUNT 100
 /** IMU 基准用例：OVERWRITE 高频发布轮数 */
-#define IMU_BENCH_ROUND_COUNT 200
+#define IMU_BENCH_ROUND_COUNT         200
 
 /* ============================================================================
  * 测试夹具

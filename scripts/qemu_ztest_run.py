@@ -129,6 +129,14 @@ def _sdk_roots(env: Mapping[str, str]) -> list[Path]:
     return roots
 
 
+def sdk_install_dir_from_qemu(qemu: Path) -> Path | None:
+    """从 SDK hosttools 里的 qemu 路径回推安装根目录。"""
+    for parent in qemu.parents:
+        if parent.name.startswith("zephyr-sdk-"):
+            return parent
+    return None
+
+
 def find_qemu_binary(name: str, env: Mapping[str, str]) -> Path | None:
     """在 QEMU_BIN_PATH、PATH 和 SDK hosttools 中查找仿真器。"""
     candidates: list[Path] = []
@@ -385,6 +393,10 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ.copy()
     env["QEMU_BIN_PATH"] = str(qemu.parent)
     env["QEMU_PIPE"] = str(fifo_base)
+    if not env.get("ZEPHYR_SDK_INSTALL_DIR", "").strip():
+        sdk_root = sdk_install_dir_from_qemu(qemu)
+        if sdk_root is not None:
+            env["ZEPHYR_SDK_INSTALL_DIR"] = str(sdk_root)
 
     build_cmd = [
         "west",
@@ -406,6 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"QEMU board: {args.board} (not native_sim)")
     print(f"QEMU binary: {qemu}")
+    print(f"ZEPHYR_SDK_INSTALL_DIR: {env.get('ZEPHYR_SDK_INSTALL_DIR', '')}")
     print(f"CONF_FILE: {args.conf}")
     print(f"serial timeout: {args.timeout:.0f}s")
     print("coverage: tests/ ztest logic on qemu_riscv32; physical PHY/peripherals/timing not covered")

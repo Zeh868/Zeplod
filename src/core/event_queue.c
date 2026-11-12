@@ -16,8 +16,8 @@
  *
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
- * 2026-09-18       1.1            zeh            拆分 enqueue/drop_lowest 超长函数；msgq 最后写发布；裸 extern 移入 internal 头
- * 2026-09-27       1.2            zeh            新增优先级批出队（aging 有效优先级）；scratch 预分配扩展至 PRIORITY_DISPATCH
+ * 2026-09-18       1.1            zeh            拆分 enqueue/drop_lowest 超长函数；msgq 最后写发布
+ * 2026-09-27       1.2            zeh            优先级批出队；scratch 预分配扩展至 PRIORITY_DISPATCH
  *
  */
 
@@ -784,7 +784,7 @@ out:
  */
 static inline uint32_t event_queue_effective_priority(const event_t* event, uint32_t now_ms) {
     uint32_t age_steps = (now_ms - event->timestamp) / CONFIG_EVENT_PRIORITY_AGING_STEP_MS;
-    uint32_t nominal   = (uint32_t) event->priority;
+    uint32_t nominal = (uint32_t) event->priority;
 
     return (nominal > age_steps) ? (nominal - age_steps) : 0U;
 }
@@ -823,20 +823,20 @@ uint32_t event_queue_dequeue_priority_batch(struct k_msgq* queue, event_t* out, 
         }
     }
 
-    const uint32_t now_ms  = k_uptime_get_32();
-    uint32_t       left     = n; /* scratch[0, left) 为尚未选出的条目；移除只收缩右端 */
+    const uint32_t now_ms = k_uptime_get_32();
+    uint32_t       left = n; /* scratch[0, left) 为尚未选出的条目；移除只收缩右端 */
     uint32_t       selected = 0U;
 
     while (selected < max_out && left > 0U) {
         /* 在 [0, left) 内选有效优先级最小者；严格小于保证平局取下标最小（FIFO 最旧） */
-        uint32_t best     = 0U;
+        uint32_t best = 0U;
         uint32_t best_eff = event_queue_effective_priority(&cb->drop_lowest_scratch[0], now_ms);
 
         for (uint32_t i = 1U; i < left; i++) {
             uint32_t eff = event_queue_effective_priority(&cb->drop_lowest_scratch[i], now_ms);
 
             if (eff < best_eff) {
-                best     = i;
+                best = i;
                 best_eff = eff;
             }
         }

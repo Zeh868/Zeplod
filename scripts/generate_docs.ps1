@@ -77,7 +77,7 @@ Write-Host ""
 try {
     # 运行 Doxygen
     $output = doxygen Doxyfile 2>&1
-    
+
     # 显示输出
     if ($output) {
         $output | ForEach-Object {
@@ -88,7 +88,7 @@ try {
             }
         }
     }
-    
+
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Green
     Write-Host "文档生成成功！" -ForegroundColor Green
@@ -98,7 +98,7 @@ try {
     Write-Host "  HTML: $ProjectRoot\docs\api\html" -ForegroundColor Gray
     Write-Host "  LaTeX: $ProjectRoot\docs\api\latex" -ForegroundColor Gray
     Write-Host ""
-    
+
     # 自动打开文档（如果指定了 -Open）
     if ($Open) {
         Write-Host "正在打开文档..." -ForegroundColor Gray
@@ -109,7 +109,7 @@ try {
         Write-Host "  或添加 -Open 参数自动打开" -ForegroundColor Gray
     }
     Write-Host ""
-    
+
 } catch {
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Red

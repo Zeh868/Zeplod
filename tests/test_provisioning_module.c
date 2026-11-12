@@ -120,14 +120,16 @@ ZTEST(provisioning_module_tests, test_begin_stub_success) {
 ZTEST(provisioning_module_tests, test_begin_publishes_events) {
     uint32_t sub_id;
 
+    setup_provisioning();
+    /* 事件类型在 init 时才注册。先排空队列再订阅，避免吃到同套件里更早的事件。 */
+    k_msleep(1);
+
     k_sem_init(&g_prov_sem, 0, 10);
     g_last_prov_state = PROVISIONING_STATE_UNPROVISIONED;
     g_prov_event_count = 0;
 
     zassert_equal(event_subscribe(EVENT_PROVISIONING_STATE_CHANGED, provisioning_state_event_cb, NULL, &sub_id),
                   EVENT_OK);
-
-    setup_provisioning();
     zassert_equal(provisioning_module_begin(NULL), 0, NULL);
 
     /* IN_PROGRESS + PROVISIONED */

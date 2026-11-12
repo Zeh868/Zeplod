@@ -1,15 +1,15 @@
 > 语言: **中文** | [English](../../en/10-environment-build/15-creating-new-app-guide.md)
 
-> **本文档范围**：framework 子模块形态下从零创建 APP 仓库（CMake、Kconfig、overlay、`zephyr_app.env`、验收清单）。  
+> **本文档范围**：framework 子模块形态下从零创建 APP 仓库（CMake、Kconfig、overlay、`zephyr_app.env`、验收清单）。
 > **另见**：[12-Freestanding应用与构建基础](12-Freestanding应用与构建基础.md)（Freestanding 概念）· [14-QEMU仿真运行指南](14-QEMU仿真运行指南.md)（仿真）· [63-脚本与工具说明](../60-调试与排错/63-脚本与工具说明.md)（脚本）
 
 # 新建 APP 开发指南
 
 本文说明如何基于 **Zeplod（framework）** 创建**独立的业务 APP 仓库**：目录结构、必备文件、Kconfig / 设备树 / 脚本配置，以及实板与 QEMU 仿真的差异处理。
 
-> **与 [12-Freestanding应用与构建基础.md](12-Freestanding应用与构建基础.md) 的关系**  
-> 文档 12 讲解 Zephyr「独立应用（freestanding）」的通用概念（`ZEPHYR_BASE`、`BOARD_ROOT`、overlay 规则等）。  
-> **本文聚焦「framework 子模块 + 业务 APP」这一推荐形态**，按步骤从零搭仓库。  
+> **与 [12-Freestanding应用与构建基础.md](12-Freestanding应用与构建基础.md) 的关系**
+> 文档 12 讲解 Zephyr「独立应用（freestanding）」的通用概念（`ZEPHYR_BASE`、`BOARD_ROOT`、overlay 规则等）。
+> **本文聚焦「framework 子模块 + 业务 APP」这一推荐形态**，按步骤从零搭仓库。
 > 参考实现：[zephyr_gateway](https://github.com/QZehao/zephyr_gateway)（工业边缘网关）。
 
 ---
@@ -319,9 +319,9 @@ west build -b nucleo_l4r5zi . -p always -- \
 
 完成仓库骨架后，按框架文档开发业务：
 
-1. [04-开发者入门指南.md](../00-入门/04-开发者入门指南.md) — 模块、事件、测试工作流  
-2. [32-模块系统详细使用说明.md](../30-核心模块/32-模块系统详细使用说明.md) — `module_manager` 注册与生命周期  
-3. [31-事件系统详细使用说明.md](../30-核心模块/31-事件系统详细使用说明.md) — 发布/订阅  
+1. [04-开发者入门指南.md](../00-入门/04-开发者入门指南.md) — 模块、事件、测试工作流
+2. [32-模块系统详细使用说明.md](../30-核心模块/32-模块系统详细使用说明.md) — `module_manager` 注册与生命周期
+3. [31-事件系统详细使用说明.md](../30-核心模块/31-事件系统详细使用说明.md) — 发布/订阅
 4. [37-数据总线使用说明.md](../30-核心模块/37-数据总线使用说明.md) — 流式数据（若需要）
 
 ---
@@ -330,16 +330,16 @@ west build -b nucleo_l4r5zi . -p always -- \
 
 创建或迁移 APP 仓库时，建议逐项确认：
 
-- [ ] `git submodule` 已拉取 `framework/`，版本与团队对齐  
-- [ ] `framework/zephyr_config.env` 已配置且未提交  
-- [ ] APP 根 `CMakeLists.txt` 含 `add_subdirectory(framework)` 与 `zeplod_append_app_devicetree_overlays`  
-- [ ] 存在 `<app>_prj.conf`，示例模块已按产品裁剪  
-- [ ] 存在 `<app>_conf/targets/qemu.conf`，`run_qemu.ps1` 日志中 CONF 含四段合并  
-- [ ] `modules/<name>/zephyr/module.yml` 与 `ZEPHYR_EXTRA_MODULES` 一致  
-- [ ] `west build -b qemu_riscv32 . -p always` 通过（Windows 冒烟）  
-- [ ] 目标实板 `west build -b <board> .` 通过  
-- [ ] CI 中 `board`、CONF 与本地一致（见 [52-CI平台配置保姆级手册.md](../50-测试与CI/52-CI平台配置保姆级手册.md)）  
-- [ ] 更新 framework 子模块后重跑 QEMU 与实板构建  
+- [ ] `git submodule` 已拉取 `framework/`，版本与团队对齐
+- [ ] `framework/zephyr_config.env` 已配置且未提交
+- [ ] APP 根 `CMakeLists.txt` 含 `add_subdirectory(framework)` 与 `zeplod_append_app_devicetree_overlays`
+- [ ] 存在 `<app>_prj.conf`，示例模块已按产品裁剪
+- [ ] 存在 `<app>_conf/targets/qemu.conf`，`run_qemu.ps1` 日志中 CONF 含四段合并
+- [ ] `modules/<name>/zephyr/module.yml` 与 `ZEPHYR_EXTRA_MODULES` 一致
+- [ ] `west build -b qemu_riscv32 . -p always` 通过（Windows 冒烟）
+- [ ] 目标实板 `west build -b <board> .` 通过
+- [ ] CI 中 `board`、CONF 与本地一致（见 [52-CI平台配置保姆级手册.md](../50-测试与CI/52-CI平台配置保姆级手册.md)）
+- [ ] 更新 framework 子模块后重跑 QEMU 与实板构建
 
 ---
 
@@ -359,7 +359,7 @@ west build -b nucleo_l4r5zi . -p always -- \
 
 ## 10. 参考
 
-- 示例仓库：**zephyr_gateway**（`gateway_prj.conf` / `gateway_conf/targets/qemu.conf` / `modules/zephyr_gateway`）  
-- [12-Freestanding应用与构建基础.md](12-Freestanding应用与构建基础.md) — freestanding 与 BOARD_ROOT  
-- [14-QEMU仿真运行指南.md](14-QEMU仿真运行指南.md) — 仿真与 ztest  
+- 示例仓库：**zephyr_gateway**（`gateway_prj.conf` / `gateway_conf/targets/qemu.conf` / `modules/zephyr_gateway`）
+- [12-Freestanding应用与构建基础.md](12-Freestanding应用与构建基础.md) — freestanding 与 BOARD_ROOT
+- [14-QEMU仿真运行指南.md](14-QEMU仿真运行指南.md) — 仿真与 ztest
 - 框架仓库：`zephyr_app.env.template`、`cmake/zeplod_app_overlays.cmake`

@@ -10,10 +10,9 @@
  *    Date         Version        Author          Description
  * 2026-04-01       1.0            zeh            正式发布
  * 2026-09-18       1.1            zeh            审查整改：init 补全零初始化；stop 改有界
- * 2026-09-18       1.2            zeh            复审整改：start 先置 RUNNING 再以 K_FOREVER+k_thread_start 启动线程，消除启动竞态
- * 2026-09-18       1.3            zeh            复审整改：删除死配置字段，init 忽略 config、注册传 NULL
- *                                                 k_thread_join；status 改 atomic；补订阅
- *                                                 返回值检查；事件负载解引用改 memcpy 保对齐
+ * 2026-09-18       1.2            zeh            复审整改：start 先置 RUNNING 再以 K_FOREVER+k_thread_start
+ * 启动线程，消除启动竞态 2026-09-18       1.3            zeh            复审整改：删除死配置字段，init 忽略
+ * config、注册传 NULL k_thread_join；status 改 atomic；补订阅 返回值检查；事件负载解引用改 memcpy 保对齐
  *
  */
 
@@ -33,16 +32,16 @@ LOG_MODULE_REGISTER(example_module_b, CONFIG_SYS_LOG_LEVEL);
  * 内部定义
  * ============================================================================= */
 
-#define EXAMPLE_MODULE_B_THREAD_PRIORITY   6
-#define EXAMPLE_MODULE_B_THREAD_STACK_SIZE 2048
+#define EXAMPLE_MODULE_B_THREAD_PRIORITY        6
+#define EXAMPLE_MODULE_B_THREAD_STACK_SIZE      2048
 
 /** stop 时等待模块线程退出的有界超时；线程循环 k_msleep(50)，正常远小于该值 */
 #define EXAMPLE_MODULE_B_THREAD_JOIN_TIMEOUT_MS 200
 
 /* 控制命令 */
-#define CMD_SEND_DATA                      1
-#define CMD_GET_STATS                      2
-#define CMD_CLEAR_BUFFERS                  3
+#define CMD_SEND_DATA                           1
+#define CMD_GET_STATS                           2
+#define CMD_CLEAR_BUFFERS                       3
 
 /* =============================================================================
  * 内部数据结构
@@ -53,8 +52,8 @@ typedef struct {
      * status 被模块线程与模块管理器线程共同访问：
      * 枚举整数的单写者多读者切换，用 atomic 保证可见性即可，不加互斥锁。
      */
-    atomic_t                  status;
-    struct k_thread           thread;
+    atomic_t        status;
+    struct k_thread thread;
     K_KERNEL_STACK_MEMBER(stack, EXAMPLE_MODULE_B_THREAD_STACK_SIZE);
     uint32_t subscriber_id;
     uint32_t event_type;
@@ -113,9 +112,9 @@ int example_module_b_start(void) {
      * 读到旧状态而直接退出（对齐 example_module_a 的安全模式） */
     atomic_set(&g_module_b.status, MODULE_STATUS_RUNNING);
 
-    k_tid_t tid = k_thread_create(&g_module_b.thread, g_module_b.stack, K_THREAD_STACK_SIZEOF(g_module_b.stack),
-                                  module_b_thread_func, &g_module_b, NULL, NULL, EXAMPLE_MODULE_B_THREAD_PRIORITY, 0,
-                                  K_FOREVER);
+    k_tid_t tid =
+        k_thread_create(&g_module_b.thread, g_module_b.stack, K_THREAD_STACK_SIZEOF(g_module_b.stack),
+                        module_b_thread_func, &g_module_b, NULL, NULL, EXAMPLE_MODULE_B_THREAD_PRIORITY, 0, K_FOREVER);
     if (tid == NULL) {
         LOG_ERR("Failed to create module B thread");
         atomic_set(&g_module_b.status, MODULE_STATUS_ERROR);

@@ -2,7 +2,7 @@
 
 # Glossary Quick Reference
 
-**Purpose**: Quick lookup for unfamiliar terms  
+**Purpose**: Quick lookup for unfamiliar terms
 **Audience**: Newcomers, cross-domain developers
 
 ---

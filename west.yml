@@ -28,7 +28,9 @@ manifest:
       # 本机构建仍用 zephyr_config.env 里的 ZEPHYR_BASE，不必依赖这里的 URL。
       url: https://github.com/zephyrproject-rtos/zephyr
       revision: v4.4.0
-      # 独立应用通常不需要 import: true；若需拉取 Zephyr 的 west 子项目再按需打开
+      # CI 在容器里执行 west zephyr-export / west build。不导入时工作区没有
+      # Zephyr 的 west 扩展命令，zephyr-export 会直接失败；STM32 编译还需要 hal_stm32。
+      import: true
 
   self:
     # This application is located in the manifest repository itself

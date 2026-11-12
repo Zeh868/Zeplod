@@ -46,8 +46,8 @@ LOG_MODULE_REGISTER(example_module_gpio, CONFIG_SYS_LOG_LEVEL);
  * 内部定义
  * ============================================================================= */
 
-#define GPIO_THREAD_PRIORITY   5
-#define GPIO_THREAD_STACK_SIZE 2048
+#define GPIO_THREAD_PRIORITY        5
+#define GPIO_THREAD_STACK_SIZE      2048
 
 /** stop 时等待 GPIO 线程退出的有界超时；线程循环 k_msleep(50)，正常远小于该值 */
 #define GPIO_THREAD_JOIN_TIMEOUT_MS 200
@@ -62,8 +62,8 @@ typedef struct {
      * status 被 GPIO 线程/ISR 与模块管理器线程共同访问：
      * 枚举整数的单写者多读者切换，用 atomic 保证可见性即可，不加互斥锁。
      */
-    atomic_t                     status;
-    struct k_thread              thread;
+    atomic_t        status;
+    struct k_thread thread;
     K_KERNEL_STACK_MEMBER(stack, GPIO_THREAD_STACK_SIZE);
     const struct gpio_dt_spec* led;
     const struct gpio_dt_spec* button;

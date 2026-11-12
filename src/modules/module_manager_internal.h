@@ -20,8 +20,8 @@
 #include <zeplod/module_manager.h>
 #include <zeplod/state_machine.h>
 
-#define MM_MODULE_NAME_MAX  32
-#define MM_DRAIN_TIMEOUT_MS 1000U
+#define MM_MODULE_NAME_MAX    32
+#define MM_DRAIN_TIMEOUT_MS   1000U
 
 /**
  * @brief 模块快照栈占用上限（字节）。

@@ -89,7 +89,7 @@ source scripts/setup_env.sh
 .\scripts\run_tests.ps1
 ```
 
-脚本会先执行 **`setup_env`**（读取 `zephyr_config.env`），再构建/运行测试；无需单独激活环境。  
+脚本会先执行 **`setup_env`**（读取 `zephyr_config.env`），再构建/运行测试；无需单独激活环境。
 板型优先 `native_sim`（若 `west boards` 列出），否则 `native_posix`。可用环境变量 `ZEPHYR_TEST_BOARD`、`ZEPHYR_TEST_CONF` 覆盖。
 
 ### West（手动）
@@ -192,7 +192,7 @@ ZTEST_SUITE(test_module_name, NULL, NULL, NULL, NULL, NULL);
 
 | 范围 | 本地目标 | CI 门禁（`.github/workflows/ci.yml`） |
 |------|----------|--------------------------------------|
-| `src/core/` | 目标 **≥95%**（QEMU 全量 ztest；当前约 **77%**，见下方说明） | **≥80%**（`native_sim` + `--coverage`） |
+| `src/core/` | 目标 **≥95%**（QEMU 全量 ztest；当前约 **77%**，见下方说明） | **≥79%**（`native_sim` + `CONFIG_COVERAGE`） |
 
 全仓库 100% 不现实（`src/app/`、未纳入测试的路径、`SYS_INIT` 自动初始化路径等不在统计范围内）。
 
@@ -203,7 +203,7 @@ Windows 原生无法运行 `native_sim`，使用 **`scripts/run_qemu.ps1`** 在 
 ```powershell
 . .\scripts\setup_env.ps1
 
-# 构建、运行测试、生成报告（CI 对齐门槛 80%）
+# 构建、运行测试、生成报告（本地示例门槛 80%；CI native_sim 门禁为 79%）
 .\scripts\run_qemu.ps1 -Tests -Coverage -CoverageMin 80
 
 # 冲刺 95% 目标（当前未达标时会非零退出）
@@ -213,7 +213,7 @@ Windows 原生无法运行 `native_sim`，使用 **`scripts/run_qemu.ps1`** 在 
 .\scripts\run_qemu.ps1 -Tests -Coverage -ReportOnly -CoverageLog coverage_qemu_qemu_riscv32.log
 ```
 
-默认 CONF 链：`prj.conf;prj_test_extensions.conf;prj_qemu_coverage.conf;prj_block_overflow.conf`。  
+默认 CONF 链：`prj.conf;prj_test_extensions.conf;prj_qemu_coverage.conf;prj_block_overflow.conf`。
 产物：`coverage-qemu-core.html`、`coverage-qemu-core-summary.json`、日志 `coverage_qemu_<board>.log`。
 
 需已安装 **Zephyr SDK**（`riscv64-zephyr-elf-gcov`）与 **gcovr**（`pip install gcovr`）。
@@ -224,7 +224,7 @@ Windows 原生无法运行 `native_sim`，使用 **`scripts/run_qemu.ps1`** 在 
 
 ```bash
 west build -b native_sim tests/ --build-dir build_tests_cov -p always \
-  -- -DCMAKE_C_FLAGS="--coverage"
+  -- -DCONFIG_COVERAGE=y
 west build -t run --build-dir build_tests_cov
 gcovr -r . --filter "src/core/" --html --html-details coverage-core.html --print-summary
 ```

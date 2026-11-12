@@ -8,7 +8,8 @@
  * @par 修改日志:
  *    Date         Version        Author          Description
  * 2026-04-17       1.0            zeh            初始版本
- * 2026-09-18       1.1            zeh            耗尽回调用例真正触发 slab 耗尽；混合优先级断言精确化；分配类用例自带 init 并套件级 shutdown 清理
+ * 2026-09-18       1.1            zeh            耗尽回调用例真正触发 slab 耗尽；混合优先级断言精确化；分配类用例自带
+ * init 并套件级 shutdown 清理
  */
 
 #include <zephyr/logging/log.h>
@@ -19,7 +20,7 @@
 LOG_MODULE_REGISTER(test_event_memory);
 
 /** 大量分配用例的分配次数（覆盖 NORMAL 池 4 块上限的 4 倍，验证失败路径与释放） */
-#define MASS_ALLOC_COUNT 16
+#define MASS_ALLOC_COUNT       16
 
 /** 混合优先级用例的总分配次数（4 种优先级 + 8 次 NORMAL 追加） */
 #define TEST_MIXED_ALLOC_COUNT 12

@@ -159,10 +159,10 @@ void example_module_uart_get_stats(uint32_t* tx_count, uint32_t* rx_count, uint3
  * 控制命令
  * ============================================================================= */
 
-#define UART_CMD_SEND               1
-#define UART_CMD_GET_RX_COUNT       2
-#define UART_CMD_CLEAR_RX           3
-#define UART_CMD_GET_STATS          4
+#define UART_CMD_SEND           1
+#define UART_CMD_GET_RX_COUNT   2
+#define UART_CMD_CLEAR_RX       3
+#define UART_CMD_GET_STATS      4
 
 /** UART_CMD_SEND 时传入的 arg 指向本结构 */
 typedef struct {

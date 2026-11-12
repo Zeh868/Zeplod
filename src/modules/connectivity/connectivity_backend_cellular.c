@@ -149,18 +149,18 @@ static void cellular_mgmt_event_handler(struct net_mgmt_event_callback* cb, uint
     }
 
     switch (mgmt_event) {
-        case NET_EVENT_L4_CONNECTED:
-            g_cell_ctx.l4_connected = true;
-            LOG_INF("Cellular L4 connected");
-            k_sem_give(&g_cell_ctx.connect_sem);
-            break;
-        case NET_EVENT_L4_DISCONNECTED:
-            g_cell_ctx.l4_connected = false;
-            LOG_INF("Cellular L4 disconnected");
-            k_sem_give(&g_cell_ctx.connect_sem);
-            break;
-        default:
-            break;
+    case NET_EVENT_L4_CONNECTED:
+        g_cell_ctx.l4_connected = true;
+        LOG_INF("Cellular L4 connected");
+        k_sem_give(&g_cell_ctx.connect_sem);
+        break;
+    case NET_EVENT_L4_DISCONNECTED:
+        g_cell_ctx.l4_connected = false;
+        LOG_INF("Cellular L4 disconnected");
+        k_sem_give(&g_cell_ctx.connect_sem);
+        break;
+    default:
+        break;
     }
 
     ARG_UNUSED(cb);

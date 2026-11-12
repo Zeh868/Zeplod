@@ -140,10 +140,10 @@ ${PACKAGE_NAME} - Release Package
 
 文件列表
 --------
-  zephyr_${VERSION}.bin  ($(printf "%'d" $BIN_SIZE) bytes)
-  zephyr_${VERSION}.elf  ($(printf "%'d" $ELF_SIZE) bytes)
-  zephyr_${VERSION}.hex  ($(printf "%'d" $HEX_SIZE) bytes)
-  zephyr_${VERSION}.map  ($(printf "%'d" $MAP_SIZE) bytes)
+  zephyr_${VERSION}.bin  ($(printf "%'d" "$BIN_SIZE") bytes)
+  zephyr_${VERSION}.elf  ($(printf "%'d" "$ELF_SIZE") bytes)
+  zephyr_${VERSION}.hex  ($(printf "%'d" "$HEX_SIZE") bytes)
+  zephyr_${VERSION}.map  ($(printf "%'d" "$MAP_SIZE") bytes)
 
 ================================================================================
 EOF

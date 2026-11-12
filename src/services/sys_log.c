@@ -51,10 +51,10 @@ LOG_MODULE_REGISTER(sys_log, CONFIG_SYS_LOG_LEVEL);
 #endif
 
 /** 目的地数组大小 */
-#define SYS_LOG_DEST_COUNT 4U
+#define SYS_LOG_DEST_COUNT              4U
 
 /** 按模块级别覆盖表的最大槽位数 */
-#define SYS_LOG_MAX_MODULES 16U
+#define SYS_LOG_MAX_MODULES             16U
 
 /** 重新初始化时静默化探测的试锁超时（毫秒）：仅为探测"有无打印在途"，非真实等待 */
 #define SYS_LOG_REINIT_PROBE_TIMEOUT_MS 1

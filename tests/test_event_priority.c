@@ -591,8 +591,13 @@ ZTEST(test_event_priority, test_priority_reorder_allows_isr_when_capacity_availa
     filler.type = PRIO_TYPE_NORMAL;
     filler.priority = EVENT_PRIORITY_NORMAL;
     for (uint32_t i = 0U; i < PRIO_ISR_REORDER_BATCHES; i++) {
-        /* 每批至少释放 32 个容量，覆盖本批排序期间连续到达的 ISR 事件。 */
+        /* 每批至少释放 32 个容量。native_sim 忙等不推进模拟时钟，
+         * 在第一次定时器到期前让出 1ms，避免 attempts 一直为 0。
+         */
         (void) event_queue_dequeue_priority_batch(&g_isr_reorder_queue, out, PRIO_ISR_REORDER_OUT, NULL);
+        if (atomic_get(&g_isr_reorder_attempts) == 0) {
+            k_msleep(1);
+        }
         if (event_queue_depth(&g_isr_reorder_queue) < PRIO_ISR_REORDER_CAPACITY) {
             event_status_t ret;
 

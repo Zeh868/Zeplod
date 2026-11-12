@@ -636,8 +636,11 @@ config SYS_TIMER_PRIORITY
 config SYS_WATCHDOG_ENABLE
 	bool "Enable System Watchdog"
 	default y
+	select REBOOT
 	help
 	  Enable hardware/software watchdog for system reliability.
+	  Expiry can call sys_reboot() even when FORCE_RESET is n, so REBOOT
+	  must be linked.
 
 config SYS_WATCHDOG_TIMEOUT_MS
 	int "Watchdog Timeout (ms)"
@@ -940,4 +943,3 @@ menu "Feature Gate Module"
 rsource "src/modules/feature_gate/Kconfig"
 
 endmenu
-
