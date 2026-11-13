@@ -40,6 +40,10 @@ west build -b mimxrt1050_fire/mimxrt1052/qspi . \
 west build -b qemu_riscv32 . \
   -- -DCONF_FILE="prj.conf;conf/profiles/standard.conf;conf/features/data_bus.conf;conf/features/thread_ipc.conf;conf/targets/qemu.conf"
 
+# RTT 控制台（控制台/shell/日志切到 SEGGER RTT，配合 J-Link RTT Viewer）
+west build -b mimxrt1064_evk . -d build_rt1064 -p always -- \
+  -DEXTRA_CONF_FILE=conf/targets/rtt_console.conf
+
 # 可选功能叠加
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/ota.conf
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/diag.conf
@@ -82,6 +86,7 @@ west build -b <board> . -- -DEXTRA_CONF_FILE=conf/examples/gpio_uart.conf
 | `features/boot_fast.conf` | 快速/极限启动优化 |
 | `targets/production.conf` | 量产固件叠加（关闭 factory） |
 | `targets/qemu.conf` | QEMU 仿真裁剪 |
+| `targets/rtt_console.conf` | RTT 控制台目标（日志通道 0 / shell 通道 1） |
 | `targets/mcuboot.conf` | 主动 ingest（write_chunk / flash_img） |
 | `targets/mcumgr_smp.conf` | MCUmgr SMP 被动接入（产品推荐） |
 | `examples/gpio_uart.conf` | GPIO/UART 示例 |
