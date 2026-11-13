@@ -123,6 +123,13 @@ endif()
 # For freestanding applications, explicitly specify ZEPHYR_BASE
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
+# shell RTT 通道 1 缓冲移入 DTCM（cmake/zeplod_shell_rtt_dtcm.ld 定义的
+# .shell_rtt_dtcm 段）：DTCM 不经 M7 D-Cache，恢复 DCACHE 默认开启后调试器
+# 仍能实时读到 shell 输出；缓冲原本随 .bss 落 SDRAM，写回缓存会让 RTT Viewer
+# 读到旧数据。SECTIONS 片段注入点先于通用 .bss 规则生效；条件沿用 SoC
+# defconfig 的 SEGGER_RTT_SECTION_DTCM（仅存在 zephyr,dtcm 的板子为真）。
+zephyr_linker_sources_ifdef(CONFIG_SEGGER_RTT_SECTION_DTCM SECTIONS cmake/zeplod_shell_rtt_dtcm.ld)
+
 project(zeplod VERSION ${APP_VERSION_STRING})
 
 # =============================================================================
