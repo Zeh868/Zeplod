@@ -17,7 +17,7 @@
  *
  * 统计输出：样本数 + min/p50/p95/max/mean（单位 ns，由
  * k_cyc_to_ns_floor64() 换算），shell 输出行统一以 `bench:` 前缀开头
- * （CI 冒烟依赖此前缀，勿改）。
+ * （板级/人工冒烟依赖此前缀，勿改；CI 冒烟走 tests/test_event_benchmark.c ztest 套件）。
  * @author zeh (china_qzh@163.com)
  * @version 1.0
  * @date 2026-11-14

@@ -54,7 +54,7 @@ static int bench_parse_iters(const struct shell* shell, const char* arg, uint32_
 }
 
 /**
- * @brief 输出一条统计行（ns 与 µs 双单位；`bench:` 前缀为 CI 冒烟约定）
+ * @brief 输出一条统计行（ns 与 µs 双单位；`bench:` 前缀为板级/人工冒烟约定）
  *
  * @param shell shell 实例
  * @param tag 统计对象标签（dispatch / slab shell / slab data256 ...）

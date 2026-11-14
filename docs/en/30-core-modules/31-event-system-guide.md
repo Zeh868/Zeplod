@@ -1429,7 +1429,7 @@ bench slab [iters]       # slab create->free benchmark (all tiers), default 5000
 bench all [iters]        # dispatch + slab
 ```
 
-Output example (every stats line starts with the `bench:` prefix; CI smoke tests depend on it):
+Output example (every stats line starts with the `bench:` prefix; board-level/manual smoke tests depend on it; CI smoke runs the ztest suite `tests/test_event_benchmark.c` as a non-gating step instead):
 
 ```text
 bench: dispatch samples=1000/1000 failures=0 min=5234 ns (5.234 us) p50=... p95=... max=... mean=...
