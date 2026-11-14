@@ -1,0 +1,48 @@
+# Event system benchmark module (shell root command: bench)
+menuconfig EVENT_BENCHMARK
+	bool "Enable event system benchmark module"
+	default n
+	depends on EVENT_SYSTEM
+	depends on EVENT_MAX_TYPES > 80
+	help
+	  Optional performance benchmark for the event system: publish->deliver
+	  dispatch latency and per-tier slab create->free round trip statistics
+	  (samples / min / p50 / p95 / max / mean in ns). Programmatic API in
+	  include/zeplod/event_benchmark.h plus a `bench` shell root command
+	  (dispatch / slab / all). Uses the dedicated event type ID 80, hence
+	  EVENT_MAX_TYPES must exceed 80.
+	  Memory cost: one preallocated sample buffer of
+	  EVENT_BENCHMARK_MAX_SAMPLES * 8 bytes of static RAM.
+	  Note: native_sim timing reflects host simulation; real baselines must
+	  be measured on target hardware.
+
+if EVENT_BENCHMARK
+
+config EVENT_BENCHMARK_SHELL
+	bool "Register bench shell commands"
+	default y
+	depends on SHELL
+	help
+	  Register the `bench` shell root command (dispatch / slab / all).
+	  The programmatic API works without this option.
+
+config EVENT_BENCHMARK_MAX_SAMPLES
+	int "Preallocated benchmark sample buffer size"
+	default 5000
+	range 64 16384
+	help
+	  Number of preallocated samples (8 bytes each, static RAM) shared by
+	  the dispatch and slab benchmarks. Iteration counts above this value
+	  are rejected with EVENT_ERR_INVALID_ARG. The shell defaults
+	  (dispatch 1000, slab 5000) require at least 5000.
+
+config EVENT_BENCHMARK_DELIVERY_TIMEOUT_MS
+	int "Per-event dispatch delivery timeout (ms)"
+	default 1000
+	range 10 10000
+	help
+	  Wait limit per iteration for the subscription callback to deliver a
+	  published benchmark event. On timeout the run aborts early so a broken
+	  dispatcher cannot stall the shell for iterations * timeout.
+
+endif

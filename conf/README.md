@@ -52,6 +52,7 @@ west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/secure_kv.conf
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/sys_time.conf
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/net_stub.conf
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/factory_mode.conf
+west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/benchmark.conf
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/features/scale.conf
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE="conf/features/scale.conf;conf/profiles/sku_gateway.conf"
 west build -b nucleo_l4r5zi . -- -DEXTRA_CONF_FILE=conf/targets/production.conf
@@ -81,6 +82,7 @@ west build -b <board> . -- -DEXTRA_CONF_FILE=conf/examples/gpio_uart.conf
 | `features/factory_mode.conf` | 工厂产测模块 |
 | `features/remote_ops.conf` | 远程运维钩子 |
 | `features/feature_gate.conf` | 功能开关 license 槽位 |
+| `features/benchmark.conf` | 事件系统性能基准（`bench` shell 命令 + 程序化 API） |
 | `features/scale.conf` | Phase 5 规模化三合一 |
 | `profiles/sku_gateway.conf` | 网关 SKU 示例 |
 | `features/boot_fast.conf` | 快速/极限启动优化 |

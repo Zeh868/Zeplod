@@ -943,3 +943,9 @@ menu "Feature Gate Module"
 rsource "src/modules/feature_gate/Kconfig"
 
 endmenu
+
+menu "Event Benchmark Module"
+
+rsource "src/modules/event_benchmark/Kconfig"
+
+endmenu

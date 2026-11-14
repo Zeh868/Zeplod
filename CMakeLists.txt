@@ -266,6 +266,9 @@ add_subdirectory(src/modules/remote_ops)
 # Feature gate module (Kconfig: CONFIG_FEATURE_GATE_MODULE)
 add_subdirectory(src/modules/feature_gate)
 
+# Event benchmark module (Kconfig: CONFIG_EVENT_BENCHMARK)
+add_subdirectory(src/modules/event_benchmark)
+
 # Thread IPC service (Kconfig: CONFIG_THREAD_IPC_SERVICE; avoids Zephyr IPC_SERVICE name clash)
 if(CONFIG_THREAD_IPC_SERVICE)
     add_subdirectory(src/modules/ipc_service)
