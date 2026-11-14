@@ -306,6 +306,15 @@ jobs:
             -- -DCONF_FILE="prj.conf;prj_provisioning.conf"
           west build -t run --build-dir build_tests_provisioning
 
+      # 非门禁（B1）：事件基准冒烟套件。continue-on-error=true 使该步骤
+      # 失败只标警告、不阻断 build-tests 作业与整个 CI；转门禁需 Owner 决策。
+      - name: Run event benchmark smoke (non-gating)
+        continue-on-error: true
+        run: |
+          west build -b native_sim tests/ --build-dir build_tests_bench -p always \
+            -- -DCONF_FILE="prj.conf;prj_benchmark.conf"
+          west build -t run --build-dir build_tests_bench
+
       - name: Build OTA + recovery combo (compile check)
         run: |
           west build -b native_sim . --build-dir build_ota_recovery -p always \
