@@ -12,6 +12,7 @@
 - [API Reference](#api-reference)
 - [Usage Guide](#usage-guide)
 - [Best Practices](#best-practices)
+- [Performance Benchmark](#performance-benchmark)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -1382,6 +1383,81 @@ void print_slab_stats(void)
     }
 }
 ```
+
+---
+
+## Performance Benchmark
+
+### Overview
+
+The event system ships an optional benchmark module (`src/modules/event_benchmark/`, requires `CONFIG_EVENT_BENCHMARK=y`, default n) that provides two kinds of statistics:
+
+| Benchmark | Measurement | Output |
+|-----------|-------------|--------|
+| dispatch | Delta between `k_cycle_get_64()` taken before publish and at subscription callback entry (includes queue wait and the publisher-to-dispatcher thread switch). Events are ping-pong delivered: at most one event in flight. | samples / min / p50 / p95 / max / mean |
+| slab | Create→release round trip of a benchmark event (`event_create` / `event_create_with_data` → `event_free`); measured separately for the event shell and the 256B / 1KB / 4KB data block tiers | same, per tier |
+
+Timing uses `k_cycle_get_64()` + `k_cyc_to_ns_floor64()`; shell output reports both ns and µs.
+
+Constraints and notes:
+
+- Dedicated benchmark event type ID `80` (name `bench_dispatch`, registered automatically at run time; requires `CONFIG_EVENT_MAX_TYPES > 80`).
+- The measurement loop performs no dynamic allocation and no printing; samples go into a preallocated array (capacity `CONFIG_EVENT_BENCHMARK_MAX_SAMPLES`, default 5000, 8 bytes of static RAM per sample, shared by both benchmarks).
+- Thread context only (ISR calls are rejected); runs are repeatable; only one benchmark may run at a time (concurrent calls return `APP_ERR_BUSY`).
+- **Timing caveat**: results on `native_sim` reflect host simulation timing and are only useful for functional/regression comparison; real performance baselines must be measured on target hardware.
+
+### Configuration Options
+
+```kconfig
+CONFIG_EVENT_BENCHMARK=y                         # Enable the module (default n)
+CONFIG_EVENT_BENCHMARK_SHELL=y                   # Register the bench shell command (default y, requires SHELL)
+CONFIG_EVENT_BENCHMARK_MAX_SAMPLES=5000          # Preallocated sample limit (8B static RAM each)
+CONFIG_EVENT_BENCHMARK_DELIVERY_TIMEOUT_MS=1000  # Per-event delivery timeout, aborts the run on timeout
+```
+
+Enable example (overlay on top of the default build):
+
+```bash
+west build -b <board> . -- -DEXTRA_CONF_FILE=conf/features/benchmark.conf
+```
+
+### Shell Usage
+
+```text
+bench dispatch [iters]   # dispatch latency benchmark, default 1000
+bench slab [iters]       # slab create->free benchmark (all tiers), default 5000
+bench all [iters]        # dispatch + slab
+```
+
+Output example (every stats line starts with the `bench:` prefix; CI smoke tests depend on it):
+
+```text
+bench: dispatch samples=1000/1000 failures=0 min=5234 ns (5.234 us) p50=... p95=... max=... mean=...
+bench: slab shell samples=5000/5000 failures=0 min=... p50=... p95=... max=... mean=...
+bench: slab data256 samples=5000/5000 failures=0 min=... p50=... p95=... max=... mean=...
+bench: slab data1k samples=5000/5000 failures=0 min=... p50=... p95=... max=... mean=...
+bench: slab data4k samples=5000/5000 failures=0 min=... p50=... p95=... max=... mean=...
+```
+
+Slab data tiers automatically fall back to the `k_malloc` path when the corresponding slab pool is not configured; in that case the statistics reflect the fallback path.
+
+### Programmatic API
+
+The API does not depend on the shell and can be called from ztest smoke tests or application code:
+
+```c
+#include <zeplod/event_benchmark.h>
+
+event_benchmark_result_t result;
+
+/* Publish->deliver dispatch latency (requires the event system to be started) */
+int rc = event_benchmark_run_dispatch(1000, &result);
+
+/* Per-tier slab create->free round trip (does not require the event system running) */
+int rc2 = event_benchmark_run_slab(EVENT_BENCH_SLAB_DATA_256, 5000, &result);
+```
+
+The result struct `event_benchmark_result_t` carries `samples`, `failures` and `min_ns / p50_ns / p95_ns / max_ns / mean_ns` (`uint64_t`, ns). Slab tiers are selected via `event_benchmark_slab_tier_t` (`EVENT_BENCH_SLAB_SHELL / DATA_256 / DATA_1K / DATA_4K`), one call per tier.
 
 ---
 

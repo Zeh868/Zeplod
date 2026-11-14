@@ -24,6 +24,7 @@ Task entry: [05-task-navigation.md](05-task-navigation.md) · Full index: [02-do
 | `src/modules/` | [32](../30-core-modules/32-module-system-guide.md) | module_manager |
 | `src/modules_examples/` | [32](../30-core-modules/32-module-system-guide.md), [04](04-developer-guide.md) | Example modules (GPIO / UART / IPC…) |
 | `src/modules/ipc_service/` | [33](../30-core-modules/33-thread-ipc-service-guide.md), [34](../30-core-modules/34-thread-ipc-integration-guide.md) | Thread IPC |
+| `src/modules/event_benchmark/` | [31](../30-core-modules/31-event-system-guide.md) | Event system benchmark (optional) |
 | `src/data_bus/` | [37](../30-core-modules/37-data-bus-guide.md) | Data Bus |
 | `src/services/` | [36](../30-core-modules/36-system-services-guide.md) | sys_* services |
 | `src/app/` | [04](04-developer-guide.md), [41](../40-app-development/41-zephyr-app-development.md) | app_main, shell |
