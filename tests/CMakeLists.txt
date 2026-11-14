@@ -238,6 +238,14 @@ if(CONFIG_FEATURE_GATE_MODULE)
 endif()
 
 # =============================================================================
+# Event benchmark smoke tests
+# =============================================================================
+if(CONFIG_EVENT_BENCHMARK)
+	add_subdirectory(${APP_SRC_DIR}/modules/event_benchmark ${CMAKE_CURRENT_BINARY_DIR}/event_benchmark)
+	target_sources(app PRIVATE test_event_benchmark.c)
+endif()
+
+# =============================================================================
 # Fault dump tests
 # =============================================================================
 if(CONFIG_SYS_FAULT_DUMP_ENABLE)
